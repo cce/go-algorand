@@ -85,7 +85,7 @@ cd ${SRCROOT}/test/e2e-go
 PARALLEL_FLAG=""
 ARCHTYPE=$("${SRCROOT}/scripts/archtype.sh")
 echo "ARCHTYPE:    ${ARCHTYPE}"
-if [[ "${ARCHTYPE}" = arm* ]]; then
+if [[ "${ARCHTYPE}" = arm* ]] || [ "${CIRCLECI}" = "true" ]; then
     PARALLEL_FLAG="-p 1"
 fi
 
