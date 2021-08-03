@@ -18,6 +18,7 @@ package agreement
 
 import (
 	"bytes"
+	"context"
 	"sort"
 
 	"github.com/algorand/go-algorand/config"
@@ -92,7 +93,7 @@ func (tracker *voteTracker) count(proposal proposalValue) uint64 {
 //
 // When a thresholdEvent is emitted, it will include a bundle of votes which
 // proves the validity of the event to any other player.
-func (tracker *voteTracker) handle(r routerHandle, p player, e0 event) event {
+func (tracker *voteTracker) handle(ctx context.Context, r routerHandle, p player, e0 event) event {
 	voteCausesStateChange := true
 
 	switch e0.t() {

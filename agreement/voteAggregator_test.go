@@ -80,7 +80,7 @@ func TestVoteAggregatorVotes(t *testing.T) {
 				PlayerLastConcluding: 0,
 			}}
 
-			out := router.dispatch(&voteAggregatorTracer, player, e, playerMachine, voteMachine, round, period, step)
+			out := router.dispatch(context.Background(), &voteAggregatorTracer, player, e, playerMachine, voteMachine, round, period, step)
 			fev, ok := out.(filteredEvent)
 			assert.Falsef(t, ok, "voteAggregator should not return a filteredEvent: %v", fev.Err)
 		}
@@ -148,7 +148,7 @@ func TestVoteAggregatorBundles(t *testing.T) {
 			PlayerLastConcluding: 0,
 		}}
 
-		out := router.dispatch(&voteAggregatorTracer, player, e, playerMachine, voteMachine, bundle.U.Round, bundle.U.Period, bundle.U.Step)
+		out := router.dispatch(context.Background(), &voteAggregatorTracer, player, e, playerMachine, voteMachine, bundle.U.Round, bundle.U.Period, bundle.U.Step)
 		if fev, ok := out.(filteredEvent); ok && fev.Err != nil {
 			assert.NotContainsf(t, fev.Err.String(), "rejected vote due to age: filtered vote from bad round",
 				"voteAggregator should not filter due to age for these events")

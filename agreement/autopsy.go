@@ -17,6 +17,7 @@
 package agreement
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -224,7 +225,7 @@ func (a *Autopsy) DumpString(filter AutopsyFilter, w0 io.Writer) (version string
 			router.root = p
 
 			for pair := range tr.p {
-				player, _ = router.submitTop(&playerTracer, player, pair.e)
+				player, _ = router.submitTop(context.Background(), &playerTracer, player, pair.e)
 				if !pair.aok {
 					break
 				}
@@ -327,7 +328,7 @@ func (a *Autopsy) DumpMessagePack(filter AutopsyFilter, w0 io.WriteCloser) (vers
 				if pair.aok {
 					c.traceOutput(player.Round, player.Period, player, pair.a)
 				}
-				player, _ = router.submitTop(&playerTracer, player, pair.e)
+				player, _ = router.submitTop(context.Background(), &playerTracer, player, pair.e)
 				// TODO can check correspondence here
 			}
 		}

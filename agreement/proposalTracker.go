@@ -17,6 +17,7 @@
 package agreement
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/algorand/go-algorand/data/basics"
@@ -117,7 +118,7 @@ func (t *proposalTracker) underlying() listener {
 // - readStaging returns the a stagingValueEvent with the proposal-value
 //   believed to be the staging value (i.e., sigma(S, r, p)) by the
 //   proposalTracker in period p.
-func (t *proposalTracker) handle(r routerHandle, p player, e event) event {
+func (t *proposalTracker) handle(ctx context.Context, r routerHandle, p player, e event) event {
 	switch e.t() {
 	case voteFilterRequest:
 		v := e.(voteFilterRequestEvent).RawVote

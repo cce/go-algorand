@@ -17,6 +17,7 @@
 package agreement
 
 import (
+	"context"
 	"time"
 
 	"github.com/algorand/go-algorand/config"
@@ -63,7 +64,7 @@ func (p *player) underlying() actor {
 
 // Precondition: passed-in player is equal to player
 // Postcondition: each messageEvent is processed exactly once
-func (p *player) handle(r routerHandle, e event) []action {
+func (p *player) handle(ctx context.Context, r routerHandle, e event) []action {
 	var actions []action
 
 	if e.t() == none {
@@ -72,12 +73,12 @@ func (p *player) handle(r routerHandle, e event) []action {
 
 	switch e := e.(type) {
 	case messageEvent:
-		return p.handleMessageEvent(r, e)
+		return p.handleMessageEvent(ctx, r, e)
 	case thresholdEvent:
-		return p.handleThresholdEvent(r, e)
+		return p.handleThresholdEvent(ctx, r, e)
 	case timeoutEvent:
 		if e.T == fastTimeout {
-			return p.handleFastTimeout(r, e)
+			return p.handleFastTimeout(ctx, r, e)
 		}
 
 		if !p.Napping {
@@ -87,7 +88,7 @@ func (p *player) handle(r routerHandle, e event) []action {
 		switch p.Step {
 		case soft:
 			// precondition: nap = false
-			actions = p.issueSoftVote(r)
+			actions = p.issueSoftVote(ctx, r)
 			p.Step = cert
 			// update tracer state to match player
 			r.t.setMetadata(tracerMetadata{p.Round, p.Period, p.Step})
@@ -97,10 +98,10 @@ func (p *player) handle(r routerHandle, e event) []action {
 			p.Step = next
 			// update tracer state to match player
 			r.t.setMetadata(tracerMetadata{p.Round, p.Period, p.Step})
-			return p.issueNextVote(r)
+			return p.issueNextVote(ctx, r)
 		default:
 			if p.Napping {
-				return p.issueNextVote(r) // sets p.Napping to false
+				return p.issueNextVote(ctx, r) // sets p.Napping to false
 			}
 			// not napping, so we should enter a new step
 			p.Step++ // note: this must happen before next timeout setting.
@@ -114,7 +115,7 @@ func (p *player) handle(r routerHandle, e event) []action {
 			return actions
 		}
 	case roundInterruptionEvent:
-		return p.enterRound(r, e, e.Round)
+		return p.enterRound(ctx, r, e, e.Round)
 	case checkpointEvent:
 		return p.handleCheckpointEvent(r, e)
 	default:
@@ -122,7 +123,7 @@ func (p *player) handle(r routerHandle, e event) []action {
 	}
 }
 
-func (p *player) handleFastTimeout(r routerHandle, e timeoutEvent) []action {
+func (p *player) handleFastTimeout(ctx context.Context, r routerHandle, e timeoutEvent) []action {
 	if e.Proto.Err != nil {
 		r.t.log.Errorf("failed to read protocol version for fastTimeout event (proto %v): %v", e.Proto.Version, e.Proto.Err)
 		return nil
@@ -139,20 +140,20 @@ func (p *player) handleFastTimeout(r routerHandle, e timeoutEvent) []action {
 	}
 	p.FastRecoveryDeadline = lower + delta
 	r.t.logFastTimeout(*p)
-	return p.issueFastVote(r)
+	return p.issueFastVote(ctx, r)
 }
 
-func (p *player) issueSoftVote(r routerHandle) (actions []action) {
+func (p *player) issueSoftVote(ctx context.Context, r routerHandle) (actions []action) {
 	defer func() {
 		p.Deadline = deadlineTimeout
 	}()
 
-	e := r.dispatch(*p, proposalFrozenEvent{}, proposalMachinePeriod, p.Round, p.Period, 0)
+	e := r.dispatch(ctx, *p, proposalFrozenEvent{}, proposalMachinePeriod, p.Round, p.Period, 0)
 	a := pseudonodeAction{T: attest, Round: p.Round, Period: p.Period, Step: soft, Proposal: e.(proposalFrozenEvent).Proposal}
 	r.t.logProposalFrozen(a.Proposal, a.Round, a.Period)
 	r.t.timeR().RecStep(p.Period, soft, a.Proposal)
 
-	res := r.dispatch(*p, nextThresholdStatusRequestEvent{}, voteMachinePeriod, p.Round, p.Period-1, 0)
+	res := r.dispatch(ctx, *p, nextThresholdStatusRequestEvent{}, voteMachinePeriod, p.Round, p.Period-1, 0)
 	nextStatus := res.(nextThresholdStatusEvent) // panic if violate postcondition
 	if p.Period > 0 && !nextStatus.Bottom && nextStatus.Proposal != bottom {
 		// did not see bottom: vote for our starting value
@@ -186,16 +187,16 @@ func (p *player) issueCertVote(r routerHandle, e committableEvent) action {
 	return pseudonodeAction{T: attest, Round: p.Round, Period: p.Period, Step: cert, Proposal: e.Proposal}
 }
 
-func (p *player) issueNextVote(r routerHandle) []action {
-	actions := p.partitionPolicy(r)
+func (p *player) issueNextVote(ctx context.Context, r routerHandle) []action {
+	actions := p.partitionPolicy(ctx, r)
 
 	a := pseudonodeAction{T: attest, Round: p.Round, Period: p.Period, Step: p.Step, Proposal: bottom}
 
-	answer := stagedValue(*p, r, p.Round, p.Period)
+	answer := stagedValue(ctx, *p, r, p.Round, p.Period)
 	if answer.Committable {
 		a.Proposal = answer.Proposal
 	} else {
-		res := r.dispatch(*p, nextThresholdStatusRequestEvent{}, voteMachinePeriod, p.Round, p.Period-1, 0)
+		res := r.dispatch(ctx, *p, nextThresholdStatusRequestEvent{}, voteMachinePeriod, p.Round, p.Period-1, 0)
 		nextStatus := res.(nextThresholdStatusEvent) // panic if violate postcondition
 		if !nextStatus.Bottom {
 			// if we fast-forwarded to this period or entered via a soft/cert threshold,
@@ -216,23 +217,23 @@ func (p *player) issueNextVote(r routerHandle) []action {
 	return actions
 }
 
-func (p *player) issueFastVote(r routerHandle) (actions []action) {
-	actions = p.partitionPolicy(r)
+func (p *player) issueFastVote(ctx context.Context, r routerHandle) (actions []action) {
+	actions = p.partitionPolicy(ctx, r)
 
-	elate := r.dispatch(*p, dumpVotesRequestEvent{}, voteMachineStep, p.Round, p.Period, late).(dumpVotesEvent).Votes
-	eredo := r.dispatch(*p, dumpVotesRequestEvent{}, voteMachineStep, p.Round, p.Period, redo).(dumpVotesEvent).Votes
-	edown := r.dispatch(*p, dumpVotesRequestEvent{}, voteMachineStep, p.Round, p.Period, down).(dumpVotesEvent).Votes
+	elate := r.dispatch(ctx, *p, dumpVotesRequestEvent{}, voteMachineStep, p.Round, p.Period, late).(dumpVotesEvent).Votes
+	eredo := r.dispatch(ctx, *p, dumpVotesRequestEvent{}, voteMachineStep, p.Round, p.Period, redo).(dumpVotesEvent).Votes
+	edown := r.dispatch(ctx, *p, dumpVotesRequestEvent{}, voteMachineStep, p.Round, p.Period, down).(dumpVotesEvent).Votes
 	votes := append(eredo, edown...)
 	votes = append(elate, votes...)
 	actions = append(actions, networkAction{T: broadcastVotes, UnauthenticatedVotes: votes})
 
 	a := pseudonodeAction{T: attest, Round: p.Round, Period: p.Period, Step: down, Proposal: bottom}
-	answer := stagedValue(*p, r, p.Round, p.Period)
+	answer := stagedValue(ctx, *p, r, p.Round, p.Period)
 	if answer.Committable {
 		a.Step = late
 		a.Proposal = answer.Proposal
 	} else {
-		res := r.dispatch(*p, nextThresholdStatusRequestEvent{}, voteMachinePeriod, p.Round, p.Period-1, 0)
+		res := r.dispatch(ctx, *p, nextThresholdStatusRequestEvent{}, voteMachinePeriod, p.Round, p.Period-1, 0)
 		nextStatus := res.(nextThresholdStatusEvent) // panic if violate postcondition
 		if !nextStatus.Bottom {
 			a.Step = redo
@@ -259,7 +260,7 @@ func (p *player) handleCheckpointEvent(r routerHandle, e checkpointEvent) []acti
 		}}
 }
 
-func (p *player) handleThresholdEvent(r routerHandle, e thresholdEvent) []action {
+func (p *player) handleThresholdEvent(ctx context.Context, r routerHandle, e thresholdEvent) []action {
 	r.t.timeR().RecThreshold(e)
 
 	var actions []action
@@ -267,21 +268,21 @@ func (p *player) handleThresholdEvent(r routerHandle, e thresholdEvent) []action
 	case certThreshold:
 		// for future periods, fast-forwarding below will ensure correct staging
 		// for past periods, having a freshest certThreshold will prevent losing the block
-		r.dispatch(*p, e, proposalMachine, 0, 0, 0)
+		r.dispatch(ctx, *p, e, proposalMachine, 0, 0, 0)
 		// Now, also check if we have the block.
-		res := stagedValue(*p, r, e.Round, e.Period)
+		res := stagedValue(ctx, *p, r, e.Round, e.Period)
 		if res.Committable {
 			cert := Certificate(e.Bundle)
 			a0 := ensureAction{Payload: res.Payload, Certificate: cert}
 			actions = append(actions, a0)
-			as := p.enterRound(r, e, p.Round+1)
+			as := p.enterRound(ctx, r, e, p.Round+1)
 			return append(actions, as...)
 		}
 		// we don't have the block! We need to ensure we will be able to receive the block.
 		// In addition, hint to the ledger to fetch by digest.
 		actions = append(actions, stageDigestAction{Certificate: Certificate(e.Bundle)})
 		if p.Period < e.Period {
-			actions = append(actions, p.enterPeriod(r, e, e.Period)...)
+			actions = append(actions, p.enterPeriod(ctx, r, e, e.Period)...)
 		}
 		return actions
 
@@ -292,9 +293,9 @@ func (p *player) handleThresholdEvent(r routerHandle, e thresholdEvent) []action
 			return nil
 		}
 		if p.Period < e.Period {
-			return p.enterPeriod(r, e, e.Period)
+			return p.enterPeriod(ctx, r, e, e.Period)
 		}
-		ec := r.dispatch(*p, e, proposalMachine, p.Round, p.Period, 0)
+		ec := r.dispatch(ctx, *p, e, proposalMachine, p.Round, p.Period, 0)
 		if ec.t() == proposalCommittable && p.Step <= cert {
 			actions = append(actions, p.issueCertVote(r, ec.(committableEvent)))
 		}
@@ -307,18 +308,18 @@ func (p *player) handleThresholdEvent(r routerHandle, e thresholdEvent) []action
 		if p.Period > e.Period {
 			return nil
 		}
-		return p.enterPeriod(r, e, e.Period+1)
+		return p.enterPeriod(ctx, r, e, e.Period+1)
 	default:
 		panic("bad event")
 	}
 }
 
-func (p *player) enterPeriod(r routerHandle, source thresholdEvent, target period) []action {
-	actions := p.partitionPolicy(r)
+func (p *player) enterPeriod(ctx context.Context, r routerHandle, source thresholdEvent, target period) []action {
+	actions := p.partitionPolicy(ctx, r)
 
 	// this needs to happen before changing player state so the correct old blockAssemblers can be promoted
 	// TODO might be better passing through the old period explicitly in the {soft,next}Threshold event
-	e := r.dispatch(*p, source, proposalMachine, p.Round, p.Period, 0)
+	e := r.dispatch(ctx, *p, source, proposalMachine, p.Round, p.Period, 0)
 	r.t.logPeriodConcluded(*p, target, source.Proposal)
 
 	p.LastConcluding = p.Step
@@ -350,7 +351,7 @@ func (p *player) enterPeriod(r routerHandle, source thresholdEvent, target perio
 	return actions
 }
 
-func (p *player) enterRound(r routerHandle, source event, target round) []action {
+func (p *player) enterRound(ctx context.Context, r routerHandle, source event, target round) []action {
 	var actions []action
 
 	newRoundEvent := source
@@ -363,7 +364,7 @@ func (p *player) enterRound(r routerHandle, source event, target round) []action
 		newRoundEvent = roundInterruptionEvent{Round: target}
 	}
 	// this happens here so that the proposalMachine contract does not complain
-	e := r.dispatch(*p, newRoundEvent, proposalMachine, target, 0, 0)
+	e := r.dispatch(ctx, *p, newRoundEvent, proposalMachine, target, 0, 0)
 
 	p.LastConcluding = p.Step
 	p.Round = target
@@ -397,10 +398,10 @@ func (p *player) enterRound(r routerHandle, source event, target round) []action
 	}
 
 	// we might need to handle a pipelined threshold event
-	res := r.dispatch(*p, freshestBundleRequestEvent{}, voteMachineRound, p.Round, 0, 0)
+	res := r.dispatch(ctx, *p, freshestBundleRequestEvent{}, voteMachineRound, p.Round, 0, 0)
 	freshestRes := res.(freshestBundleEvent) // panic if violate postcondition
 	if freshestRes.Ok {
-		a4 := p.handle(r, freshestRes.Event)
+		a4 := p.handle(ctx, r, freshestRes.Event)
 		actions = append(actions, a4...)
 	}
 	return actions
@@ -414,12 +415,12 @@ func (p *player) enterRound(r routerHandle, source event, target round) []action
 // These actions include the repropagation of the freshest bundle, if one was seen,
 // (necessarily true for p.Period > 0 or the presence of a soft threshold)
 // and the repropagation of the block payload this bundle votes for, if one was seen.
-func (p *player) partitionPolicy(r routerHandle) (actions []action) {
+func (p *player) partitionPolicy(ctx context.Context, r routerHandle) (actions []action) {
 	if !p.partitioned() {
 		return
 	}
 
-	res := r.dispatch(*p, freshestBundleRequestEvent{}, voteMachineRound, p.Round, 0, 0)
+	res := r.dispatch(ctx, *p, freshestBundleRequestEvent{}, voteMachineRound, p.Round, 0, 0)
 	bundleResponse := res.(freshestBundleEvent) // panic if violate postcondition
 	if bundleResponse.Ok {
 		// TODO do we want to authenticate our own bundles?
@@ -451,7 +452,7 @@ func (p *player) partitionPolicy(r routerHandle) (actions []action) {
 		bundlePeriod = b.Period
 		fallthrough
 	case p.Period == 0:
-		resStaged := stagedValue(*p, r, bundleRound, bundlePeriod)
+		resStaged := stagedValue(ctx, *p, r, bundleRound, bundlePeriod)
 		if resStaged.Committable {
 			transmit := compoundMessage{Proposal: resStaged.Payload.u()}
 			r.t.logProposalRepropagate(resStaged.Proposal, bundleRound, bundlePeriod)
@@ -459,7 +460,7 @@ func (p *player) partitionPolicy(r routerHandle) (actions []action) {
 			actions = append(actions, a1)
 		} else {
 			// even if there is no staged value, there may be a pinned value
-			resPinned := pinnedValue(*p, r, bundleRound)
+			resPinned := pinnedValue(ctx, *p, r, bundleRound)
 			if resPinned.PayloadOK {
 				transmit := compoundMessage{Proposal: resPinned.Payload.u()}
 				r.t.logProposalRepropagate(resPinned.Proposal, bundleRound, bundlePeriod)
@@ -476,7 +477,7 @@ func (p *player) partitioned() bool {
 	return p.Step >= partitionStep || p.Period >= 3
 }
 
-func (p *player) handleMessageEvent(r routerHandle, e messageEvent) (actions []action) {
+func (p *player) handleMessageEvent(ctx context.Context, r routerHandle, e messageEvent) (actions []action) {
 	// is it a proposal-vote? (i.e., vote where step = 0)
 	proposalVote := false
 	switch e.t() {
@@ -510,11 +511,11 @@ func (p *player) handleMessageEvent(r routerHandle, e messageEvent) (actions []a
 			}
 
 			ev := *tail // make sure the event we handle is messageEvent, not *messageEvent
-			suffix := p.handle(r, ev)
+			suffix := p.handle(ctx, r, ev)
 			actions = append(actions, suffix...)
 		}()
 
-		ef := r.dispatch(*p, delegatedE, proposalMachine, 0, 0, 0)
+		ef := r.dispatch(ctx, *p, delegatedE, proposalMachine, 0, 0, 0)
 		switch ef.t() {
 		case voteMalformed:
 			err := ef.(filteredEvent).Err
@@ -545,7 +546,7 @@ func (p *player) handleMessageEvent(r routerHandle, e messageEvent) (actions []a
 
 	switch e.t() {
 	case payloadPresent, payloadVerified:
-		ef := r.dispatch(*p, delegatedE, proposalMachine, 0, 0, 0)
+		ef := r.dispatch(ctx, *p, delegatedE, proposalMachine, 0, 0, 0)
 		switch ef.t() {
 		case payloadMalformed:
 			err := makeSerErrf("rejected message since it was invalid: %v", ef.(filteredEvent).Err)
@@ -588,12 +589,12 @@ func (p *player) handleMessageEvent(r routerHandle, e messageEvent) (actions []a
 		// Of course, this should only trigger for payloadVerified case.
 		// This allows us to handle late payloads (relative to cert-bundles, i.e., certificates) without resorting to catchup.
 		if ef.t() == proposalCommittable || ef.t() == payloadAccepted {
-			freshestRes := r.dispatch(*p, freshestBundleRequestEvent{}, voteMachineRound, p.Round, 0, 0).(freshestBundleEvent)
+			freshestRes := r.dispatch(ctx, *p, freshestBundleRequestEvent{}, voteMachineRound, p.Round, 0, 0).(freshestBundleEvent)
 			if freshestRes.Ok && freshestRes.Event.t() == certThreshold && freshestRes.Event.Proposal == e.Input.Proposal.value() {
 				cert := Certificate(freshestRes.Event.Bundle)
 				a0 := ensureAction{Payload: e.Input.Proposal, Certificate: cert}
 				actions = append(actions, a0)
-				as := p.enterRound(r, delegatedE, cert.Round+1)
+				as := p.enterRound(ctx, r, delegatedE, cert.Round+1)
 				return append(actions, as...)
 			}
 		}
@@ -604,7 +605,7 @@ func (p *player) handleMessageEvent(r routerHandle, e messageEvent) (actions []a
 		return actions
 
 	case votePresent, voteVerified:
-		ef := r.dispatch(*p, delegatedE, voteMachine, 0, 0, 0)
+		ef := r.dispatch(ctx, *p, delegatedE, voteMachine, 0, 0, 0)
 		switch ef.t() {
 		case voteMalformed:
 			// TODO Add Metrics here to capture telemetryspec.VoteRejectedEvent details
@@ -621,11 +622,11 @@ func (p *player) handleMessageEvent(r routerHandle, e messageEvent) (actions []a
 		} // else e.t() == voteVerified
 		v := e.Input.Vote
 		actions = append(actions, relayAction(e, protocol.AgreementVoteTag, v.u()))
-		a1 := p.handle(r, ef)
+		a1 := p.handle(ctx, r, ef)
 		return append(actions, a1...)
 
 	case bundlePresent, bundleVerified:
-		ef := r.dispatch(*p, delegatedE, voteMachine, 0, 0, 0)
+		ef := r.dispatch(ctx, *p, delegatedE, voteMachine, 0, 0, 0)
 		switch ef.t() {
 		case bundleMalformed:
 			err := makeSerErrf("rejected message since it was invalid: %v", ef.(filteredEvent).Err)
@@ -639,7 +640,7 @@ func (p *player) handleMessageEvent(r routerHandle, e messageEvent) (actions []a
 			return append(actions, verifyBundleAction(e, ub.Round, ub.Period, ub.Step))
 		}
 		a0 := relayAction(e, protocol.VoteBundleTag, ef.(thresholdEvent).Bundle)
-		a1 := p.handle(r, ef)
+		a1 := p.handle(ctx, r, ef)
 		return append(append(actions, a0), a1...)
 	}
 

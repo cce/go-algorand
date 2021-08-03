@@ -17,6 +17,7 @@
 package agreement
 
 import (
+	"context"
 	"fmt"
 	"testing"
 
@@ -82,7 +83,7 @@ func generateVoteEvents(t *testing.T, player player, step step, accs testAccount
 
 func simulateProposalVotes(t *testing.T, router *rootRouter, player *player, batch []event) {
 	for _, e := range batch {
-		*player, _ = router.submitTop(&playerTracer, *player, e)
+		*player, _ = router.submitTop(context.Background(), &playerTracer, *player, e)
 	}
 }
 
@@ -99,7 +100,7 @@ func (prop proposalValue) matches(dig, encdig crypto.Digest) error {
 func simulateProposalPayloads(t *testing.T, router *rootRouter, player *player, expected proposalValue, batch []event) {
 	for _, e := range batch {
 		var res []action
-		*player, res = router.submitTop(&playerTracer, *player, e)
+		*player, res = router.submitTop(context.Background(), &playerTracer, *player, e)
 		for _, a := range res {
 			if a.t() != relay {
 				continue
@@ -116,10 +117,10 @@ func simulateProposalPayloads(t *testing.T, router *rootRouter, player *player, 
 func simulateProposals(t *testing.T, router *rootRouter, player *player, voteBatch []event, payloadBatch []event) {
 	for i, e := range voteBatch {
 		var res []action
-		*player, res = router.submitTop(&playerTracer, *player, e)
+		*player, res = router.submitTop(context.Background(), &playerTracer, *player, e)
 
 		earlier := res
-		*player, res = router.submitTop(&playerTracer, *player, payloadBatch[i])
+		*player, res = router.submitTop(context.Background(), &playerTracer, *player, payloadBatch[i])
 		if len(res) != len(earlier) {
 			panic("proposal action mismatch")
 		}
@@ -134,7 +135,7 @@ func simulateProposals(t *testing.T, router *rootRouter, player *player, voteBat
 func simulateTimeoutExpectSoft(t *testing.T, router *rootRouter, player *player, expected proposalValue) {
 	var res []action
 	e := makeTimeoutEvent()
-	*player, res = router.submitTop(&playerTracer, *player, e)
+	*player, res = router.submitTop(context.Background(), &playerTracer, *player, e)
 	if len(res) != 1 {
 		panic("wrong number of actions")
 	}
@@ -161,7 +162,7 @@ func simulateTimeoutExpectSoft(t *testing.T, router *rootRouter, player *player,
 func simulateTimeoutExpectAlarm(t *testing.T, router *rootRouter, player *player) {
 	var res []action
 	e := makeTimeoutEvent()
-	*player, res = router.submitTop(&playerTracer, *player, e)
+	*player, res = router.submitTop(context.Background(), &playerTracer, *player, e)
 
 	for _, a := range res {
 		if a.t() == noop {
@@ -177,7 +178,7 @@ func simulateTimeoutExpectAlarm(t *testing.T, router *rootRouter, player *player
 func simulateTimeoutExpectNext(t *testing.T, router *rootRouter, player *player, expected proposalValue, step step) {
 	var res []action
 	e := makeTimeoutEvent()
-	*player, res = router.submitTop(&playerTracer, *player, e)
+	*player, res = router.submitTop(context.Background(), &playerTracer, *player, e)
 
 	if len(res) != 1 {
 		panic("wrong number of actions")
@@ -204,7 +205,7 @@ func simulateTimeoutExpectNext(t *testing.T, router *rootRouter, player *player,
 func simulateTimeoutExpectNextPartitioned(t *testing.T, router *rootRouter, player *player, expected proposalValue, step step) {
 	var res []action
 	e := makeTimeoutEvent()
-	*player, res = router.submitTop(&playerTracer, *player, e)
+	*player, res = router.submitTop(context.Background(), &playerTracer, *player, e)
 
 	if len(res) != 2 && len(res) != 3 {
 		panic("wrong number of actions not in [2, 3]")
@@ -258,7 +259,7 @@ func simulateTimeoutExpectNextPartitioned(t *testing.T, router *rootRouter, play
 func simulateTimeoutExpectNextNap(t *testing.T, router *rootRouter, player *player, expected proposalValue, step step) {
 	var res []action
 	e := makeTimeoutEvent()
-	*player, res = router.submitTop(&playerTracer, *player, e)
+	*player, res = router.submitTop(context.Background(), &playerTracer, *player, e)
 	if len(res) != 0 {
 		panic("some event emitted")
 	}
@@ -271,7 +272,7 @@ func simulateSoftExpectAttest(t *testing.T, router *rootRouter, player *player, 
 	var softActions []action
 	for _, e := range batch {
 		var res []action
-		*player, res = router.submitTop(&playerTracer, *player, e)
+		*player, res = router.submitTop(context.Background(), &playerTracer, *player, e)
 		softActions = append(softActions, res...)
 	}
 
@@ -300,7 +301,7 @@ func simulateSoftExpectNoAttest(t *testing.T, router *rootRouter, player *player
 	var softActions []action
 	for _, e := range batch {
 		var res []action
-		*player, res = router.submitTop(&playerTracer, *player, e)
+		*player, res = router.submitTop(context.Background(), &playerTracer, *player, e)
 		softActions = append(softActions, res...)
 	}
 
@@ -315,7 +316,7 @@ func simulateCertExpectEnsureAssemble(t *testing.T, router *rootRouter, player *
 	var certActions []action
 	for _, e := range batch {
 		var res []action
-		*player, res = router.submitTop(&playerTracer, *player, e)
+		*player, res = router.submitTop(context.Background(), &playerTracer, *player, e)
 		certActions = append(certActions, res...)
 	}
 
@@ -362,7 +363,7 @@ func simulateNextExpectRecover(t *testing.T, router *rootRouter, player *player,
 	var certActions []action
 	for _, e := range batch {
 		var res []action
-		*player, res = router.submitTop(&playerTracer, *player, e)
+		*player, res = router.submitTop(context.Background(), &playerTracer, *player, e)
 		certActions = append(certActions, res...)
 	}
 

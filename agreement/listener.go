@@ -17,6 +17,8 @@
 package agreement
 
 import (
+	"context"
+
 	"github.com/algorand/go-algorand/logging"
 )
 
@@ -35,7 +37,7 @@ type listener interface {
 	underlying() listener
 
 	// handle an event, updating the state of the listener.
-	handle(routerHandle, player, event) event
+	handle(context.Context, routerHandle, player, event) event
 }
 
 // A listenerContract describes the list of allowed preconditions and postconditions
@@ -56,7 +58,7 @@ type checkedListener struct {
 	listenerContract
 }
 
-func (l checkedListener) handle(r routerHandle, p player, in event) event {
+func (l checkedListener) handle(ctx context.Context, r routerHandle, p player, in event) event {
 	errs := l.pre(p, in)
 	if len(errs) != 0 {
 		for _, err := range errs {
@@ -64,7 +66,7 @@ func (l checkedListener) handle(r routerHandle, p player, in event) event {
 		}
 		logging.Base().Panicf("%v: precondition violated: %v", l.T(), errs[0])
 	}
-	out := l.listener.handle(r, p, in)
+	out := l.listener.handle(ctx, r, p, in)
 	errs = l.post(p, in, out)
 	if len(errs) != 0 {
 		for _, err := range errs {

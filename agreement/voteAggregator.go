@@ -17,6 +17,7 @@
 package agreement
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/algorand/go-algorand/config"
@@ -69,7 +70,7 @@ func (agg *voteAggregator) underlying() listener {
 //     - Otherwise, the bundle is observed.  If observing the bundle causes a
 //       thresholdEvent to occur, the thresholdEvent is propagated to the
 //       parent.  Otherwise, a bundleFiltered event is propagated to the parent.
-func (agg *voteAggregator) handle(r routerHandle, pr player, em event) (res event) {
+func (agg *voteAggregator) handle(ctx context.Context, r routerHandle, pr player, em event) (res event) {
 	e := em.(filterableMessageEvent)
 	defer func() {
 		r.t.logVoteAggregatorResult(e, res)
@@ -82,7 +83,7 @@ func (agg *voteAggregator) handle(r routerHandle, pr player, em event) (res even
 		}
 
 		uv := e.Input.UnauthenticatedVote
-		err := agg.filterVote(e.Proto.Version, pr, r, uv, e.FreshnessData)
+		err := agg.filterVote(ctx, e.Proto.Version, pr, r, uv, e.FreshnessData)
 		if err != nil {
 			return filteredEvent{T: voteFiltered, Err: makeSerErr(err)}
 		}
@@ -99,7 +100,7 @@ func (agg *voteAggregator) handle(r routerHandle, pr player, em event) (res even
 			return filteredEvent{T: voteMalformed, Err: e.Err}
 		}
 		v := e.Input.Vote
-		err := agg.filterVote(e.Proto.Version, pr, r, v.u(), e.FreshnessData)
+		err := agg.filterVote(ctx, e.Proto.Version, pr, r, v.u(), e.FreshnessData)
 		if err != nil {
 			return filteredEvent{T: voteFiltered, Err: makeSerErr(err)}
 		}
@@ -110,7 +111,7 @@ func (agg *voteAggregator) handle(r routerHandle, pr player, em event) (res even
 		}
 
 		deliver := voteAcceptedEvent{Vote: v, Proto: e.Proto.Version}
-		tE := r.dispatch(pr, deliver, voteMachineRound, v.R.Round, v.R.Period, v.R.Step)
+		tE := r.dispatch(ctx, pr, deliver, voteMachineRound, v.R.Round, v.R.Period, v.R.Step)
 		if tE.t() == none {
 			return tE
 		}
@@ -166,7 +167,7 @@ func (agg *voteAggregator) handle(r routerHandle, pr player, em event) (res even
 		var threshEvent event
 		for _, vote := range votes {
 			deliver := voteAcceptedEvent{Vote: vote, Proto: e.Proto.Version}
-			e := r.dispatch(pr, deliver, voteMachineRound, vote.R.Round, vote.R.Period, vote.R.Step)
+			e := r.dispatch(ctx, pr, deliver, voteMachineRound, vote.R.Round, vote.R.Period, vote.R.Step)
 			switch e.t() {
 			case softThreshold, certThreshold, nextThreshold:
 				threshEvent = e
@@ -187,13 +188,13 @@ func (agg *voteAggregator) handle(r routerHandle, pr player, em event) (res even
 
 // filterVote filters a vote, checking if it is fresh, and also asks the voteMachineStep for its input,
 // to ensure we don't relay duplicate or redundant votes.
-func (agg *voteAggregator) filterVote(proto protocol.ConsensusVersion, p player, r routerHandle, uv unauthenticatedVote, freshData freshnessData) error {
+func (agg *voteAggregator) filterVote(ctx context.Context, proto protocol.ConsensusVersion, p player, r routerHandle, uv unauthenticatedVote, freshData freshnessData) error {
 	err := voteFresh(proto, freshData, uv)
 	if err != nil {
 		return fmt.Errorf("voteAggregator: rejected vote due to age: %v", err)
 	}
 	filterReq := voteFilterRequestEvent{RawVote: uv.R}
-	filterRes := r.dispatch(p, filterReq, voteMachineStep, uv.R.Round, uv.R.Period, uv.R.Step)
+	filterRes := r.dispatch(ctx, p, filterReq, voteMachineStep, uv.R.Round, uv.R.Period, uv.R.Step)
 	switch filterRes.t() {
 	case voteFilteredStep:
 		// we'll rebuild the filtered event later

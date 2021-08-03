@@ -18,6 +18,7 @@ package agreement
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"os"
 
@@ -310,14 +311,14 @@ func (w *ioAutomataConcrete) getTraceVisible() ioTrace {
 // Alternatively, we create a tracer interface and pass ourselves in
 // as the tracer - but hijacking router seems to be less impactful since an interface
 // already exists.
-func (w *ioAutomataConcrete) dispatch(t *tracer, state player, e event, src stateMachineTag, dest stateMachineTag, r round, p period, s step) event {
+func (w *ioAutomataConcrete) dispatch(ctx context.Context, t *tracer, state player, e event, src stateMachineTag, dest stateMachineTag, r round, p period, s step) event {
 	_ = w.savedTrace.extend(e)
-	out := w.routerCtx.dispatch(t, state, e, src, dest, r, p, s)
+	out := w.routerCtx.dispatch(ctx, t, state, e, src, dest, r, p, s)
 	_ = w.savedTrace.extend(out)
 	return out
 }
 
-func (w *ioAutomataConcrete) callHandler(inputTraceEvent event) (outEvent event, panicErr error) {
+func (w *ioAutomataConcrete) callHandler(ctx context.Context, inputTraceEvent event) (outEvent event, panicErr error) {
 	logging.Base().SetOutput(nullWriter{})
 	defer func() {
 		logging.Base().SetOutput(os.Stderr)
@@ -329,12 +330,12 @@ func (w *ioAutomataConcrete) callHandler(inputTraceEvent event) (outEvent event,
 	if w.rHandle == nil {
 		w.rHandle = &routerHandle{t: &tracer{log: serviceLogger{logging.Base()}}, r: w}
 	}
-	outEvent = w.listener.handle(*w.rHandle, w.playerCtx, inputTraceEvent)
+	outEvent = w.listener.handle(ctx, *w.rHandle, w.playerCtx, inputTraceEvent)
 	return
 }
 
 func (w *ioAutomataConcrete) transition(inputTraceEvent event) (err error, panicErr error) {
-	out, callPanicErr := w.callHandler(inputTraceEvent)
+	out, callPanicErr := w.callHandler(context.Background(), inputTraceEvent) // XXX or take ctx as argument
 	if callPanicErr != nil {
 		// the first err will be more useful once state machines propagate errors upwards
 		return err, callPanicErr
@@ -571,7 +572,7 @@ func (w *ioAutomataConcretePlayer) underlying() *player {
 	return w.rootRouter.root.underlying().(*player)
 }
 
-func (w *ioAutomataConcretePlayer) callSubmitTop(inputTraceEvent event) (outEvents []event, panicErr error) {
+func (w *ioAutomataConcretePlayer) callSubmitTop(ctx context.Context, inputTraceEvent event) (outEvents []event, panicErr error) {
 	logging.Base().SetOutput(nullWriter{})
 	defer func() {
 		logging.Base().SetOutput(os.Stderr)
@@ -580,7 +581,7 @@ func (w *ioAutomataConcretePlayer) callSubmitTop(inputTraceEvent event) (outEven
 			panicErr = fmt.Errorf("Panic: %v", r)
 		}
 	}()
-	_, actions := w.rootRouter.submitTop(w.t, *w.underlying(), inputTraceEvent)
+	_, actions := w.rootRouter.submitTop(ctx, w.t, *w.underlying(), inputTraceEvent)
 	// wrap all actions as events
 	outEvents = make([]event, len(actions))
 	for i, a := range actions {
@@ -596,7 +597,7 @@ func (w *ioAutomataConcretePlayer) transition(inputTraceEvent event) (err error,
 	if w.t == nil {
 		w.t = &tracer{log: serviceLogger{logging.Base()}}
 	}
-	outEvents, callPanicErr := w.callSubmitTop(inputTraceEvent)
+	outEvents, callPanicErr := w.callSubmitTop(context.Background(), inputTraceEvent) // XXX or take as arugment to transition
 	if callPanicErr != nil {
 		// the first err will be more useful once state machines propagate errors upwards
 		return err, callPanicErr

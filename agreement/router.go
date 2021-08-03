@@ -16,6 +16,8 @@
 
 package agreement
 
+import "context"
+
 // A stateMachineTag uniquely identifies the type of a state machine.
 //
 // Rounds, periods, and steps may be used to further identify different state machine instances of the same type.
@@ -51,9 +53,9 @@ type routerHandle struct {
 //
 // If there are many state machines of this type (for instance, there is one voteMachineStep for each step)
 // then the sender must specify a round, period, and step to disambiguate between these state machines.
-func (h *routerHandle) dispatch(state player, e event, dest stateMachineTag, r round, p period, s step) event {
+func (h *routerHandle) dispatch(ctx context.Context, state player, e event, dest stateMachineTag, r round, p period, s step) event {
 	h.t.ein(h.src, dest, e, r, p, s)
-	e = h.r.dispatch(h.t, state, e, h.src, dest, r, p, s)
+	e = h.r.dispatch(ctx, h.t, state, e, h.src, dest, r, p, s)
 	h.t.eout(h.src, dest, e, r, p, s)
 	return e
 }
@@ -62,7 +64,7 @@ func (h *routerHandle) dispatch(state player, e event, dest stateMachineTag, r r
 //
 // router also encapsulates the garbage collection of old state machines.
 type router interface {
-	dispatch(t *tracer, state player, e event, src stateMachineTag, dest stateMachineTag, r round, p period, s step) event
+	dispatch(ctx context.Context, t *tracer, state player, e event, src stateMachineTag, dest stateMachineTag, r round, p period, s step) event
 }
 
 type rootRouter struct {
@@ -138,14 +140,14 @@ func (router *rootRouter) update(state player, r round, gc bool) {
 
 // submitTop is a convenience method used to submit the event directly into the root of the state machine tree
 // (i.e., to the playerMachine).
-func (router *rootRouter) submitTop(t *tracer, state player, e event) (player, []action) {
+func (router *rootRouter) submitTop(ctx context.Context, t *tracer, state player, e event) (player, []action) {
 	// TODO move cadaver calls to somewhere cleaner
 	t.traceInput(state.Round, state.Period, state, e) // cadaver
 	t.ainTop(demultiplexer, playerMachine, state, e, 0, 0, 0)
 
 	router.update(state, 0, true)
 	handle := routerHandle{t: t, r: router, src: playerMachine}
-	a := router.root.handle(handle, e)
+	a := router.root.handle(ctx, handle, e)
 
 	t.aoutTop(demultiplexer, playerMachine, a, 0, 0, 0)
 	t.traceOutput(state.Round, state.Period, state, a) // cadaver
@@ -154,17 +156,17 @@ func (router *rootRouter) submitTop(t *tracer, state player, e event) (player, [
 	return *p, a
 }
 
-func (router *rootRouter) dispatch(t *tracer, state player, e event, src stateMachineTag, dest stateMachineTag, r round, p period, s step) event {
+func (router *rootRouter) dispatch(ctx context.Context, t *tracer, state player, e event, src stateMachineTag, dest stateMachineTag, r round, p period, s step) event {
 	router.update(state, r, true)
 	if router.proposalRoot.T() == dest {
 		handle := routerHandle{t: t, r: router, src: proposalMachine}
-		return router.proposalRoot.handle(handle, state, e)
+		return router.proposalRoot.handle(ctx, handle, state, e)
 	}
 	if router.voteRoot.T() == dest {
 		handle := routerHandle{t: t, r: router, src: voteMachine}
-		return router.voteRoot.handle(handle, state, e)
+		return router.voteRoot.handle(ctx, handle, state, e)
 	}
-	return router.Children[r].dispatch(t, state, e, src, dest, r, p, s)
+	return router.Children[r].dispatch(ctx, t, state, e, src, dest, r, p, s)
 }
 
 func (router *roundRouter) update(state player, p period, gc bool) {
@@ -199,17 +201,17 @@ func (router *roundRouter) update(state player, p period, gc bool) {
 	}
 }
 
-func (router *roundRouter) dispatch(t *tracer, state player, e event, src stateMachineTag, dest stateMachineTag, r round, p period, s step) event {
+func (router *roundRouter) dispatch(ctx context.Context, t *tracer, state player, e event, src stateMachineTag, dest stateMachineTag, r round, p period, s step) event {
 	router.update(state, p, true)
 	if router.proposalRoot.T() == dest {
 		handle := routerHandle{t: t, r: router, src: proposalMachineRound}
-		return router.proposalRoot.handle(handle, state, e)
+		return router.proposalRoot.handle(ctx, handle, state, e)
 	}
 	if router.voteRoot.T() == dest {
 		handle := routerHandle{t: t, r: router, src: voteMachineRound}
-		return router.voteRoot.handle(handle, state, e)
+		return router.voteRoot.handle(ctx, handle, state, e)
 	}
-	return router.Children[p].dispatch(t, state, e, src, dest, r, p, s)
+	return router.Children[p].dispatch(ctx, t, state, e, src, dest, r, p, s)
 }
 
 // we do not garbage-collect step because memory use here grows logarithmically slowly
@@ -228,17 +230,17 @@ func (router *periodRouter) update(s step) {
 	}
 }
 
-func (router *periodRouter) dispatch(t *tracer, state player, e event, src stateMachineTag, dest stateMachineTag, r round, p period, s step) event {
+func (router *periodRouter) dispatch(ctx context.Context, t *tracer, state player, e event, src stateMachineTag, dest stateMachineTag, r round, p period, s step) event {
 	router.update(s)
 	if router.proposalRoot.T() == dest {
 		handle := routerHandle{t: t, r: router, src: proposalMachinePeriod}
-		return router.proposalRoot.handle(handle, state, e)
+		return router.proposalRoot.handle(ctx, handle, state, e)
 	}
 	if router.voteRoot.T() == dest {
 		handle := routerHandle{t: t, r: router, src: voteMachinePeriod}
-		return router.voteRoot.handle(handle, state, e)
+		return router.voteRoot.handle(ctx, handle, state, e)
 	}
-	return router.Children[s].dispatch(t, state, e, src, dest, r, p, s)
+	return router.Children[s].dispatch(ctx, t, state, e, src, dest, r, p, s)
 }
 
 func (router *stepRouter) update(state player, gc bool) {
@@ -247,11 +249,11 @@ func (router *stepRouter) update(state player, gc bool) {
 	}
 }
 
-func (router *stepRouter) dispatch(t *tracer, state player, e event, src stateMachineTag, dest stateMachineTag, r round, p period, s step) event {
+func (router *stepRouter) dispatch(ctx context.Context, t *tracer, state player, e event, src stateMachineTag, dest stateMachineTag, r round, p period, s step) event {
 	router.update(state, true)
 	if router.voteRoot.T() == dest {
 		handle := routerHandle{t: t, r: router, src: voteMachineStep}
-		return router.voteRoot.handle(handle, state, e)
+		return router.voteRoot.handle(ctx, handle, state, e)
 	}
 	panic("bad dispatch")
 }
@@ -260,15 +262,15 @@ func (router *stepRouter) dispatch(t *tracer, state player, e event, src stateMa
 
 // stagedValue gets the staged value for some (r, p)
 // i.e., sigma(state, r, p)
-func stagedValue(p0 player, h routerHandle, r round, p period) stagingValueEvent {
+func stagedValue(ctx context.Context, p0 player, h routerHandle, r round, p period) stagingValueEvent {
 	qe := stagingValueEvent{Round: r, Period: p}
-	e := h.dispatch(p0, qe, proposalMachineRound, r, p, 0)
+	e := h.dispatch(ctx, p0, qe, proposalMachineRound, r, p, 0)
 	return e.(stagingValueEvent)
 }
 
 // pinnedValue gets the current pinned value for some (r)
-func pinnedValue(p0 player, h routerHandle, r round) pinnedValueEvent {
+func pinnedValue(ctx context.Context, p0 player, h routerHandle, r round) pinnedValueEvent {
 	qe := pinnedValueEvent{Round: r}
-	e := h.dispatch(p0, qe, proposalMachineRound, r, 0, 0)
+	e := h.dispatch(ctx, p0, qe, proposalMachineRound, r, 0, 0)
 	return e.(pinnedValueEvent)
 }

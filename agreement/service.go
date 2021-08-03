@@ -228,7 +228,7 @@ func (s *Service) mainLoop(input <-chan externalEvent, output chan<- []action, r
 			break
 		}
 
-		status, a = router.submitTop(s.tracer, status, e)
+		status, a = router.submitTop(context.Background(), s.tracer, status, e)
 
 		if persistent(a) {
 			s.persistRouter = router

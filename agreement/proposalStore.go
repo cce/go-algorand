@@ -17,6 +17,7 @@
 package agreement
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/algorand/go-algorand/logging"
@@ -184,7 +185,7 @@ func (store *proposalStore) underlying() listener {
 //   pinned proposalValue, and corresponding payload if one exists. This occurs
 //   during resynchronization when players may relay the pinned value.
 //   The event is handled exclusively by the proposalStore and not forwarded.
-func (store *proposalStore) handle(r routerHandle, p player, e event) event {
+func (store *proposalStore) handle(ctx context.Context, r routerHandle, p player, e event) event {
 	if store.Relevant == nil {
 		store.Relevant = make(map[period]proposalValue)
 	}
@@ -196,7 +197,7 @@ func (store *proposalStore) handle(r routerHandle, p player, e event) event {
 	case voteVerified:
 		v := e.(messageEvent).Input.Vote
 
-		ev := r.dispatch(p, e, proposalMachinePeriod, v.R.Round, v.R.Period, 0)
+		ev := r.dispatch(ctx, p, e, proposalMachinePeriod, v.R.Round, v.R.Period, 0)
 		if ev.t() == proposalAccepted {
 			e := ev.(proposalAcceptedEvent)
 			ea := store.Assemblers[e.Proposal]
@@ -257,7 +258,7 @@ func (store *proposalStore) handle(r routerHandle, p player, e event) event {
 			return payloadProcessedEvent{T: payloadRejected, Err: makeSerErr(err)}
 		}
 
-		a := stagedValue(p, r, p.Round, p.Period)
+		a := stagedValue(ctx, p, r, p.Round, p.Period)
 		authVote := ea.authenticator(p.Period)
 		if a.Proposal == pv {
 			return committableEvent{Proposal: pv, Vote: authVote}
@@ -271,7 +272,7 @@ func (store *proposalStore) handle(r routerHandle, p player, e event) event {
 	case newPeriod:
 		// called before p.Period actually changes (if it does)
 		starting := e.(newPeriodEvent).Proposal
-		staged := stagedValue(p, r, p.Round, p.Period).Proposal
+		staged := stagedValue(ctx, p, r, p.Round, p.Period).Proposal
 		if starting != bottom {
 			store.Pinned = starting
 		} else if staged != bottom {
@@ -312,7 +313,7 @@ func (store *proposalStore) handle(r routerHandle, p player, e event) event {
 		// in particular, this will set te.Period.Staging = val(softThreshold/certThreshold)
 		// as a consequence, only val(softThreshold/certThreshold) will generate proposalAccepted in the future
 		// for this period, therefore store.Relevant[te.Period] will not be reset
-		e := r.dispatch(p, e, proposalMachinePeriod, te.Round, te.Period, 0).(proposalAcceptedEvent)
+		e := r.dispatch(ctx, p, e, proposalMachinePeriod, te.Round, te.Period, 0).(proposalAcceptedEvent)
 		// return committableEvent if ready; else, return proposalAcceptedEvent
 		if store.Assemblers[e.Proposal].Assembled {
 			authVote := store.Assemblers[e.Proposal].authenticator(p.Period)
@@ -334,7 +335,7 @@ func (store *proposalStore) handle(r routerHandle, p player, e event) event {
 
 	case readStaging:
 		se := e.(stagingValueEvent)
-		se = r.dispatch(p, e, proposalMachinePeriod, se.Round, se.Period, 0).(stagingValueEvent)
+		se = r.dispatch(ctx, p, e, proposalMachinePeriod, se.Round, se.Period, 0).(stagingValueEvent)
 		ea := store.Assemblers[se.Proposal]
 		se.Committable = ea.Assembled
 		se.Payload = ea.Payload

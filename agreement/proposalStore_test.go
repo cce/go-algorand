@@ -17,6 +17,7 @@
 package agreement
 
 import (
+	"context"
 	"os"
 	"reflect"
 	"testing"
@@ -512,9 +513,9 @@ func TestProposalStoreHandle(t *testing.T) {
 	assemblers := make(map[proposalValue]blockAssembler)
 	assemblers[proposalV] = blockAssembly
 
-	player, _ = router.submitTop(&proposalStoreTracer, player, proposalVoteEventBatch[0])
+	player, _ = router.submitTop(context.Background(), &proposalStoreTracer, player, proposalVoteEventBatch[0])
 
-	player, _ = router.submitTop(&proposalStoreTracer, player, proposalPayloadEventBatch[0])
+	player, _ = router.submitTop(context.Background(), &proposalStoreTracer, player, proposalPayloadEventBatch[0])
 
 	// create proposal Store
 	testProposalStore := proposalStore{
@@ -533,7 +534,7 @@ func TestProposalStoreHandle(t *testing.T) {
 	// Test a proposal payload event with non valid proposal payload
 	msg := message{Tag: protocol.ProposalPayloadTag, Proposal: proposalPayload, UnauthenticatedProposal: proposalPayload.unauthenticatedProposal}
 	testEvent := messageEvent{T: payloadPresent, Input: msg}
-	returnEvent := testProposalStore.handle(rHandle, player, testEvent)
+	returnEvent := testProposalStore.handle(context.Background(), rHandle, player, testEvent)
 	require.Equal(t, returnEvent.(payloadProcessedEvent).T, payloadRejected)
 	require.Equal(t, makeSerErrStr("proposalStore: no accepting blockAssembler found on payloadPresent"), returnEvent.(payloadProcessedEvent).Err)
 
@@ -542,13 +543,13 @@ func TestProposalStoreHandle(t *testing.T) {
 	testProposalStore.Relevant[player.Period] = proposalV
 	testProposalStore.Pinned = proposalV
 
-	returnEvent = testProposalStore.handle(rHandle, player, testEvent)
+	returnEvent = testProposalStore.handle(context.Background(), rHandle, player, testEvent)
 	require.Equal(t, payloadPipelined, returnEvent.(payloadProcessedEvent).T)
 
 	// Test with blockAssembly in filled state which will fail pipeline test
 	blockAssembly.Filled = true
 
-	returnEvent = testProposalStore.handle(rHandle, player, testEvent)
+	returnEvent = testProposalStore.handle(context.Background(), rHandle, player, testEvent)
 	require.Equal(t, returnEvent.(payloadProcessedEvent).T, payloadRejected)
 	require.Equal(t, makeSerErrStr("blockAssembler.pipeline: already filled"), returnEvent.(payloadProcessedEvent).Err)
 
@@ -562,7 +563,7 @@ func TestProposalStoreHandle(t *testing.T) {
 	// Test a proposal payload verified event with non valid proposal payload
 	msg = message{Tag: protocol.ProposalPayloadTag, Proposal: proposalPayload, UnauthenticatedProposal: proposalPayload.unauthenticatedProposal}
 	testEvent = messageEvent{T: payloadVerified, Input: msg}
-	returnEvent = testProposalStore.handle(rHandle, player, testEvent)
+	returnEvent = testProposalStore.handle(context.Background(), rHandle, player, testEvent)
 	require.Equal(t, returnEvent.(payloadProcessedEvent).T, payloadRejected)
 	require.Equal(t, makeSerErrStr("proposalStore: no accepting blockAssembler found on payloadVerified"), returnEvent.(payloadProcessedEvent).Err)
 
@@ -572,13 +573,13 @@ func TestProposalStoreHandle(t *testing.T) {
 	testProposalStore.Relevant[player.Period+3] = proposalV0
 	testProposalStore.Pinned = proposalV
 
-	returnEvent = testProposalStore.handle(rHandle, player, testEvent)
+	returnEvent = testProposalStore.handle(context.Background(), rHandle, player, testEvent)
 	require.Equal(t, payloadAccepted, returnEvent.(payloadProcessedEvent).T)
 
 	// Test a valid payload verified event with already assembled block assembly
 	blockAssembly.Assembled = true
 
-	returnEvent = testProposalStore.handle(rHandle, player, testEvent)
+	returnEvent = testProposalStore.handle(context.Background(), rHandle, player, testEvent)
 	require.Equal(t, payloadRejected, returnEvent.(payloadProcessedEvent).T)
 	require.Equal(t, makeSerErrStr("blockAssembler.pipeline: already assembled"), returnEvent.(payloadProcessedEvent).Err)
 
@@ -590,13 +591,13 @@ func TestProposalStoreHandle(t *testing.T) {
 	msg = message{Tag: protocol.ProposalPayloadTag, Proposal: proposalPayload, UnauthenticatedProposal: proposalPayload.unauthenticatedProposal}
 	testPeriodEvent := newPeriodEvent{Period: player.Period + 3, Proposal: proposalV}
 
-	returnEvent = testProposalStore.handle(rHandle, player, testPeriodEvent)
+	returnEvent = testProposalStore.handle(context.Background(), rHandle, player, testPeriodEvent)
 	require.Equal(t, emptyEvent{}, returnEvent)
 
 	msg = message{Tag: protocol.ProposalPayloadTag, Proposal: proposalPayload, UnauthenticatedProposal: proposalPayload.unauthenticatedProposal}
 	testPeriodEvent = newPeriodEvent{Period: player.Period + 3, Proposal: bottom}
 
-	returnEvent = testProposalStore.handle(rHandle, player, testPeriodEvent)
+	returnEvent = testProposalStore.handle(context.Background(), rHandle, player, testPeriodEvent)
 	require.Equal(t, emptyEvent{}, returnEvent)
 
 	msg = message{Tag: protocol.ProposalPayloadTag, Proposal: proposalPayload, UnauthenticatedProposal: proposalPayload.unauthenticatedProposal}
@@ -604,7 +605,7 @@ func TestProposalStoreHandle(t *testing.T) {
 
 	// trigger too many assemblers panic in new Round event handling
 	logging.Base().SetOutput(nullWriter{})
-	require.Panics(t, func() { testProposalStore.handle(rHandle, player, testNewRoundEvent) })
+	require.Panics(t, func() { testProposalStore.handle(context.Background(), rHandle, player, testNewRoundEvent) })
 	logging.Base().SetOutput(os.Stderr)
 
 	// return a payload pipelined event
@@ -613,7 +614,7 @@ func TestProposalStoreHandle(t *testing.T) {
 	testProposalStore.Assemblers[proposalV] = blockAssembly
 	testProposalStore.Relevant[player.Period] = proposalV
 
-	returnEvent = testProposalStore.handle(rHandle, player, testNewRoundEvent)
+	returnEvent = testProposalStore.handle(context.Background(), rHandle, player, testNewRoundEvent)
 	require.Equal(t, payloadPipelined, returnEvent.(payloadProcessedEvent).T)
 
 	// test soft threshold event
@@ -625,14 +626,14 @@ func TestProposalStoreHandle(t *testing.T) {
 		Proposal: proposalV,
 		Bundle:   unauthenticatedBundle{},
 	}
-	returnEvent = testProposalStore.handle(rHandle, player, testThresholdEvent)
+	returnEvent = testProposalStore.handle(context.Background(), rHandle, player, testThresholdEvent)
 	require.Equal(t, testProposalStore.Pinned, returnEvent.(committableEvent).Proposal)
 
 	testStagingValueEvent := stagingValueEvent{
 		Round:  player.Round,
 		Period: player.Period,
 	}
-	returnEvent = testProposalStore.handle(rHandle, player, testStagingValueEvent)
+	returnEvent = testProposalStore.handle(context.Background(), rHandle, player, testStagingValueEvent)
 	require.Equal(t, proposalV, returnEvent.(stagingValueEvent).Proposal)
 	require.Equal(t, proposalPayload, returnEvent.(stagingValueEvent).Payload)
 	require.True(t, returnEvent.(stagingValueEvent).Committable)
@@ -640,7 +641,7 @@ func TestProposalStoreHandle(t *testing.T) {
 	testPinnedValueEvent := pinnedValueEvent{
 		Round: player.Round,
 	}
-	returnEvent = testProposalStore.handle(rHandle, player, testPinnedValueEvent)
+	returnEvent = testProposalStore.handle(context.Background(), rHandle, player, testPinnedValueEvent)
 	require.Equal(t, proposalV, returnEvent.(pinnedValueEvent).Proposal)
 	require.Equal(t, proposalPayload, returnEvent.(pinnedValueEvent).Payload)
 	require.True(t, returnEvent.(pinnedValueEvent).PayloadOK)
@@ -650,7 +651,7 @@ func TestProposalStoreHandle(t *testing.T) {
 
 	// trigger panic from non supported message type
 	logging.Base().SetOutput(nullWriter{})
-	require.Panics(t, func() { testProposalStore.handle(rHandle, player, testEvent) })
+	require.Panics(t, func() { testProposalStore.handle(context.Background(), rHandle, player, testEvent) })
 	logging.Base().SetOutput(os.Stderr)
 
 	// test trim
@@ -683,7 +684,7 @@ func TestProposalStoreGetPinnedValue(t *testing.T) {
 	testPinnedValueEvent := pinnedValueEvent{
 		Round: player.Round,
 	}
-	returnEvent := testProposalStore.handle(rHandle, player, testPinnedValueEvent)
+	returnEvent := testProposalStore.handle(context.Background(), rHandle, player, testPinnedValueEvent)
 	require.Equal(t, proposalV, returnEvent.(pinnedValueEvent).Proposal)
 	require.Falsef(t, returnEvent.(pinnedValueEvent).PayloadOK, "Get pinned value cannot set payloadOK if no block assembled")
 	require.Equal(t, proposal{}.value(), returnEvent.(pinnedValueEvent).Payload.value())
@@ -698,14 +699,14 @@ func TestProposalStoreGetPinnedValue(t *testing.T) {
 		UnauthenticatedProposal: payloadV.u(),
 	}
 	assemblePayloadEv := messageEvent{T: payloadVerified, Input: msgP1}
-	returnEvent = testProposalStore.handle(rHandle, player, assemblePayloadEv)
+	returnEvent = testProposalStore.handle(context.Background(), rHandle, player, assemblePayloadEv)
 	require.Equal(t, payloadAccepted, returnEvent.t())
 
 	// Getting pinned value should now also return block
 	testPinnedValueEvent = pinnedValueEvent{
 		Round: player.Round,
 	}
-	returnEvent = testProposalStore.handle(rHandle, player, testPinnedValueEvent)
+	returnEvent = testProposalStore.handle(context.Background(), rHandle, player, testPinnedValueEvent)
 	require.Equal(t, proposalV, returnEvent.(pinnedValueEvent).Proposal)
 	require.Equal(t, proposalV, returnEvent.(pinnedValueEvent).Payload.value())
 	require.Truef(t, returnEvent.(pinnedValueEvent).PayloadOK, "Get Pinned Value must get assembled block")
@@ -797,22 +798,22 @@ func TestProposalStoreRegressionBlockRedeliveryBug_b29ea57(t *testing.T) {
 
 		var res event
 
-		res = router.dispatch(&proposalStoreTracer, player, period1Trigger, playerMachine, proposalMachineRound, curRound, 1, 0)
+		res = router.dispatch(context.Background(), &proposalStoreTracer, player, period1Trigger, playerMachine, proposalMachineRound, curRound, 1, 0)
 		require.Equal(t, res.t(), none)
 
-		res = router.dispatch(&proposalStoreTracer, player, propVote1Receipt, playerMachine, proposalMachineRound, curRound, 1, 0)
+		res = router.dispatch(context.Background(), &proposalStoreTracer, player, propVote1Receipt, playerMachine, proposalMachineRound, curRound, 1, 0)
 		require.Equal(t, res.t(), proposalAccepted)
 
-		res = router.dispatch(&proposalStoreTracer, player, propPayload1Receipt, playerMachine, proposalMachineRound, curRound, 1, 0)
+		res = router.dispatch(context.Background(), &proposalStoreTracer, player, propPayload1Receipt, playerMachine, proposalMachineRound, curRound, 1, 0)
 		require.Equal(t, res.t(), payloadAccepted)
 
-		res = router.dispatch(&proposalStoreTracer, player, period2Trigger, playerMachine, proposalMachineRound, curRound, 2, 0)
+		res = router.dispatch(context.Background(), &proposalStoreTracer, player, period2Trigger, playerMachine, proposalMachineRound, curRound, 2, 0)
 		require.Equal(t, res.t(), none)
 
-		res = router.dispatch(&proposalStoreTracer, player, propVote2Receipt, playerMachine, proposalMachineRound, curRound, 2, 0)
+		res = router.dispatch(context.Background(), &proposalStoreTracer, player, propVote2Receipt, playerMachine, proposalMachineRound, curRound, 2, 0)
 		require.Equal(t, res.t(), proposalAccepted)
 
-		res = router.dispatch(&proposalStoreTracer, player, propPayload2Receipt, playerMachine, proposalMachineRound, curRound, 2, 0)
+		res = router.dispatch(context.Background(), &proposalStoreTracer, player, propPayload2Receipt, playerMachine, proposalMachineRound, curRound, 2, 0)
 		if res.t() == payloadRejected {
 			t.Fatalf("bug b29ea57: a proposal with a new original period collides with a proposal from an old original period")
 		} else {
@@ -905,23 +906,23 @@ func TestProposalStoreRegressionWrongPipelinePeriodBug_39387501(t *testing.T) {
 
 	var res event
 
-	res = router.dispatch(&proposalStoreTracer, player, period1Trigger, playerMachine, proposalMachineRound, curRound, 1, 0)
+	res = router.dispatch(context.Background(), &proposalStoreTracer, player, period1Trigger, playerMachine, proposalMachineRound, curRound, 1, 0)
 	require.Equal(t, res.t(), none)
 
-	res = router.dispatch(&proposalStoreTracer, player, propVote1Receipt, playerMachine, proposalMachineRound, curRound, 1, 0)
+	res = router.dispatch(context.Background(), &proposalStoreTracer, player, propVote1Receipt, playerMachine, proposalMachineRound, curRound, 1, 0)
 	require.Equal(t, res.t(), proposalAccepted)
 
-	res = router.dispatch(&proposalStoreTracer, player, period2Trigger, playerMachine, proposalMachineRound, curRound, 2, 0)
+	res = router.dispatch(context.Background(), &proposalStoreTracer, player, period2Trigger, playerMachine, proposalMachineRound, curRound, 2, 0)
 	require.Equal(t, res.t(), none)
 
-	res = router.dispatch(&proposalStoreTracer, player, propVote2Receipt, playerMachine, proposalMachineRound, curRound, 2, 0)
+	res = router.dispatch(context.Background(), &proposalStoreTracer, player, propVote2Receipt, playerMachine, proposalMachineRound, curRound, 2, 0)
 	require.Equal(t, res.t(), proposalAccepted)
 
-	res = router.dispatch(&proposalStoreTracer, player, propPayload2Receipt, playerMachine, proposalMachineRound, curRound, 2, 0)
+	res = router.dispatch(context.Background(), &proposalStoreTracer, player, propPayload2Receipt, playerMachine, proposalMachineRound, curRound, 2, 0)
 	require.Equal(t, res.t(), payloadPipelined)
 	require.Equal(t, res.(payloadProcessedEvent).Period, period(2))
 
-	res = router.dispatch(&proposalStoreTracer, player, propPayload1Receipt, playerMachine, proposalMachineRound, curRound, 1, 0)
+	res = router.dispatch(context.Background(), &proposalStoreTracer, player, propPayload1Receipt, playerMachine, proposalMachineRound, curRound, 1, 0)
 	if res.(payloadProcessedEvent).Period == 2 {
 		t.Fatalf("bug b29ea57: a proposal corresponding to an old period is erroneously seen as as corresponding to a new period")
 	} else {

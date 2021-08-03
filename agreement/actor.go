@@ -17,6 +17,7 @@
 package agreement
 
 import (
+	"context"
 	"fmt"
 )
 
@@ -37,7 +38,7 @@ type actor interface {
 	// handle an event, updating the state of the actor.
 	//
 	// handle should return a sequence of actions to be performed given the event.
-	handle(routerHandle, event) []action
+	handle(context.Context, routerHandle, event) []action
 }
 
 // An actorContract describes the list of allowed preconditions and postconditions
@@ -72,9 +73,9 @@ type checkedActor struct {
 	//   out [][]action
 }
 
-func (l checkedActor) handle(r routerHandle, in event) []action {
+func (l checkedActor) handle(ctx context.Context, r routerHandle, in event) []action {
 	aold := *l.underlying().(*player)
-	out := l.actor.handle(r, in)
+	out := l.actor.handle(ctx, r, in)
 	anew := *l.underlying().(*player)
 
 	//   lout.p = append(l.p, p)
@@ -131,11 +132,11 @@ type ioLoggedActor struct {
 	tracer tracer
 }
 
-func (l ioLoggedActor) handle(h routerHandle, e event) []action {
+func (l ioLoggedActor) handle(ctx context.Context, h routerHandle, e event) []action {
 	if l.tracer.level >= top {
 		fmt.Fprintf(l.tracer.w, "%23v  => %23v: %v\n", "", l.T(), e)
 	}
-	a := l.checkedActor.handle(h, e)
+	a := l.checkedActor.handle(ctx, h, e)
 	if l.tracer.level >= top {
 		fmt.Fprintf(l.tracer.w, "%23v <=  %23v: %v\n", "", l.T(), a)
 	}

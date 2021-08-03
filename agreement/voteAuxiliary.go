@@ -17,6 +17,8 @@
 package agreement
 
 import (
+	"context"
+
 	"github.com/algorand/go-algorand/logging"
 )
 
@@ -57,17 +59,17 @@ func (t *voteTrackerPeriod) underlying() listener {
 // In particular, when soft-voting, player needs to know if it saw a next-vote
 // value bundle (regardless of if it saw a next-vote bottom bundle). This is because
 // of a protocol optimization to prevent "reproposers" from setting the seed Q_r.
-func (t *voteTrackerPeriod) handle(r routerHandle, p player, e event) event {
+func (t *voteTrackerPeriod) handle(ctx context.Context, r routerHandle, p player, e event) event {
 	switch e.t() {
 	case voteAccepted:
 		// forward voteAccepted event
 		round := e.(voteAcceptedEvent).Vote.R.Round
 		period := e.(voteAcceptedEvent).Vote.R.Period
 		step := e.(voteAcceptedEvent).Vote.R.Step
-		e = r.dispatch(p, e, voteMachineStep, round, period, step)
+		e = r.dispatch(ctx, p, e, voteMachineStep, round, period, step)
 		if e.t() != none && e.(thresholdEvent).Step >= next {
 			// dispatch to self, so that we can unit test threshold caching
-			r.dispatch(p, e, voteMachinePeriod, round, period, 0)
+			r.dispatch(ctx, p, e, voteMachinePeriod, round, period, 0)
 		}
 		// send any threshold event (or none) back to the round
 		return e
@@ -130,15 +132,15 @@ func (t *voteTrackerRound) underlying() listener {
 // the parent.
 //
 // A thresholdEvent which is emitted is saved for later freshestEvent queries.
-func (t *voteTrackerRound) handle(r routerHandle, p player, e event) event {
+func (t *voteTrackerRound) handle(ctx context.Context, r routerHandle, p player, e event) event {
 	switch e.t() {
 	case voteAccepted:
 		round := e.(voteAcceptedEvent).Vote.R.Round
 		period := e.(voteAcceptedEvent).Vote.R.Period
-		e = r.dispatch(p, e, voteMachinePeriod, round, period, 0)
+		e = r.dispatch(ctx, p, e, voteMachinePeriod, round, period, 0)
 		// dispatch to self to handle freshest bundle
 		if e.t() != none {
-			e2 := r.dispatch(p, e, voteMachineRound, round, 0, 0)
+			e2 := r.dispatch(ctx, p, e, voteMachineRound, round, 0, 0)
 			return e2
 		}
 		return emptyEvent{}

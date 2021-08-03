@@ -17,6 +17,7 @@
 package agreement
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/algorand/go-algorand/logging"
@@ -53,22 +54,22 @@ func (m *proposalManager) underlying() listener {
 //      dispatches this event to the proposalMachineRound.
 //
 // For more details, see each method's respective documentation below.
-func (m *proposalManager) handle(r routerHandle, p player, e event) event {
+func (m *proposalManager) handle(ctx context.Context, r routerHandle, p player, e event) event {
 	switch e.t() {
 	case votePresent, voteVerified, payloadPresent, payloadVerified:
-		return m.handleMessageEvent(r, p, e.(filterableMessageEvent))
+		return m.handleMessageEvent(ctx, r, p, e.(filterableMessageEvent))
 	case roundInterruption:
-		return m.handleNewRound(r, p, e.(roundInterruptionEvent).Round)
+		return m.handleNewRound(ctx, r, p, e.(roundInterruptionEvent).Round)
 	case softThreshold, certThreshold:
 		e := e.(thresholdEvent)
 		if p.Period < e.Period {
-			r = m.handleNewPeriod(r, p, e)
+			r = m.handleNewPeriod(ctx, r, p, e)
 		}
 
-		ec := r.dispatch(p, e, proposalMachineRound, e.Round, e.Period, 0)
+		ec := r.dispatch(ctx, p, e, proposalMachineRound, e.Round, e.Period, 0)
 		return ec
 	case nextThreshold:
-		r = m.handleNewPeriod(r, p, e.(thresholdEvent))
+		r = m.handleNewPeriod(ctx, r, p, e.(thresholdEvent))
 		return emptyEvent{}
 	}
 	logging.Base().Panicf("proposalManager: bad event type: observed an event of type %v", e.t())
@@ -78,21 +79,21 @@ func (m *proposalManager) handle(r routerHandle, p player, e event) event {
 // handleNewRound is called for roundInterruption and certThreshold events.  The
 // proposalManager dispatches a newRound event to the proposalMachineRound and
 // returns a payloadPipelined event or an empty event.
-func (m *proposalManager) handleNewRound(r routerHandle, p player, round round) event {
-	e := r.dispatch(p, newRoundEvent{}, proposalMachineRound, round, 0, 0)
+func (m *proposalManager) handleNewRound(ctx context.Context, r routerHandle, p player, round round) event {
+	e := r.dispatch(ctx, p, newRoundEvent{}, proposalMachineRound, round, 0, 0)
 	return e
 }
 
 // handleNewPeriod is called for threshold events that move the state machine into a new period.
 // These events are dispatched to the proposalMachineRound, and an empty event is returned.
-func (m *proposalManager) handleNewPeriod(r routerHandle, p player, e thresholdEvent) routerHandle {
+func (m *proposalManager) handleNewPeriod(ctx context.Context, r routerHandle, p player, e thresholdEvent) routerHandle {
 	target := e.Period
 	if e.t() == nextThreshold {
 		target = e.Period + 1
 	}
 
 	en := newPeriodEvent{Period: target, Proposal: e.Proposal}
-	r.dispatch(p, en, proposalMachineRound, e.Round, 0, 0)
+	r.dispatch(ctx, p, en, proposalMachineRound, e.Round, 0, 0)
 	return r
 }
 
@@ -122,7 +123,7 @@ func (m *proposalManager) handleNewPeriod(r routerHandle, p player, e thresholdE
 //   event is returned.  Otherwise, the event is dispatched to the
 //   proposalMachineRound, and then the resulting payload{Rejected,Accepted} or
 //   proposalCommittable event is returned.
-func (m *proposalManager) handleMessageEvent(r routerHandle, p player, e filterableMessageEvent) (res event) {
+func (m *proposalManager) handleMessageEvent(ctx context.Context, r routerHandle, p player, e filterableMessageEvent) (res event) {
 	var pipelinedRound round
 	var pipelinedPeriod period
 	defer func() {
@@ -131,7 +132,7 @@ func (m *proposalManager) handleMessageEvent(r routerHandle, p player, e filtera
 
 	switch e.t() {
 	case votePresent:
-		err := m.filterProposalVote(p, r, e.Input.UnauthenticatedVote, e.FreshnessData)
+		err := m.filterProposalVote(ctx, p, r, e.Input.UnauthenticatedVote, e.FreshnessData)
 		if err != nil {
 			return filteredEvent{T: voteFiltered, Err: makeSerErr(err)}
 		}
@@ -160,7 +161,7 @@ func (m *proposalManager) handleMessageEvent(r routerHandle, p player, e filtera
 			r.t.timeRPlus1().RecVoteReceived(v)
 		}
 
-		return r.dispatch(p, e.messageEvent, proposalMachineRound, v.R.Round, v.R.Period, 0)
+		return r.dispatch(ctx, p, e.messageEvent, proposalMachineRound, v.R.Round, v.R.Period, 0)
 
 	case payloadPresent:
 		propRound := e.Input.UnauthenticatedProposal.Round()
@@ -169,7 +170,7 @@ func (m *proposalManager) handleMessageEvent(r routerHandle, p player, e filtera
 		if p.Round == propRound {
 			pipelinedRound = p.Round
 			pipelinedPeriod = p.Period
-			e1 := r.dispatch(p, in, proposalMachineRound, p.Round, p.Period, 0)
+			e1 := r.dispatch(ctx, p, in, proposalMachineRound, p.Round, p.Period, 0)
 			if e1.t() == payloadRejected {
 				return e1
 			}
@@ -184,7 +185,7 @@ func (m *proposalManager) handleMessageEvent(r routerHandle, p player, e filtera
 		}
 
 		// pipeline for next round
-		e2 := r.dispatch(p, in, proposalMachineRound, p.Round+1, 0, 0)
+		e2 := r.dispatch(ctx, p, in, proposalMachineRound, p.Round+1, 0, 0)
 		if e2.t() == payloadRejected {
 			return e2
 		}
@@ -210,19 +211,19 @@ func (m *proposalManager) handleMessageEvent(r routerHandle, p player, e filtera
 		up := e.Input.UnauthenticatedProposal
 		r.t.timeR().RecPayloadValidation(up.OriginalPeriod, propose, up.value())
 
-		return r.dispatch(p, e.messageEvent, proposalMachineRound, p.Round, p.Period, 0)
+		return r.dispatch(ctx, p, e.messageEvent, proposalMachineRound, p.Round, p.Period, 0)
 	}
 }
 
 // filterVote filters a vote, checking if it is both fresh and not a duplicate.
-func (m *proposalManager) filterProposalVote(p player, r routerHandle, uv unauthenticatedVote, freshData freshnessData) error {
+func (m *proposalManager) filterProposalVote(ctx context.Context, p player, r routerHandle, uv unauthenticatedVote, freshData freshnessData) error {
 	err := proposalFresh(freshData, uv)
 	if err != nil {
 		return fmt.Errorf("proposalManager: filtered proposal-vote due to age: %v", err)
 	}
 
 	qe := voteFilterRequestEvent{RawVote: uv.R}
-	sawVote := r.dispatch(p, qe, proposalMachinePeriod, uv.R.Round, uv.R.Period, 0)
+	sawVote := r.dispatch(ctx, p, qe, proposalMachinePeriod, uv.R.Round, uv.R.Period, 0)
 	if sawVote.t() == voteFiltered {
 		return fmt.Errorf("proposalManager: filtered proposal-vote: sender %v had already sent a vote in round %d period %d", uv.R.Sender, uv.R.Round, uv.R.Period)
 	}
