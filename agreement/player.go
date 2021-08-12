@@ -56,8 +56,6 @@ type player struct {
 
 	// pipelined is set to true if this player is part of a pipelinePlayer.
 	pipelined bool
-
-	roundEnterer roundEnterer
 }
 
 func (p *player) T() stateMachineTag {
@@ -107,10 +105,6 @@ func (p *player) allPlayersRPS() []RPS {
 func (p *player) handle(r routerHandle, e event) []action {
 	var actions []action
 
-	if p.roundEnterer == nil { // XXX
-		p.roundEnterer = playerRoundEnterer{}
-	}
-
 	if e.t() == none {
 		return nil
 	}
@@ -159,9 +153,11 @@ func (p *player) handle(r routerHandle, e event) []action {
 			return actions
 		}
 	case roundInterruptionEvent:
-		return p.roundEnterer.enter(p, r, e, e.Round)
+		return p.enterRound(r, e, e.Round)
 	case checkpointEvent:
 		return p.handleCheckpointEvent(r, e)
+	case roundDecidedEvent:
+		return p.handleRoundDecidedEvent(r, e)
 	default:
 		panic("bad event")
 	}
@@ -319,7 +315,7 @@ func (p *player) handleThresholdEvent(r routerHandle, e thresholdEvent) []action
 			cert := Certificate(e.Bundle)
 			a0 := ensureAction{Payload: res.Payload, Certificate: cert}
 			actions = append(actions, a0)
-			as := p.roundEnterer.enter(p, r, e, round{Number: p.Round.Number + 1, Branch: bookkeeping.BlockHash(cert.Proposal.BlockDigest)})
+			as := p.enterRound(r, e, round{Number: p.Round.Number + 1, Branch: bookkeeping.BlockHash(cert.Proposal.BlockDigest)})
 			return append(actions, as...)
 		}
 		// we don't have the block! We need to ensure we will be able to receive the block.
@@ -395,17 +391,14 @@ func (p *player) enterPeriod(r routerHandle, source thresholdEvent, target perio
 	return actions
 }
 
-type roundEnterer interface {
-	enter(p *player, r routerHandle, source event, target round) []action
+func (p *player) enterRound(r routerHandle, source event, target round) []action {
+	//return r.dispatch(*p, roundDecidedEvent{Source: source, Target: target}, playerMachine, p.Round, 0, 0)
+	return r.submitTop(p, roundDecidedEvent{Source: source, Target: target})
 }
 
-type playerRoundEnterer struct{}
-
-func (playerRoundEnterer) enter(p *player, r routerHandle, source event, target round) []action {
-	return enterRound(p, r, source, target)
-}
-
-func enterRound(p *player, r routerHandle, source event, target round) []action {
+func (p *player) handleRoundDecidedEvent(r routerHandle, e roundDecidedEvent) []action {
+	source := e.Source
+	target := e.Target
 	var actions []action
 
 	newRoundEvent := source
@@ -418,7 +411,7 @@ func enterRound(p *player, r routerHandle, source event, target round) []action 
 		newRoundEvent = roundInterruptionEvent{Round: target}
 	}
 	// this happens here so that the proposalMachine contract does not complain
-	e := r.dispatch(*p, newRoundEvent, proposalMachine, target, 0, 0)
+	ep := r.dispatch(*p, newRoundEvent, proposalMachine, target, 0, 0)
 
 	p.LastConcluding = p.Step
 	p.Round = target
@@ -444,8 +437,8 @@ func enterRound(p *player, r routerHandle, source event, target round) []action 
 	as := pseudonodeAction{T: assemble, Round: p.Round, Period: 0}
 	actions = append(actions, rezeroAction{Round: target}, as)
 
-	if e.t() == payloadPipelined {
-		e := e.(payloadProcessedEvent)
+	if ep.t() == payloadPipelined {
+		e := ep.(payloadProcessedEvent)
 		msg := message{MessageHandle: 0, Tag: protocol.ProposalPayloadTag, UnauthenticatedProposal: e.UnauthenticatedPayload} // TODO do we want to keep around the original handle?
 		a := verifyPayloadAction(messageEvent{T: payloadPresent, Input: msg}, p.Round, e.Period, e.Pinned)
 		actions = append(actions, a)
@@ -648,7 +641,7 @@ func (p *player) handleMessageEvent(r routerHandle, e messageEvent) (actions []a
 				cert := Certificate(freshestRes.Event.Bundle)
 				a0 := ensureAction{Payload: e.Input.Proposal, Certificate: cert}
 				actions = append(actions, a0)
-				as := enterRound(p, r, delegatedE, round{Number: cert.Round + 1, Branch: bookkeeping.BlockHash(e.Input.Proposal.Block.Digest())})
+				as := p.enterRound(r, delegatedE, round{Number: cert.Round + 1, Branch: bookkeeping.BlockHash(e.Input.Proposal.Block.Digest())})
 				return append(actions, as...)
 			}
 		}

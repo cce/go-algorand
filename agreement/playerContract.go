@@ -77,6 +77,9 @@ func (c playerContract) call(aold, anew actor, in event, out []action) (pre, pos
 		// this is an expcted event that has no preconditions. If there was an issue with the persistence, it would have loggeed already
 		// when generated.
 
+	case roundDecidedEvent:
+		// XXX
+
 	default:
 		pre = append(pre, fmt.Errorf("bad event type delivered to player: e.(type) = %T", in))
 	}

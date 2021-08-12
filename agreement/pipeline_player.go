@@ -43,11 +43,10 @@ func makePipelinePlayer(nextRound basics.Round, nextVersion protocol.ConsensusVe
 	}
 	r := makeRoundBranch(nextRound, bookkeeping.BlockHash{}) // XXXX need prev hash for next round?
 	p := &player{
-		Round:        r,
-		Step:         soft,
-		Deadline:     FilterTimeout(0, nextVersion),
-		pipelined:    true,
-		roundEnterer: &pipelineRoundEnterer{pp: ret},
+		Round:     r,
+		Step:      soft,
+		Deadline:  FilterTimeout(0, nextVersion),
+		pipelined: true,
 	}
 	ret.Players[r] = p
 	return ret
@@ -136,11 +135,10 @@ func (p *pipelinePlayer) newPlayerForEvent(e externalEvent, rnd round) (*player,
 		}
 		// XXX check when ConsensusVersionView.Err is set by LedgerReader
 		return &player{
-			Round:        rnd,
-			Step:         soft,
-			Deadline:     FilterTimeout(0, cv),
-			pipelined:    true,
-			roundEnterer: &pipelineRoundEnterer{pp: p},
+			Round:     rnd,
+			Step:      soft,
+			Deadline:  FilterTimeout(0, cv),
+			pipelined: true,
 		}, nil
 	default:
 		return nil, fmt.Errorf("can't make player for event %+v", e)
@@ -228,7 +226,7 @@ type pipelineRoundEnterer struct {
 
 func (re *pipelineRoundEnterer) enter(p *player, r routerHandle, source event, target round) []action {
 	prevRound := p.Round
-	a := enterRound(p, r, source, target)
+	a := p.enterRound(r, source, target)
 	if p.Round != target {
 		panic("enterRound did not transition player to target")
 	}

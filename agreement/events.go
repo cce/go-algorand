@@ -229,6 +229,9 @@ const (
 	// checkpointReached indicates that we've completly persisted the agreement state to disk.
 	// it's invoked by the end of the persistence loop on either success or failuire.
 	checkpointReached
+
+	// roundDecided is dispatched by the player when it is ready to enter a new round.
+	roundDecided
 )
 
 type emptyEvent struct{}
@@ -759,6 +762,8 @@ func zeroEvent(t eventType) event {
 		return thresholdEvent{}
 	case checkpointReached:
 		return checkpointEvent{}
+	case roundDecided:
+		return roundDecidedEvent{}
 	default:
 		err := fmt.Errorf("bad event type: %v", t)
 		panic(err)
@@ -931,4 +936,21 @@ func (e checkpointEvent) ConsensusRound() round {
 
 func (e checkpointEvent) AttachConsensusVersion(v ConsensusVersionView) externalEvent {
 	return e
+}
+
+type roundDecidedEvent struct {
+	Source event
+	Target round
+}
+
+func (e roundDecidedEvent) t() eventType {
+	return roundDecided
+}
+
+func (e roundDecidedEvent) String() string {
+	return e.t().String()
+}
+
+func (e roundDecidedEvent) ComparableStr() string {
+	return e.String()
 }

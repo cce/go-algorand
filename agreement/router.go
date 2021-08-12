@@ -58,6 +58,15 @@ func (h *routerHandle) dispatch(state player, e event, dest stateMachineTag, r r
 	return e
 }
 
+func (h *routerHandle) submitTop(state actor, e event) []action {
+	rr, ok := h.r.(*rootRouter)
+	if !ok {
+		panic("submitTop called on non-root router")
+	}
+	_, a := rr.submitTop(h.t, state, e)
+	return a
+}
+
 // router routes events and queries to the correct receiving state machine.
 //
 // router also encapsulates the garbage collection of old state machines.
