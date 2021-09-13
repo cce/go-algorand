@@ -278,16 +278,21 @@ commands:
             export ALGORAND_DEADLOCK=enable
             export GIMME_ENV_PREFIX=<< parameters.build_dir >>/.gimme/envs
             export GIMME_VERSION_PREFIX=<< parameters.build_dir >>/.gimme/versions
+            echo "TIME $(date '+%T')"
             GOLANG_VERSION=$(./scripts/get_golang_version.sh)
             eval "$(<< parameters.build_dir >>/gimme "${GOLANG_VERSION}")"
+            echo "TIME $(date '+%T')"
             scripts/configure_dev.sh
+            echo "TIME $(date '+%T')"
             scripts/buildtools/install_buildtools.sh -o "gotest.tools/gotestsum"
+            echo "TIME $(date '+%T')"
             PACKAGES="$(go list ./... | grep -v /go-algorand/test/)"
             export PACKAGE_NAMES=$(echo $PACKAGES | tr -d '\n')
             export PARTITION_TOTAL=$CIRCLE_NODE_TOTAL
             export PARTITION_ID=$CIRCLE_NODE_INDEX
             export PARALLEL_FLAG="-p 1"
             gotestsum --format testname --junitfile << parameters.result_path >>/<< parameters.result_subdir >>/${CIRCLE_NODE_INDEX}/results.xml --jsonfile << parameters.result_path >>/<< parameters.result_subdir >>/${CIRCLE_NODE_INDEX}/testresults.json -- --tags "sqlite_unlock_notify sqlite_omit_load_extension" << parameters.short_test_flag >> -race -timeout 1h -coverprofile=coverage.txt -covermode=atomic -p 1 $PACKAGE_NAMES
+            echo "TIME $(date '+%T')"
       - store_artifacts:
           path: << parameters.result_path >>
           destination: test-results
@@ -345,16 +350,21 @@ commands:
             export BUILD_TYPE=integration
             export GIMME_ENV_PREFIX=<< parameters.build_dir >>/.gimme/envs
             export GIMME_VERSION_PREFIX=<< parameters.build_dir >>/.gimme/versions
+            echo "TIME $(date '+%T')"
             GOLANG_VERSION=$(./scripts/get_golang_version.sh)
             eval "$(<< parameters.build_dir >>/gimme "${GOLANG_VERSION}")"
+            echo "TIME $(date '+%T')"
             scripts/configure_dev.sh
+            echo "TIME $(date '+%T')"
             scripts/buildtools/install_buildtools.sh -o "gotest.tools/gotestsum"
+            echo "TIME $(date '+%T')"
             export ALGOTEST=1
             export SHORTTEST=<< parameters.short_test_flag >>
             export TEST_RESULTS=<< parameters.result_path >>/<< parameters.result_subdir >>/$CIRCLE_NODE_INDEX
             export PARTITION_TOTAL=$CIRCLE_NODE_TOTAL
             export PARTITION_ID=$CIRCLE_NODE_INDEX
             test/scripts/run_integration_tests.sh
+            echo "TIME $(date '+%T')"
       - store_artifacts:
           path: << parameters.result_path >>
           destination: test-results
