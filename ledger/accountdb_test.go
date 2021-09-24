@@ -897,12 +897,10 @@ func BenchmarkWritingRandomBalancesDisk(b *testing.B) {
 	dbs, cleanup := initDatabase()
 	defer cleanup()
 
-	var accountsAddress [][]byte
-	var accountsRowID []int
-	err := dbs.Rdb.Atomic(func(ctx context.Context, tx *sql.Tx) error {
-		accountsAddress, accountsRowID = selectAccounts(tx)
-		return nil
-	})
+	tx, err := dbs.Wdb.Handle.Begin()
+	require.NoError(b, err)
+	accountsAddress, accountsRowID := selectAccounts(tx)
+	err = tx.Commit()
 	require.NoError(b, err)
 	b.Logf("len accountsAddress %d", len(accountsAddress))
 	b.Logf("len accountsRowID %d", len(accountsRowID))
@@ -949,20 +947,22 @@ func BenchmarkWritingRandomBalancesDisk(b *testing.B) {
 		n := 0
 		for _, batch := range batches {
 			// run one transaction per batch
-			err = dbs.Wdb.Atomic(func(ctx context.Context, tx *sql.Tx) error {
-				preparedUpdate, err := tx.Prepare("UPDATE accountbase SET data = ? WHERE address = ?")
+			tx, err := dbs.Wdb.Handle.Begin()
+			require.NoError(b, err)
+
+			preparedUpdate, err := tx.Prepare("UPDATE accountbase SET data = ? WHERE address = ?")
+			require.NoError(b, err)
+			defer preparedUpdate.Close()
+			for _, update := range batch {
+				res, err := preparedUpdate.Exec(update.data, accountsAddress[update.index])
 				require.NoError(b, err)
-				defer preparedUpdate.Close()
-				for _, update := range batch {
-					res, err := preparedUpdate.Exec(update.data, accountsAddress[update.index])
-					require.NoError(b, err)
-					rowsAffected, err := res.RowsAffected()
-					require.NoError(b, err)
-					require.Equal(b, int64(1), rowsAffected)
-					n++
-				}
-				return nil
-			})
+				rowsAffected, err := res.RowsAffected()
+				require.NoError(b, err)
+				require.Equal(b, int64(1), rowsAffected)
+				n++
+			}
+
+			err = tx.Commit()
 			require.NoError(b, err)
 		}
 		require.Equal(b, b.N, n)
@@ -978,20 +978,22 @@ func BenchmarkWritingRandomBalancesDisk(b *testing.B) {
 		n := 0
 		for _, batch := range batches {
 			// run one transaction per batch
-			err = dbs.Wdb.Atomic(func(ctx context.Context, tx *sql.Tx) error {
-				preparedUpdate, err := tx.Prepare("UPDATE accountbase SET data = ? WHERE rowid = ?")
+			tx, err := dbs.Wdb.Handle.Begin()
+			require.NoError(b, err)
+
+			preparedUpdate, err := tx.Prepare("UPDATE accountbase SET data = ? WHERE rowid = ?")
+			require.NoError(b, err)
+			defer preparedUpdate.Close()
+			for _, update := range batch {
+				res, err := preparedUpdate.Exec(update.data, accountsRowID[update.index])
 				require.NoError(b, err)
-				defer preparedUpdate.Close()
-				for _, update := range batch {
-					res, err := preparedUpdate.Exec(update.data, accountsRowID[update.index])
-					require.NoError(b, err)
-					rowsAffected, err := res.RowsAffected()
-					require.NoError(b, err)
-					require.Equal(b, int64(1), rowsAffected)
-					n++
-				}
-				return nil
-			})
+				rowsAffected, err := res.RowsAffected()
+				require.NoError(b, err)
+				require.Equal(b, int64(1), rowsAffected)
+				n++
+			}
+
+			err = tx.Commit()
 			require.NoError(b, err)
 		}
 		require.Equal(b, b.N, n)
