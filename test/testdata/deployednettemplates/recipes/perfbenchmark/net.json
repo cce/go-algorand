@@ -30,6 +30,10 @@
 						{
 							"Name": "Wallet1",
 							"ParticipationOnly": false
+						},
+						{
+							"Name": "Wallet4",
+							"ParticipationOnly": false
 						}
 					],
 					"APIEndpoint": "{{APIEndpoint}}",
@@ -53,6 +57,10 @@
 					"Wallets": [
 						{
 							"Name": "Wallet2",
+							"ParticipationOnly": false
+						},
+						{
+							"Name": "Wallet5",
 							"ParticipationOnly": false
 						}
 					],
@@ -78,6 +86,10 @@
 						{
 							"Name": "Wallet3",
 							"ParticipationOnly": false
+						},
+						{
+							"Name": "Wallet6",
+							"ParticipationOnly": false
 						}
 					],
 					"APIEndpoint": "{{APIEndpoint}}",
@@ -100,7 +112,11 @@
 					"Name": "nonParticipatingNode1",
 					"Wallets": [
 						{
-							"Name": "Wallet4",
+							"Name": "Wallet7",
+							"ParticipationOnly": false
+						},
+						{
+							"Name": "Wallet12",
 							"ParticipationOnly": false
 						}
 					],
@@ -122,7 +138,7 @@
 					"Name": "nonParticipatingNode2",
 					"Wallets": [
 						{
-							"Name": "Wallet5",
+							"Name": "Wallet8",
 							"ParticipationOnly": false
 						}
 					],
@@ -144,7 +160,7 @@
 					"Name": "nonParticipatingNode3",
 					"Wallets": [
 						{
-							"Name": "Wallet6",
+							"Name": "Wallet9",
 							"ParticipationOnly": false
 						}
 					],
@@ -164,7 +180,12 @@
 			"Nodes": [
 				{
 					"Name": "nonParticipatingNode4",
-					"Wallets": null,
+					"Wallets": [
+						{
+							"Name": "Wallet10",
+							"ParticipationOnly": false
+						}
+					],
 					"APIEndpoint": "{{APIEndpoint}}",
 					"APIToken": "{{APIToken}}",
 					"EnableTelemetry": false,
@@ -181,7 +202,12 @@
 			"Nodes": [
 				{
 					"Name": "nonParticipatingNode5",
-					"Wallets": null,
+					"Wallets": [
+						{
+							"Name": "Wallet11",
+							"ParticipationOnly": false
+						}
+					],
 					"APIEndpoint": "{{APIEndpoint}}",
 					"APIToken": "{{APIToken}}",
 					"EnableTelemetry": false,
