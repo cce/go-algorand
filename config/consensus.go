@@ -648,8 +648,8 @@ func initConsensusProtocols() {
 		DownCommitteeSize:      10000,
 		DownCommitteeThreshold: 7750,
 
-		AgreementFilterTimeout:        4 * time.Second,
-		AgreementFilterTimeoutPeriod0: 2 * time.Second,
+		AgreementFilterTimeout:        3 * time.Second,
+		AgreementFilterTimeoutPeriod0: 4 * time.Second,
 
 		FastRecoveryLambda: 5 * time.Minute,
 
@@ -1033,7 +1033,7 @@ func initConsensusProtocols() {
 	vFuture.ApprovedUpgrades = map[protocol.ConsensusVersion]uint64{}
 
 	// FilterTimeout for period 0 should take a new optimized, configured value, need to revisit this later
-	vFuture.AgreementFilterTimeoutPeriod0 = 2 * time.Second
+	vFuture.AgreementFilterTimeoutPeriod0 = 4 * time.Second
 
 	// Enable compact certificates.
 	vFuture.CompactCertRounds = 128
