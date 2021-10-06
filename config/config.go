@@ -183,7 +183,7 @@ type Local struct {
 	SuggestedFeeBlockHistory int `version[0]:"3"`
 
 	// TxPoolSize is the number of transactions that fit in the transaction pool
-	TxPoolSize int `version[0]:"50000" version[5]:"15000"`
+	TxPoolSize int `version[0]:"50000" version[6]:"50000"`
 
 	// number of seconds allowed for syncing transactions
 	TxSyncTimeoutSeconds int64 `version[0]:"30"`
