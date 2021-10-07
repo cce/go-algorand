@@ -648,7 +648,7 @@ func initConsensusProtocols() {
 		DownCommitteeSize:      10000,
 		DownCommitteeThreshold: 7750,
 
-		AgreementFilterTimeout:        4 * time.Second,
+		AgreementFilterTimeout:        3 * time.Second,
 		AgreementFilterTimeoutPeriod0: 4 * time.Second,
 
 		FastRecoveryLambda: 5 * time.Minute,
