@@ -269,6 +269,7 @@ func TestBasicCatchpointWriter(t *testing.T) {
 }
 
 func TestFullCatchpointWriter(t *testing.T) {
+	t.Skip("no KV support")
 	partitiontest.PartitionTest(t)
 
 	// create new protocol version, which has lower lookback

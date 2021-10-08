@@ -23,7 +23,6 @@ import (
 
 	"github.com/algorand/go-algorand/config"
 	"github.com/algorand/go-algorand/logging"
-	"github.com/algorand/go-algorand/logging/logspec"
 	"github.com/algorand/go-algorand/protocol"
 )
 
@@ -281,15 +280,15 @@ func (d *demux) next(s *Service, deadline time.Duration, fastDeadline time.Durat
 		// The round nextRound have reached externally ( most likely by the catchup service )
 		// since we don't know how long we've been waiting in this select statement and we don't really know
 		// if the current next round has been increased by 1 or more, we need to sample it again.
-		previousRound := nextRound
+		//previousRound := nextRound
 		nextRound = s.Ledger.NextRound()
 
-		logEvent := logspec.AgreementEvent{
-			Type:  logspec.RoundInterrupted,
-			Round: uint64(previousRound),
-		}
+		// logEvent := logspec.AgreementEvent{
+		// 	Type:  logspec.RoundInterrupted,
+		// 	Round: uint64(previousRound),
+		// }
 
-		s.log.with(logEvent).Infof("agreement: round %d ended early due to concurrent write; next round is %d", previousRound, nextRound)
+		//s.log.with(logEvent).Infof("agreement: round %d ended early due to concurrent write; next round is %d", previousRound, nextRound)
 		e = roundInterruptionEvent{Round: nextRound}
 		d.UpdateEventsQueue(eventQueueDemux, 1)
 		d.monitor.inc(demuxCoserviceType)

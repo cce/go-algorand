@@ -19,7 +19,6 @@ package ledger
 import (
 	"context"
 	"crypto/rand"
-	"database/sql"
 	"fmt"
 	"io/ioutil"
 	mathrand "math/rand"
@@ -218,11 +217,11 @@ func TestArchivalRestart(t *testing.T) {
 	l.WaitForCommit(blk.Round())
 
 	var latest, earliest basics.Round
-	err = l.blockDBs.Rdb.Atomic(func(ctx context.Context, tx *sql.Tx) error {
-		latest, err = blockLatest(tx)
+	err = atomicReads(l.blockDBs.Rdb, l.kv, func(ctx context.Context, tx *atomicReadTx) error {
+		latest, err = blockLatest(tx.kvRead)
 		require.NoError(t, err)
 
-		earliest, err = blockEarliest(tx)
+		earliest, err = blockEarliest(tx.kvRead)
 		require.NoError(t, err)
 		return err
 	})
@@ -235,11 +234,11 @@ func TestArchivalRestart(t *testing.T) {
 	require.NoError(t, err)
 	defer l.Close()
 
-	err = l.blockDBs.Rdb.Atomic(func(ctx context.Context, tx *sql.Tx) error {
-		latest, err = blockLatest(tx)
+	err = atomicReads(l.blockDBs.Rdb, l.kv, func(ctx context.Context, tx *atomicReadTx) error {
+		latest, err = blockLatest(tx.kvRead)
 		require.NoError(t, err)
 
-		earliest, err = blockEarliest(tx)
+		earliest, err = blockEarliest(tx.kvRead)
 		require.NoError(t, err)
 		return err
 	})
@@ -689,6 +688,7 @@ func makeSignedTxnInBlock(tx transactions.Transaction) transactions.SignedTxnInB
 }
 
 func TestArchivalFromNonArchival(t *testing.T) {
+	t.Skip("no KV support")
 	partitiontest.PartitionTest(t)
 
 	// Start in non-archival mode, add 2K blocks, restart in archival mode ensure only genesis block is there
@@ -753,11 +753,11 @@ func TestArchivalFromNonArchival(t *testing.T) {
 	l.WaitForCommit(blk.Round())
 
 	var latest, earliest basics.Round
-	err = l.blockDBs.Rdb.Atomic(func(ctx context.Context, tx *sql.Tx) error {
-		latest, err = blockLatest(tx)
+	err = atomicReads(l.blockDBs.Rdb, l.kv, func(ctx context.Context, tx *atomicReadTx) error {
+		latest, err = blockLatest(tx.kvRead)
 		require.NoError(t, err)
 
-		earliest, err = blockEarliest(tx)
+		earliest, err = blockEarliest(tx.kvRead)
 		require.NoError(t, err)
 		return err
 	})
@@ -773,11 +773,11 @@ func TestArchivalFromNonArchival(t *testing.T) {
 	require.NoError(t, err)
 	defer l.Close()
 
-	err = l.blockDBs.Rdb.Atomic(func(ctx context.Context, tx *sql.Tx) error {
-		latest, err = blockLatest(tx)
+	err = atomicReads(l.blockDBs.Rdb, l.kv, func(ctx context.Context, tx *atomicReadTx) error {
+		latest, err = blockLatest(tx.kvRead)
 		require.NoError(t, err)
 
-		earliest, err = blockEarliest(tx)
+		earliest, err = blockEarliest(tx.kvRead)
 		require.NoError(t, err)
 		return err
 	})

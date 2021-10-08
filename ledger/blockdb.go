@@ -44,22 +44,23 @@ var blockResetExprs = []string{
 	`DROP TABLE IF EXISTS blocks`,
 }
 
-func blockInit(tx *sql.Tx, initBlocks []bookkeeping.Block) error {
+func blockInit(tx *atomicWriteTx, initBlocks []bookkeeping.Block) error {
 	for _, tableCreate := range blockSchema {
-		_, err := tx.Exec(tableCreate)
+		_, err := tx.sqlTx.Exec(tableCreate)
 		if err != nil {
 			return fmt.Errorf("blockdb blockInit could not create table %v", err)
 		}
 	}
 
-	next, err := blockNext(tx)
+	next, err := blockNext(tx.kvRead)
 	if err != nil {
 		return err
 	}
 
 	if next == 0 {
+		curRound := sql.NullInt64{}
 		for _, blk := range initBlocks {
-			err = blockPut(tx, blk, agreement.Certificate{})
+			curRound, err = blockPut(tx.kvRead, tx.kvWrite, blk, agreement.Certificate{}, curRound)
 			if err != nil {
 				serr, ok := err.(sqlite3.Error)
 				if ok && serr.Code == sqlite3.ErrConstraint {
@@ -73,19 +74,21 @@ func blockInit(tx *sql.Tx, initBlocks []bookkeeping.Block) error {
 	return nil
 }
 
-func blockResetDB(tx *sql.Tx) error {
+func blockResetDB(tx *sql.Tx, kv kvWrite) error {
 	for _, stmt := range blockResetExprs {
 		_, err := tx.Exec(stmt)
 		if err != nil {
 			return err
 		}
 	}
+	kvBlockReset(kv)
 	return nil
 }
 
-func blockGet(tx *sql.Tx, rnd basics.Round) (blk bookkeeping.Block, err error) {
+func blockGet(kv kvRead, rnd basics.Round) (blk bookkeeping.Block, err error) {
 	var buf []byte
-	err = tx.QueryRow("SELECT blkdata FROM blocks WHERE rnd=?", rnd).Scan(&buf)
+	//err = tx.QueryRow("SELECT blkdata FROM blocks WHERE rnd=?", rnd).Scan(&buf)
+	buf, _, err = kvBlockGet(kv, rnd)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			err = ledgercore.ErrNoEntry{Round: rnd}
@@ -98,9 +101,10 @@ func blockGet(tx *sql.Tx, rnd basics.Round) (blk bookkeeping.Block, err error) {
 	return
 }
 
-func blockGetHdr(tx *sql.Tx, rnd basics.Round) (hdr bookkeeping.BlockHeader, err error) {
+func blockGetHdr(kv kvRead, rnd basics.Round) (hdr bookkeeping.BlockHeader, err error) {
 	var buf []byte
-	err = tx.QueryRow("SELECT hdrdata FROM blocks WHERE rnd=?", rnd).Scan(&buf)
+	//err = tx.QueryRow("SELECT hdrdata FROM blocks WHERE rnd=?", rnd).Scan(&buf)
+	buf, err = kvBlockHeaderGet(kv, rnd)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			err = ledgercore.ErrNoEntry{Round: rnd}
@@ -113,8 +117,9 @@ func blockGetHdr(tx *sql.Tx, rnd basics.Round) (hdr bookkeeping.BlockHeader, err
 	return
 }
 
-func blockGetEncodedCert(tx *sql.Tx, rnd basics.Round) (blk []byte, cert []byte, err error) {
-	err = tx.QueryRow("SELECT blkdata, certdata FROM blocks WHERE rnd=?", rnd).Scan(&blk, &cert)
+func blockGetEncodedCert(kv kvRead, rnd basics.Round) (blk []byte, cert []byte, err error) {
+	//err = tx.QueryRow("SELECT blkdata, certdata FROM blocks WHERE rnd=?", rnd).Scan(&blk, &cert)
+	blk, cert, err = kvBlockGet(kv, rnd)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			err = ledgercore.ErrNoEntry{Round: rnd}
@@ -125,8 +130,8 @@ func blockGetEncodedCert(tx *sql.Tx, rnd basics.Round) (blk []byte, cert []byte,
 	return
 }
 
-func blockGetCert(tx *sql.Tx, rnd basics.Round) (blk bookkeeping.Block, cert agreement.Certificate, err error) {
-	blkbuf, certbuf, err := blockGetEncodedCert(tx, rnd)
+func blockGetCert(kv kvRead, rnd basics.Round) (blk bookkeeping.Block, cert agreement.Certificate, err error) {
+	blkbuf, certbuf, err := blockGetEncodedCert(kv, rnd)
 	if err != nil {
 		return
 	}
@@ -145,38 +150,46 @@ func blockGetCert(tx *sql.Tx, rnd basics.Round) (blk bookkeeping.Block, cert agr
 	return
 }
 
-func blockPut(tx *sql.Tx, blk bookkeeping.Block, cert agreement.Certificate) error {
+func blockPut(kvR kvRead, kvW kvWrite, blk bookkeeping.Block, cert agreement.Certificate, curRound sql.NullInt64) (sql.NullInt64, error) {
 	var max sql.NullInt64
-	err := tx.QueryRow("SELECT MAX(rnd) FROM blocks").Scan(&max)
-	if err != nil {
-		return err
+	var err error
+	if !curRound.Valid {
+		//err := tx.QueryRow("SELECT MAX(rnd) FROM blocks").Scan(&max)
+		max, err = kvBlockMaxRound(kvR)
+		if err != nil {
+			return sql.NullInt64{}, err
+		}
+	} else {
+		max = curRound
 	}
 
 	if max.Valid {
 		if blk.Round() != basics.Round(max.Int64+1) {
 			err = fmt.Errorf("inserting block %d but expected %d", blk.Round(), max.Int64+1)
-			return err
+			return sql.NullInt64{}, err
 		}
 	} else {
 		if blk.Round() != 0 {
 			err = fmt.Errorf("inserting block %d but expected 0", blk.Round())
-			return err
+			return sql.NullInt64{}, err
 		}
 	}
 
-	_, err = tx.Exec("INSERT INTO blocks (rnd, proto, hdrdata, blkdata, certdata) VALUES (?, ?, ?, ?, ?)",
+	// _, err = tx.Exec("INSERT INTO blocks (rnd, proto, hdrdata, blkdata, certdata) VALUES (?, ?, ?, ?, ?)",
+	err = kvBlockInsert(kvW,
 		blk.Round(),
 		blk.CurrentProtocol,
 		protocol.Encode(&blk.BlockHeader),
 		protocol.Encode(&blk),
 		protocol.Encode(&cert),
 	)
-	return err
+	return sql.NullInt64{Int64: int64(blk.Round()), Valid: true}, err
 }
 
-func blockNext(tx *sql.Tx) (basics.Round, error) {
-	var max sql.NullInt64
-	err := tx.QueryRow("SELECT MAX(rnd) FROM blocks").Scan(&max)
+func blockNext(kv kvRead) (basics.Round, error) {
+	// var max sql.NullInt64
+	// err := tx.QueryRow("SELECT MAX(rnd) FROM blocks").Scan(&max)
+	max, err := kvBlockMaxRound(kv)
 	if err != nil {
 		return 0, err
 	}
@@ -188,9 +201,10 @@ func blockNext(tx *sql.Tx) (basics.Round, error) {
 	return 0, nil
 }
 
-func blockLatest(tx *sql.Tx) (basics.Round, error) {
-	var max sql.NullInt64
-	err := tx.QueryRow("SELECT MAX(rnd) FROM blocks").Scan(&max)
+func blockLatest(kv kvRead) (basics.Round, error) {
+	// var max sql.NullInt64
+	// err := tx.QueryRow("SELECT MAX(rnd) FROM blocks").Scan(&max)
+	max, err := kvBlockMaxRound(kv)
 	if err != nil {
 		return 0, err
 	}
@@ -202,9 +216,10 @@ func blockLatest(tx *sql.Tx) (basics.Round, error) {
 	return 0, fmt.Errorf("no blocks present")
 }
 
-func blockEarliest(tx *sql.Tx) (basics.Round, error) {
-	var min sql.NullInt64
-	err := tx.QueryRow("SELECT MIN(rnd) FROM blocks").Scan(&min)
+func blockEarliest(kv kvRead) (basics.Round, error) {
+	// var min sql.NullInt64
+	// err := tx.QueryRow("SELECT MIN(rnd) FROM blocks").Scan(&min)
+	min, err := kvBlockMinRound(kv)
 	if err != nil {
 		return 0, err
 	}
@@ -216,8 +231,8 @@ func blockEarliest(tx *sql.Tx) (basics.Round, error) {
 	return 0, fmt.Errorf("no blocks present")
 }
 
-func blockForgetBefore(tx *sql.Tx, rnd basics.Round) error {
-	next, err := blockNext(tx)
+func blockForgetBefore(kvR kvRead, kvW kvWrite, rnd basics.Round) error {
+	next, err := blockNext(kvR)
 	if err != nil {
 		return err
 	}
@@ -226,7 +241,8 @@ func blockForgetBefore(tx *sql.Tx, rnd basics.Round) error {
 		return fmt.Errorf("forgetting too much: rnd %d >= next %d", rnd, next)
 	}
 
-	_, err = tx.Exec("DELETE FROM blocks WHERE rnd<?", rnd)
+	//_, err = tx.Exec("DELETE FROM blocks WHERE rnd<?", rnd)
+	err = kvBlockDeleteBefore(kvW, rnd)
 	return err
 }
 

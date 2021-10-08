@@ -88,12 +88,12 @@ func blockChainBlocks(be []blockEntry) []bookkeeping.Block {
 	return res
 }
 
-func checkBlockDB(t *testing.T, tx *sql.Tx, blocks []blockEntry) {
-	next, err := blockNext(tx)
+func checkBlockDB(t *testing.T, kv kvRead, blocks []blockEntry) {
+	next, err := blockNext(kv)
 	require.NoError(t, err)
 	require.Equal(t, next, basics.Round(len(blocks)))
 
-	latest, err := blockLatest(tx)
+	latest, err := blockLatest(kv)
 	if len(blocks) == 0 {
 		require.Error(t, err)
 	} else {
@@ -101,7 +101,7 @@ func checkBlockDB(t *testing.T, tx *sql.Tx, blocks []blockEntry) {
 		require.Equal(t, latest, basics.Round(len(blocks))-1)
 	}
 
-	earliest, err := blockEarliest(tx)
+	earliest, err := blockEarliest(kv)
 	if len(blocks) == 0 {
 		require.Error(t, err)
 	} else {
@@ -110,17 +110,17 @@ func checkBlockDB(t *testing.T, tx *sql.Tx, blocks []blockEntry) {
 	}
 
 	for rnd := basics.Round(0); rnd < basics.Round(len(blocks)); rnd++ {
-		blk, err := blockGet(tx, rnd)
+		blk, err := blockGet(kv, rnd)
 		require.NoError(t, err)
 		require.Equal(t, blk, blocks[rnd].block)
 
-		blk, cert, err := blockGetCert(tx, rnd)
+		blk, cert, err := blockGetCert(kv, rnd)
 		require.NoError(t, err)
 		require.Equal(t, blk, blocks[rnd].block)
 		require.Equal(t, cert, blocks[rnd].cert)
 	}
 
-	_, err = blockGet(tx, basics.Round(len(blocks)))
+	_, err = blockGet(kv, basics.Round(len(blocks)))
 	require.Error(t, err)
 }
 
@@ -133,27 +133,28 @@ func setDbLogging(t testing.TB, dbs db.Pair) {
 func TestBlockDBEmpty(t *testing.T) {
 	partitiontest.PartitionTest(t)
 
-	dbs, _, _ := dbOpenTest(t, true)
+	dbs, kv, _ := dbOpenTest(t, true)
 	setDbLogging(t, dbs)
 	defer dbs.Close()
 
-	tx, err := dbs.Wdb.Handle.Begin()
+	tx, err := beginWriteTx(t, dbs, kv)
 	require.NoError(t, err)
 	defer tx.Rollback()
 
 	err = blockInit(tx, nil)
 	require.NoError(t, err)
-	checkBlockDB(t, tx, nil)
+	tx.writeBarrier()
+	checkBlockDB(t, tx.kvRead, nil)
 }
 
 func TestBlockDBInit(t *testing.T) {
 	partitiontest.PartitionTest(t)
 
-	dbs, _, _ := dbOpenTest(t, true)
+	dbs, kv, _ := dbOpenTest(t, true)
 	setDbLogging(t, dbs)
 	defer dbs.Close()
 
-	tx, err := dbs.Wdb.Handle.Begin()
+	tx, err := beginWriteTx(t, dbs, kv)
 	require.NoError(t, err)
 	defer tx.Rollback()
 
@@ -161,21 +162,23 @@ func TestBlockDBInit(t *testing.T) {
 
 	err = blockInit(tx, blockChainBlocks(blocks))
 	require.NoError(t, err)
-	checkBlockDB(t, tx, blocks)
+	tx.writeBarrier()
+	checkBlockDB(t, tx.kvRead, blocks)
 
 	err = blockInit(tx, blockChainBlocks(blocks))
 	require.NoError(t, err)
-	checkBlockDB(t, tx, blocks)
+	tx.writeBarrier()
+	checkBlockDB(t, tx.kvRead, blocks)
 }
 
 func TestBlockDBAppend(t *testing.T) {
 	partitiontest.PartitionTest(t)
 
-	dbs, _, _ := dbOpenTest(t, true)
+	dbs, kv, _ := dbOpenTest(t, true)
 	setDbLogging(t, dbs)
 	defer dbs.Close()
 
-	tx, err := dbs.Wdb.Handle.Begin()
+	tx, err := beginWriteTx(t, dbs, kv)
 	require.NoError(t, err)
 	defer tx.Rollback()
 
@@ -183,14 +186,17 @@ func TestBlockDBAppend(t *testing.T) {
 
 	err = blockInit(tx, blockChainBlocks(blocks))
 	require.NoError(t, err)
-	checkBlockDB(t, tx, blocks)
+	tx.writeBarrier()
+	checkBlockDB(t, tx.kvRead, blocks)
 
+	curRound := sql.NullInt64{}
 	for i := 0; i < 10; i++ {
 		blkent := randomBlock(basics.Round(len(blocks)))
-		err = blockPut(tx, blkent.block, blkent.cert)
+		curRound, err = blockPut(tx.kvRead, tx.kvWrite, blkent.block, blkent.cert, curRound)
 		require.NoError(t, err)
 
 		blocks = append(blocks, blkent)
-		checkBlockDB(t, tx, blocks)
+		tx.writeBarrier()
+		checkBlockDB(t, tx.kvRead, blocks)
 	}
 }

@@ -18,7 +18,6 @@ package ledger
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"os"
 	"time"
@@ -148,7 +147,7 @@ func OpenLedger(
 
 	start := time.Now()
 	ledgerInitblocksdbCount.Inc(nil)
-	err = l.blockDBs.Wdb.Atomic(func(ctx context.Context, tx *sql.Tx) error {
+	err = atomicWrites(l.blockDBs.Wdb, l.kv, func(ctx context.Context, tx *atomicWriteTx) error {
 		return initBlocksDB(tx, l, []bookkeeping.Block{genesisInitState.Block}, cfg.Archival)
 	})
 	ledgerInitblocksdbMicros.AddMicrosecondsSince(start, nil)
@@ -221,13 +220,13 @@ func (l *Ledger) verifyMatchingGenesisHash() (err error) {
 	// Check that the genesis hash, if present, matches.
 	start := time.Now()
 	ledgerVerifygenhashCount.Inc(nil)
-	err = l.blockDBs.Rdb.Atomic(func(ctx context.Context, tx *sql.Tx) error {
-		latest, err := blockLatest(tx)
+	err = atomicReads(l.blockDBs.Rdb, l.kv, func(ctx context.Context, tx *atomicReadTx) error {
+		latest, err := blockLatest(tx.kvRead)
 		if err != nil {
 			return err
 		}
 
-		hdr, err := blockGetHdr(tx, latest)
+		hdr, err := blockGetHdr(tx.kvRead, latest)
 		if err != nil {
 			return err
 		}
@@ -310,7 +309,7 @@ func (l *Ledger) setSynchronousMode(ctx context.Context, synchronousMode db.Sync
 // initBlocksDB performs DB initialization:
 // - creates and populates it with genesis blocks
 // - ensures DB is in good shape for archival mode and resets it if not
-func initBlocksDB(tx *sql.Tx, l *Ledger, initBlocks []bookkeeping.Block, isArchival bool) (err error) {
+func initBlocksDB(tx *atomicWriteTx, l *Ledger, initBlocks []bookkeeping.Block, isArchival bool) (err error) {
 	err = blockInit(tx, initBlocks)
 	if err != nil {
 		err = fmt.Errorf("initBlocksDB.blockInit %v", err)
@@ -319,7 +318,8 @@ func initBlocksDB(tx *sql.Tx, l *Ledger, initBlocks []bookkeeping.Block, isArchi
 
 	// in archival mode check if DB contains all blocks up to the latest
 	if isArchival {
-		earliest, err := blockEarliest(tx)
+		tx.writeBarrier()
+		earliest, err := blockEarliest(tx.kvRead)
 		if err != nil {
 			err = fmt.Errorf("initBlocksDB.blockEarliest %v", err)
 			return err
@@ -329,7 +329,7 @@ func initBlocksDB(tx *sql.Tx, l *Ledger, initBlocks []bookkeeping.Block, isArchi
 		// So reset the DB and init it again
 		if earliest != basics.Round(0) {
 			l.log.Warnf("resetting blocks DB (earliest block is %v)", earliest)
-			err := blockResetDB(tx)
+			err := blockResetDB(tx.sqlTx, tx.kvWrite)
 			if err != nil {
 				err = fmt.Errorf("initBlocksDB.blockResetDB %v", err)
 				return err

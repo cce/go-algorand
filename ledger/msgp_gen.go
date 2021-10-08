@@ -47,6 +47,22 @@ import (
 //           |-----> (*) Msgsize
 //           |-----> (*) MsgIsZero
 //
+// kvBlockHeaderValue
+//          |-----> (*) MarshalMsg
+//          |-----> (*) CanMarshalMsg
+//          |-----> (*) UnmarshalMsg
+//          |-----> (*) CanUnmarshalMsg
+//          |-----> (*) Msgsize
+//          |-----> (*) MsgIsZero
+//
+// kvBlockValue
+//       |-----> (*) MarshalMsg
+//       |-----> (*) CanMarshalMsg
+//       |-----> (*) UnmarshalMsg
+//       |-----> (*) CanUnmarshalMsg
+//       |-----> (*) Msgsize
+//       |-----> (*) MsgIsZero
+//
 // kvCatchpointStateValue
 //            |-----> (*) MarshalMsg
 //            |-----> (*) CanMarshalMsg
@@ -866,6 +882,287 @@ func (z *encodedBalanceRecord) Msgsize() (s int) {
 // MsgIsZero returns whether this is a zero value
 func (z *encodedBalanceRecord) MsgIsZero() bool {
 	return ((*z).Address.MsgIsZero()) && ((*z).AccountData.MsgIsZero())
+}
+
+// MarshalMsg implements msgp.Marshaler
+func (z *kvBlockHeaderValue) MarshalMsg(b []byte) (o []byte) {
+	o = msgp.Require(b, z.Msgsize())
+	// omitempty: check for empty values
+	zb0001Len := uint32(2)
+	var zb0001Mask uint8 /* 3 bits */
+	if len((*z).Header) == 0 {
+		zb0001Len--
+		zb0001Mask |= 0x2
+	}
+	if (*z).Proto.MsgIsZero() {
+		zb0001Len--
+		zb0001Mask |= 0x4
+	}
+	// variable map header, size zb0001Len
+	o = append(o, 0x80|uint8(zb0001Len))
+	if zb0001Len != 0 {
+		if (zb0001Mask & 0x2) == 0 { // if not empty
+			// string "h"
+			o = append(o, 0xa1, 0x68)
+			o = msgp.AppendBytes(o, (*z).Header)
+		}
+		if (zb0001Mask & 0x4) == 0 { // if not empty
+			// string "p"
+			o = append(o, 0xa1, 0x70)
+			o = (*z).Proto.MarshalMsg(o)
+		}
+	}
+	return
+}
+
+func (_ *kvBlockHeaderValue) CanMarshalMsg(z interface{}) bool {
+	_, ok := (z).(*kvBlockHeaderValue)
+	return ok
+}
+
+// UnmarshalMsg implements msgp.Unmarshaler
+func (z *kvBlockHeaderValue) UnmarshalMsg(bts []byte) (o []byte, err error) {
+	var field []byte
+	_ = field
+	var zb0001 int
+	var zb0002 bool
+	zb0001, zb0002, bts, err = msgp.ReadMapHeaderBytes(bts)
+	if _, ok := err.(msgp.TypeError); ok {
+		zb0001, zb0002, bts, err = msgp.ReadArrayHeaderBytes(bts)
+		if err != nil {
+			err = msgp.WrapError(err)
+			return
+		}
+		if zb0001 > 0 {
+			zb0001--
+			bts, err = (*z).Proto.UnmarshalMsg(bts)
+			if err != nil {
+				err = msgp.WrapError(err, "struct-from-array", "Proto")
+				return
+			}
+		}
+		if zb0001 > 0 {
+			zb0001--
+			(*z).Header, bts, err = msgp.ReadBytesBytes(bts, (*z).Header)
+			if err != nil {
+				err = msgp.WrapError(err, "struct-from-array", "Header")
+				return
+			}
+		}
+		if zb0001 > 0 {
+			err = msgp.ErrTooManyArrayFields(zb0001)
+			if err != nil {
+				err = msgp.WrapError(err, "struct-from-array")
+				return
+			}
+		}
+	} else {
+		if err != nil {
+			err = msgp.WrapError(err)
+			return
+		}
+		if zb0002 {
+			(*z) = kvBlockHeaderValue{}
+		}
+		for zb0001 > 0 {
+			zb0001--
+			field, bts, err = msgp.ReadMapKeyZC(bts)
+			if err != nil {
+				err = msgp.WrapError(err)
+				return
+			}
+			switch string(field) {
+			case "p":
+				bts, err = (*z).Proto.UnmarshalMsg(bts)
+				if err != nil {
+					err = msgp.WrapError(err, "Proto")
+					return
+				}
+			case "h":
+				(*z).Header, bts, err = msgp.ReadBytesBytes(bts, (*z).Header)
+				if err != nil {
+					err = msgp.WrapError(err, "Header")
+					return
+				}
+			default:
+				err = msgp.ErrNoField(string(field))
+				if err != nil {
+					err = msgp.WrapError(err)
+					return
+				}
+			}
+		}
+	}
+	o = bts
+	return
+}
+
+func (_ *kvBlockHeaderValue) CanUnmarshalMsg(z interface{}) bool {
+	_, ok := (z).(*kvBlockHeaderValue)
+	return ok
+}
+
+// Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
+func (z *kvBlockHeaderValue) Msgsize() (s int) {
+	s = 1 + 2 + (*z).Proto.Msgsize() + 2 + msgp.BytesPrefixSize + len((*z).Header)
+	return
+}
+
+// MsgIsZero returns whether this is a zero value
+func (z *kvBlockHeaderValue) MsgIsZero() bool {
+	return ((*z).Proto.MsgIsZero()) && (len((*z).Header) == 0)
+}
+
+// MarshalMsg implements msgp.Marshaler
+func (z *kvBlockValue) MarshalMsg(b []byte) (o []byte) {
+	o = msgp.Require(b, z.Msgsize())
+	// omitempty: check for empty values
+	zb0001Len := uint32(3)
+	var zb0001Mask uint8 /* 4 bits */
+	if len((*z).Block) == 0 {
+		zb0001Len--
+		zb0001Mask |= 0x2
+	}
+	if len((*z).Cert) == 0 {
+		zb0001Len--
+		zb0001Mask |= 0x4
+	}
+	if (*z).Proto.MsgIsZero() {
+		zb0001Len--
+		zb0001Mask |= 0x8
+	}
+	// variable map header, size zb0001Len
+	o = append(o, 0x80|uint8(zb0001Len))
+	if zb0001Len != 0 {
+		if (zb0001Mask & 0x2) == 0 { // if not empty
+			// string "b"
+			o = append(o, 0xa1, 0x62)
+			o = msgp.AppendBytes(o, (*z).Block)
+		}
+		if (zb0001Mask & 0x4) == 0 { // if not empty
+			// string "c"
+			o = append(o, 0xa1, 0x63)
+			o = msgp.AppendBytes(o, (*z).Cert)
+		}
+		if (zb0001Mask & 0x8) == 0 { // if not empty
+			// string "p"
+			o = append(o, 0xa1, 0x70)
+			o = (*z).Proto.MarshalMsg(o)
+		}
+	}
+	return
+}
+
+func (_ *kvBlockValue) CanMarshalMsg(z interface{}) bool {
+	_, ok := (z).(*kvBlockValue)
+	return ok
+}
+
+// UnmarshalMsg implements msgp.Unmarshaler
+func (z *kvBlockValue) UnmarshalMsg(bts []byte) (o []byte, err error) {
+	var field []byte
+	_ = field
+	var zb0001 int
+	var zb0002 bool
+	zb0001, zb0002, bts, err = msgp.ReadMapHeaderBytes(bts)
+	if _, ok := err.(msgp.TypeError); ok {
+		zb0001, zb0002, bts, err = msgp.ReadArrayHeaderBytes(bts)
+		if err != nil {
+			err = msgp.WrapError(err)
+			return
+		}
+		if zb0001 > 0 {
+			zb0001--
+			bts, err = (*z).Proto.UnmarshalMsg(bts)
+			if err != nil {
+				err = msgp.WrapError(err, "struct-from-array", "Proto")
+				return
+			}
+		}
+		if zb0001 > 0 {
+			zb0001--
+			(*z).Block, bts, err = msgp.ReadBytesBytes(bts, (*z).Block)
+			if err != nil {
+				err = msgp.WrapError(err, "struct-from-array", "Block")
+				return
+			}
+		}
+		if zb0001 > 0 {
+			zb0001--
+			(*z).Cert, bts, err = msgp.ReadBytesBytes(bts, (*z).Cert)
+			if err != nil {
+				err = msgp.WrapError(err, "struct-from-array", "Cert")
+				return
+			}
+		}
+		if zb0001 > 0 {
+			err = msgp.ErrTooManyArrayFields(zb0001)
+			if err != nil {
+				err = msgp.WrapError(err, "struct-from-array")
+				return
+			}
+		}
+	} else {
+		if err != nil {
+			err = msgp.WrapError(err)
+			return
+		}
+		if zb0002 {
+			(*z) = kvBlockValue{}
+		}
+		for zb0001 > 0 {
+			zb0001--
+			field, bts, err = msgp.ReadMapKeyZC(bts)
+			if err != nil {
+				err = msgp.WrapError(err)
+				return
+			}
+			switch string(field) {
+			case "p":
+				bts, err = (*z).Proto.UnmarshalMsg(bts)
+				if err != nil {
+					err = msgp.WrapError(err, "Proto")
+					return
+				}
+			case "b":
+				(*z).Block, bts, err = msgp.ReadBytesBytes(bts, (*z).Block)
+				if err != nil {
+					err = msgp.WrapError(err, "Block")
+					return
+				}
+			case "c":
+				(*z).Cert, bts, err = msgp.ReadBytesBytes(bts, (*z).Cert)
+				if err != nil {
+					err = msgp.WrapError(err, "Cert")
+					return
+				}
+			default:
+				err = msgp.ErrNoField(string(field))
+				if err != nil {
+					err = msgp.WrapError(err)
+					return
+				}
+			}
+		}
+	}
+	o = bts
+	return
+}
+
+func (_ *kvBlockValue) CanUnmarshalMsg(z interface{}) bool {
+	_, ok := (z).(*kvBlockValue)
+	return ok
+}
+
+// Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
+func (z *kvBlockValue) Msgsize() (s int) {
+	s = 1 + 2 + (*z).Proto.Msgsize() + 2 + msgp.BytesPrefixSize + len((*z).Block) + 2 + msgp.BytesPrefixSize + len((*z).Cert)
+	return
+}
+
+// MsgIsZero returns whether this is a zero value
+func (z *kvBlockValue) MsgIsZero() bool {
+	return ((*z).Proto.MsgIsZero()) && (len((*z).Block) == 0) && (len((*z).Cert) == 0)
 }
 
 // MarshalMsg implements msgp.Marshaler
