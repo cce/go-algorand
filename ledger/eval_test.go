@@ -1972,7 +1972,7 @@ func TestEvalFunctionForExpiredAccounts(t *testing.T) {
 
 	newBlock := bookkeeping.MakeBlock(genesisInitState.Block.BlockHeader)
 
-	blkEval, err := l.StartEvaluator(newBlock.BlockHeader, 0)
+	blkEval, err := l.StartEvaluator(newBlock.BlockHeader, 0, 0)
 
 	// Advance the evaluator a couple rounds...
 	for i := uint64(0); i < uint64(targetRound); i++ {
@@ -2102,7 +2102,7 @@ func TestExpiredAccountGenerationWithDiskFailure(t *testing.T) {
 
 	newBlock := bookkeeping.MakeBlock(genesisInitState.Block.BlockHeader)
 
-	eval, err := l.StartEvaluator(newBlock.BlockHeader, 0)
+	eval, err := l.StartEvaluator(newBlock.BlockHeader, 0, 0)
 
 	// Advance the evaluator a couple rounds...
 	for i := uint64(0); i < uint64(targetRound); i++ {
@@ -2192,7 +2192,7 @@ func TestExpiredAccountGeneration(t *testing.T) {
 
 	newBlock := bookkeeping.MakeBlock(genesisInitState.Block.BlockHeader)
 
-	eval, err := l.StartEvaluator(newBlock.BlockHeader, 0)
+	eval, err := l.StartEvaluator(newBlock.BlockHeader, 0, 0)
 
 	// Advance the evaluator a couple rounds...
 	for i := uint64(0); i < uint64(targetRound); i++ {
