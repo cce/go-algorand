@@ -80,12 +80,16 @@ func (wl *wrappedLedger) trackerDB() db.Pair {
 	return wl.l.trackerDB()
 }
 
-func (wl *wrappedLedger) kvStore() kvstore.KVStore {
-	return wl.l.kvStore()
+func (wl *wrappedLedger) trackerKV() kvstore.KVStore {
+	return wl.l.trackerKV()
 }
 
 func (wl *wrappedLedger) blockDB() db.Pair {
 	return wl.l.blockDB()
+}
+
+func (wl *wrappedLedger) blockKV() kvstore.KVStore {
+	return wl.l.blockKV()
 }
 
 func (wl *wrappedLedger) trackerLog() logging.Logger {
@@ -217,7 +221,7 @@ func TestArchivalRestart(t *testing.T) {
 	l.WaitForCommit(blk.Round())
 
 	var latest, earliest basics.Round
-	err = atomicReads(l.blockDBs.Rdb, l.kv, func(ctx context.Context, tx *atomicReadTx) error {
+	err = atomicReads(l.blockDBs.Rdb, l.blockKVs, func(ctx context.Context, tx *atomicReadTx) error {
 		latest, err = blockLatest(tx.kvRead)
 		require.NoError(t, err)
 
@@ -234,7 +238,7 @@ func TestArchivalRestart(t *testing.T) {
 	require.NoError(t, err)
 	defer l.Close()
 
-	err = atomicReads(l.blockDBs.Rdb, l.kv, func(ctx context.Context, tx *atomicReadTx) error {
+	err = atomicReads(l.blockDBs.Rdb, l.blockKVs, func(ctx context.Context, tx *atomicReadTx) error {
 		latest, err = blockLatest(tx.kvRead)
 		require.NoError(t, err)
 
@@ -753,7 +757,7 @@ func TestArchivalFromNonArchival(t *testing.T) {
 	l.WaitForCommit(blk.Round())
 
 	var latest, earliest basics.Round
-	err = atomicReads(l.blockDBs.Rdb, l.kv, func(ctx context.Context, tx *atomicReadTx) error {
+	err = atomicReads(l.blockDBs.Rdb, l.blockKVs, func(ctx context.Context, tx *atomicReadTx) error {
 		latest, err = blockLatest(tx.kvRead)
 		require.NoError(t, err)
 
@@ -773,7 +777,7 @@ func TestArchivalFromNonArchival(t *testing.T) {
 	require.NoError(t, err)
 	defer l.Close()
 
-	err = atomicReads(l.blockDBs.Rdb, l.kv, func(ctx context.Context, tx *atomicReadTx) error {
+	err = atomicReads(l.blockDBs.Rdb, l.blockKVs, func(ctx context.Context, tx *atomicReadTx) error {
 		latest, err = blockLatest(tx.kvRead)
 		require.NoError(t, err)
 

@@ -59,7 +59,7 @@ func bqInit(l *Ledger) (*blockQueue, error) {
 	bq.closed = make(chan struct{})
 	ledgerBlockqInitCount.Inc(nil)
 	start := time.Now()
-	err := atomicReads(bq.l.blockDBs.Rdb, bq.l.kv, func(ctx context.Context, tx *atomicReadTx) error {
+	err := atomicReads(bq.l.blockDBs.Rdb, bq.l.blockKVs, func(ctx context.Context, tx *atomicReadTx) error {
 		var err0 error
 		bq.lastCommitted, err0 = blockLatest(tx.kvRead)
 		return err0
@@ -109,7 +109,7 @@ func (bq *blockQueue) syncer() {
 
 		start := time.Now()
 		ledgerSyncBlockputCount.Inc(nil)
-		err := atomicWrites(bq.l.blockDBs.Wdb, bq.l.kv, func(ctx context.Context, tx *atomicWriteTx) error {
+		err := atomicWrites(bq.l.blockDBs.Wdb, bq.l.blockKVs, func(ctx context.Context, tx *atomicWriteTx) error {
 			curRound := sql.NullInt64{}
 			for _, e := range workQ {
 				var err0 error
@@ -147,7 +147,7 @@ func (bq *blockQueue) syncer() {
 			minToSave := bq.l.notifyCommit(committed)
 			bfstart := time.Now()
 			ledgerSyncBlockforgetCount.Inc(nil)
-			err = atomicWrites(bq.l.blockDBs.Wdb, bq.l.kv, func(ctx context.Context, tx *atomicWriteTx) error {
+			err = atomicWrites(bq.l.blockDBs.Wdb, bq.l.blockKVs, func(ctx context.Context, tx *atomicWriteTx) error {
 				return blockForgetBefore(tx.kvRead, tx.kvWrite, minToSave)
 			})
 			ledgerSyncBlockforgetMicros.AddMicrosecondsSince(bfstart, nil)
@@ -261,7 +261,7 @@ func (bq *blockQueue) getBlock(r basics.Round) (blk bookkeeping.Block, err error
 
 	start := time.Now()
 	ledgerGetblockCount.Inc(nil)
-	err = atomicReads(bq.l.blockDBs.Rdb, bq.l.kv, func(ctx context.Context, tx *atomicReadTx) error {
+	err = atomicReads(bq.l.blockDBs.Rdb, bq.l.blockKVs, func(ctx context.Context, tx *atomicReadTx) error {
 		var err0 error
 		blk, err0 = blockGet(tx.kvRead, r)
 		return err0
@@ -283,7 +283,7 @@ func (bq *blockQueue) getBlockHdr(r basics.Round) (hdr bookkeeping.BlockHeader, 
 
 	start := time.Now()
 	ledgerGetblockhdrCount.Inc(nil)
-	err = atomicReads(bq.l.blockDBs.Rdb, bq.l.kv, func(ctx context.Context, tx *atomicReadTx) error {
+	err = atomicReads(bq.l.blockDBs.Rdb, bq.l.blockKVs, func(ctx context.Context, tx *atomicReadTx) error {
 		var err0 error
 		hdr, err0 = blockGetHdr(tx.kvRead, r)
 		return err0
@@ -309,7 +309,7 @@ func (bq *blockQueue) getEncodedBlockCert(r basics.Round) (blk []byte, cert []by
 
 	start := time.Now()
 	ledgerGeteblockcertCount.Inc(nil)
-	err = atomicReads(bq.l.blockDBs.Rdb, bq.l.kv, func(ctx context.Context, tx *atomicReadTx) error {
+	err = atomicReads(bq.l.blockDBs.Rdb, bq.l.blockKVs, func(ctx context.Context, tx *atomicReadTx) error {
 		var err0 error
 		blk, cert, err0 = blockGetEncodedCert(tx.kvRead, r)
 		return err0
@@ -331,7 +331,7 @@ func (bq *blockQueue) getBlockCert(r basics.Round) (blk bookkeeping.Block, cert 
 
 	start := time.Now()
 	ledgerGetblockcertCount.Inc(nil)
-	err = atomicReads(bq.l.blockDBs.Rdb, bq.l.kv, func(ctx context.Context, tx *atomicReadTx) error {
+	err = atomicReads(bq.l.blockDBs.Rdb, bq.l.blockKVs, func(ctx context.Context, tx *atomicReadTx) error {
 		var err0 error
 		blk, cert, err0 = blockGetCert(tx.kvRead, r)
 		return err0

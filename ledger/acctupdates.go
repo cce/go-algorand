@@ -1107,7 +1107,7 @@ func (au *accountUpdates) initializeCaches(lastBalancesRound, lastestBlockRound,
 func (au *accountUpdates) initializeFromDisk(l ledgerForTracker) (lastBalancesRound, lastestBlockRound basics.Round, err error) {
 	au.dbs = l.trackerDB()
 	au.log = l.trackerLog()
-	au.kv = accountKV{l.kvStore()}
+	au.kv = accountKV{l.trackerKV()}
 	au.ledger = l
 
 	if au.initAccounts == nil {

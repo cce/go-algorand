@@ -45,7 +45,8 @@ type Ledger struct {
 	// during catchup.
 	trackerDBs db.Pair
 	blockDBs   db.Pair
-	kv         kvstore.KVStore
+	trackerKVs kvstore.KVStore
+	blockKVs   kvstore.KVStore
 
 	// blockQ is the buffer of added blocks that will be flushed to
 	// persistent storage
@@ -139,15 +140,20 @@ func OpenLedger(
 
 	l.setSynchronousMode(context.Background(), l.synchronousMode)
 
-	l.kv, err = kvstore.NewKVStore(cfg.KVStoreImpl, dbPathPrefix+".kvdb", dbMem)
+	l.trackerKVs, err = kvstore.NewKVStore(cfg.KVStoreImpl, dbPathPrefix+".tracker", dbMem)
 	if err != nil {
-		err = fmt.Errorf("OpenLedger KVstore %s %w", cfg.KVStoreImpl, err)
+		err = fmt.Errorf("OpenLedger tracker KVStore %s %w", cfg.KVStoreImpl, err)
+		return nil, err
+	}
+	l.blockKVs, err = kvstore.NewKVStore(cfg.KVStoreImpl, dbPathPrefix+".block", dbMem)
+	if err != nil {
+		err = fmt.Errorf("OpenLedger block KVStore %s %w", cfg.KVStoreImpl, err)
 		return nil, err
 	}
 
 	start := time.Now()
 	ledgerInitblocksdbCount.Inc(nil)
-	err = atomicWrites(l.blockDBs.Wdb, l.kv, func(ctx context.Context, tx *atomicWriteTx) error {
+	err = atomicWrites(l.blockDBs.Wdb, l.blockKVs, func(ctx context.Context, tx *atomicWriteTx) error {
 		return initBlocksDB(tx, l, []bookkeeping.Block{genesisInitState.Block}, cfg.Archival)
 	})
 	ledgerInitblocksdbMicros.AddMicrosecondsSince(start, nil)
@@ -220,7 +226,7 @@ func (l *Ledger) verifyMatchingGenesisHash() (err error) {
 	// Check that the genesis hash, if present, matches.
 	start := time.Now()
 	ledgerVerifygenhashCount.Inc(nil)
-	err = atomicReads(l.blockDBs.Rdb, l.kv, func(ctx context.Context, tx *atomicReadTx) error {
+	err = atomicReads(l.blockDBs.Rdb, l.blockKVs, func(ctx context.Context, tx *atomicReadTx) error {
 		latest, err := blockLatest(tx.kvRead)
 		if err != nil {
 			return err
@@ -365,8 +371,11 @@ func (l *Ledger) Close() {
 	// last, we close the underlying database connections.
 	l.blockDBs.Close()
 	l.trackerDBs.Close()
-	if l.kv != nil {
-		l.kv.Close()
+	if l.trackerKVs != nil {
+		l.trackerKVs.Close()
+	}
+	if l.blockKVs != nil {
+		l.blockKVs.Close()
 	}
 }
 
@@ -628,13 +637,18 @@ func (l *Ledger) trackerDB() db.Pair {
 }
 
 // ledgerForTracker methods
-func (l *Ledger) kvStore() kvstore.KVStore {
-	return l.kv
+func (l *Ledger) trackerKV() kvstore.KVStore {
+	return l.trackerKVs
 }
 
 // ledgerForTracker methods
 func (l *Ledger) blockDB() db.Pair {
 	return l.blockDBs
+}
+
+// ledgerForTracker methods
+func (l *Ledger) blockKV() kvstore.KVStore {
+	return l.blockKVs
 }
 
 func (l *Ledger) trackerLog() logging.Logger {

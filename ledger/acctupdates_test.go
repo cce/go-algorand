@@ -162,12 +162,16 @@ func (ml *mockLedgerForTracker) trackerDB() db.Pair {
 	return ml.dbs
 }
 
-func (ml *mockLedgerForTracker) kvStore() kvstore.KVStore {
+func (ml *mockLedgerForTracker) trackerKV() kvstore.KVStore {
 	return ml.kv
 }
 
 func (ml *mockLedgerForTracker) blockDB() db.Pair {
 	return db.Pair{}
+}
+
+func (ml *mockLedgerForTracker) blockKV() kvstore.KVStore {
+	return nil
 }
 
 func (ml *mockLedgerForTracker) trackerLog() logging.Logger {

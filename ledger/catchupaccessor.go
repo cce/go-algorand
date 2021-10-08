@@ -119,7 +119,7 @@ const (
 
 // MakeCatchpointCatchupAccessor creates a CatchpointCatchupAccessor given a ledger
 func MakeCatchpointCatchupAccessor(ledger *Ledger, log logging.Logger) CatchpointCatchupAccessor {
-	kv := ledger.kvStore()
+	kv := ledger.trackerKV()
 	accountsq, err := accountsDbInit(kv, kv)
 	if err != nil {
 		log.Warnf("unable to initialize account db in MakeCatchpointCatchupAccessor : %v", err)
@@ -181,7 +181,7 @@ func (c *CatchpointCatchupAccessorImpl) SetLabel(ctx context.Context, label stri
 // ResetStagingBalances resets the current staging balances, preparing for a new set of balances to be added
 func (c *CatchpointCatchupAccessorImpl) ResetStagingBalances(ctx context.Context, newCatchup bool) (err error) {
 	wdb := c.ledger.trackerDB().Wdb
-	kv := c.ledger.kvStore()
+	kv := c.ledger.trackerKV()
 	if !newCatchup {
 		c.ledger.setSynchronousMode(ctx, c.ledger.synchronousMode)
 	}
@@ -268,7 +268,7 @@ func (c *CatchpointCatchupAccessorImpl) processStagingContent(ctx context.Contex
 	// later on:
 	// TotalAccounts, TotalAccounts, Catchpoint, BlockHeaderDigest, BalancesRound
 	wdb := c.ledger.trackerDB().Wdb
-	kv := c.ledger.kvStore()
+	kv := c.ledger.trackerKV()
 	start := time.Now()
 	ledgerProcessstagingcontentCount.Inc(nil)
 	err = atomicWrites(wdb, kv, func(ctx context.Context, tx *atomicWriteTx) (err error) {
@@ -409,7 +409,7 @@ func (c *CatchpointCatchupAccessorImpl) processStagingBalances(ctx context.Conte
 func (c *CatchpointCatchupAccessorImpl) BuildMerkleTrie(ctx context.Context, progressUpdates func(uint64)) (err error) {
 	wdb := c.ledger.trackerDB().Wdb
 	rdb := c.ledger.trackerDB().Rdb
-	kv := c.ledger.kvStore()
+	kv := c.ledger.trackerKV()
 	err = wdb.Atomic(func(ctx context.Context, tx *sql.Tx) (err error) {
 		// creating the index can take a while, so ensure we don't generate false alerts for no good reason.
 		db.ResetTransactionWarnDeadline(ctx, tx, time.Now().Add(120*time.Second))
@@ -599,7 +599,7 @@ func (c *CatchpointCatchupAccessorImpl) GetCatchupBlockRound(ctx context.Context
 // VerifyCatchpoint verifies that the catchpoint is valid by reconstructing the label.
 func (c *CatchpointCatchupAccessorImpl) VerifyCatchpoint(ctx context.Context, blk *bookkeeping.Block) (err error) {
 	rdb := c.ledger.trackerDB().Rdb
-	kv := c.ledger.kvStore()
+	kv := c.ledger.trackerKV()
 	var balancesHash crypto.Digest
 	var blockRound basics.Round
 	var totals ledgercore.AccountTotals
@@ -665,7 +665,7 @@ func (c *CatchpointCatchupAccessorImpl) StoreBalancesRound(ctx context.Context, 
 	// trust the one in the catchpoint file header, so we'll calculate it ourselves.
 	balancesRound := blk.Round() - basics.Round(config.Consensus[blk.CurrentProtocol].MaxBalLookback)
 	wdb := c.ledger.trackerDB().Wdb
-	kv := c.ledger.kvStore()
+	kv := c.ledger.trackerKV()
 	start := time.Now()
 	ledgerStorebalancesroundCount.Inc(nil)
 	err = atomicWrites(wdb, kv, func(ctx context.Context, tx *atomicWriteTx) (err error) {
@@ -767,7 +767,7 @@ func (c *CatchpointCatchupAccessorImpl) CompleteCatchup(ctx context.Context) (er
 // finishBalances concludes the catchup of the balances(tracker) database.
 func (c *CatchpointCatchupAccessorImpl) finishBalances(ctx context.Context) (err error) {
 	wdb := c.ledger.trackerDB().Wdb
-	kv := c.ledger.kvStore()
+	kv := c.ledger.trackerKV()
 	start := time.Now()
 	ledgerCatchpointFinishBalsCount.Inc(nil)
 	err = atomicWrites(wdb, kv, func(ctx context.Context, tx *atomicWriteTx) (err error) {

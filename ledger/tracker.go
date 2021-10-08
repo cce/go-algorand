@@ -89,7 +89,8 @@ type ledgerTracker interface {
 type ledgerForTracker interface {
 	trackerDB() db.Pair
 	blockDB() db.Pair
-	kvStore() kvstore.KVStore
+	trackerKV() kvstore.KVStore
+	blockKV() kvstore.KVStore
 	trackerLog() logging.Logger
 	trackerEvalVerified(bookkeeping.Block, ledgerForEvaluator) (ledgercore.StateDelta, error)
 

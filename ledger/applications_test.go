@@ -552,12 +552,12 @@ return`
 	var rowid sql.NullInt64
 	var dbRound basics.Round
 	var buf []byte
-	err = kvGetAccountDataRound(l.kv, creator[:], &rowid, &dbRound, &buf)
+	err = kvGetAccountDataRound(l.trackerKVs, creator[:], &rowid, &dbRound, &buf)
 
 	a.NoError(err)
 	a.Equal(expectedCreator, buf)
 
-	err = kvGetAccountDataRound(l.kv, userOptin[:], &rowid, &dbRound, &buf)
+	err = kvGetAccountDataRound(l.trackerKVs, userOptin[:], &rowid, &dbRound, &buf)
 	a.NoError(err)
 	a.Equal(expectedUserOptIn, buf)
 	pad, err := l.accts.accountsq.lookup(userOptin)
@@ -565,7 +565,7 @@ return`
 	ad, err := l.Lookup(dbRound, userOptin)
 	a.Nil(ad.AppLocalStates[appIdx].KeyValue)
 
-	err = kvGetAccountDataRound(l.kv, userLocal[:], &rowid, &dbRound, &buf)
+	err = kvGetAccountDataRound(l.trackerKVs, userLocal[:], &rowid, &dbRound, &buf)
 	a.NoError(err)
 	a.Equal(expectedUserLocal, buf)
 
