@@ -195,9 +195,14 @@ type kvWrite interface {
 	DeleteRange(start, end []byte) error
 }
 
+type kvWriteBatch interface {
+	kvWrite
+	WriteBarrier() error
+}
+
 type atomicWriteTx struct {
 	sqlTx   *sql.Tx
-	kvWrite kvWrite
+	kvWrite kvWriteBatch
 	kvRead  kvReadDB // kvLogReader
 }
 
@@ -237,6 +242,7 @@ var errKVReadOnlyTxn = errors.New("attempt to write from read-only txn")
 func (kvErrWriter) Set(key, value []byte) error         { return errKVReadOnlyTxn }
 func (kvErrWriter) Delete(key []byte) error             { return errKVReadOnlyTxn }
 func (kvErrWriter) DeleteRange(start, end []byte) error { return errKVReadOnlyTxn }
+func (kvErrWriter) WriteBarrier() error                 { return errKVReadOnlyTxn }
 
 // experimental helper to allow both sql.Tx and kvstore.BatchWriter to coexist
 func atomicWrites(db db.Accessor, kv kvstore.KVStore, f func(context.Context, *atomicWriteTx) error) error {
@@ -255,7 +261,7 @@ func atomicWrites(db db.Accessor, kv kvstore.KVStore, f func(context.Context, *a
 }
 
 // atomicKVWrites makes a KV batch with no SQL transaction
-func atomicKVWrites(kv kvstore.KVStore, f func(kvReadDB, kvWrite) error) error {
+func atomicKVWrites(kv kvstore.KVStore, f func(kvReadDB, kvWriteBatch) error) error {
 	batch := kv.NewBatch()
 	err := f(&kvLogReader{kv: kv}, batch)
 	if err == nil {

@@ -141,7 +141,7 @@ func TestBlockDBEmpty(t *testing.T) {
 	require.NoError(t, err)
 	defer tx.Rollback()
 
-	err = blockInit(tx, nil)
+	err = blockInit(tx.kvRead, tx.kvWrite, nil)
 	require.NoError(t, err)
 	tx.writeBarrier()
 	checkBlockDB(t, tx.kvRead, nil)
@@ -160,12 +160,12 @@ func TestBlockDBInit(t *testing.T) {
 
 	blocks := randomInitChain(protocol.ConsensusCurrentVersion, 10)
 
-	err = blockInit(tx, blockChainBlocks(blocks))
+	err = blockInit(tx.kvRead, tx.kvWrite, blockChainBlocks(blocks))
 	require.NoError(t, err)
 	tx.writeBarrier()
 	checkBlockDB(t, tx.kvRead, blocks)
 
-	err = blockInit(tx, blockChainBlocks(blocks))
+	err = blockInit(tx.kvRead, tx.kvWrite, blockChainBlocks(blocks))
 	require.NoError(t, err)
 	tx.writeBarrier()
 	checkBlockDB(t, tx.kvRead, blocks)
@@ -184,7 +184,7 @@ func TestBlockDBAppend(t *testing.T) {
 
 	blocks := randomInitChain(protocol.ConsensusCurrentVersion, 10)
 
-	err = blockInit(tx, blockChainBlocks(blocks))
+	err = blockInit(tx.kvRead, tx.kvWrite, blockChainBlocks(blocks))
 	require.NoError(t, err)
 	tx.writeBarrier()
 	checkBlockDB(t, tx.kvRead, blocks)

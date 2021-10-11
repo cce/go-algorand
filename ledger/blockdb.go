@@ -44,15 +44,8 @@ var blockResetExprs = []string{
 	`DROP TABLE IF EXISTS blocks`,
 }
 
-func blockInit(tx *atomicWriteTx, initBlocks []bookkeeping.Block) error {
-	for _, tableCreate := range blockSchema {
-		_, err := tx.sqlTx.Exec(tableCreate)
-		if err != nil {
-			return fmt.Errorf("blockdb blockInit could not create table %v", err)
-		}
-	}
-
-	next, err := blockNext(tx.kvRead)
+func blockInit(kvRead kvRead, kvWrite kvWrite, initBlocks []bookkeeping.Block) error {
+	next, err := blockNext(kvRead)
 	if err != nil {
 		return err
 	}
@@ -60,7 +53,7 @@ func blockInit(tx *atomicWriteTx, initBlocks []bookkeeping.Block) error {
 	if next == 0 {
 		curRound := sql.NullInt64{}
 		for _, blk := range initBlocks {
-			curRound, err = blockPut(tx.kvRead, tx.kvWrite, blk, agreement.Certificate{}, curRound)
+			curRound, err = blockPut(kvRead, kvWrite, blk, agreement.Certificate{}, curRound)
 			if err != nil {
 				serr, ok := err.(sqlite3.Error)
 				if ok && serr.Code == sqlite3.ErrConstraint {
@@ -74,13 +67,7 @@ func blockInit(tx *atomicWriteTx, initBlocks []bookkeeping.Block) error {
 	return nil
 }
 
-func blockResetDB(tx *sql.Tx, kv kvWrite) error {
-	for _, stmt := range blockResetExprs {
-		_, err := tx.Exec(stmt)
-		if err != nil {
-			return err
-		}
-	}
+func blockResetDB(kv kvWrite) error {
 	kvBlockReset(kv)
 	return nil
 }

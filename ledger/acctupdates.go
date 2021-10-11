@@ -2172,7 +2172,7 @@ func (au *accountUpdates) commitRound(offset uint64, dbRound basics.Round, lookb
 	if updateStats {
 		stats.DatabaseCommitDuration = time.Duration(time.Now().UnixNano())
 	}
-	err := atomicKVWrites(au.kv, func(kvRead kvReadDB, kvWrite kvWrite) (err error) {
+	err := atomicKVWrites(au.kv, func(kvRead kvReadDB, kvWrite kvWriteBatch) (err error) {
 		treeTargetRound := basics.Round(0)
 		if au.catchpointInterval > 0 {
 			mc, err0 := MakeMerkleCommitter(kvRead, kvWrite, false)

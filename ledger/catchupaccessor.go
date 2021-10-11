@@ -270,7 +270,7 @@ func (c *CatchpointCatchupAccessorImpl) processStagingContent(ctx context.Contex
 	kv := c.ledger.trackerKV()
 	start := time.Now()
 	ledgerProcessstagingcontentCount.Inc(nil)
-	err = atomicKVWrites(kv, func(kvRead kvReadDB, kvWrite kvWrite) (err error) {
+	err = atomicKVWrites(kv, func(kvRead kvReadDB, kvWrite kvWriteBatch) (err error) {
 		sq, err := accountsDbInit(kvRead, kvWrite)
 		if err != nil {
 			return fmt.Errorf("CatchpointCatchupAccessorImpl::processStagingContent: unable to initialize accountsDbInit: %v", err)
@@ -472,7 +472,7 @@ func (c *CatchpointCatchupAccessorImpl) BuildMerkleTrie(ctx context.Context, pro
 			progressUpdates(hashesWritten)
 		}
 
-		err := atomicKVWrites(kv, func(kvRead kvReadDB, kvWrite kvWrite) (err error) {
+		err := atomicKVWrites(kv, func(kvRead kvReadDB, kvWrite kvWriteBatch) (err error) {
 			// create the merkle trie for the balances
 			mc, err = MakeMerkleCommitter(kvRead, kvWrite, true)
 			if err != nil {
@@ -526,7 +526,7 @@ func (c *CatchpointCatchupAccessorImpl) BuildMerkleTrie(ctx context.Context, pro
 			}
 
 			if uncommitedHashesCount >= trieRebuildCommitFrequency {
-				err = atomicKVWrites(kv, func(kvRead kvReadDB, kvWrite kvWrite) (err error) {
+				err = atomicKVWrites(kv, func(kvRead kvReadDB, kvWrite kvWriteBatch) (err error) {
 					// set a long 30-second window for the evict before warning is generated.
 					//db.ResetTransactionWarnDeadline(transactionCtx, tx.sqlTx, time.Now().Add(30*time.Second))
 					mc, err = MakeMerkleCommitter(kvRead, kvWrite, true)
@@ -555,7 +555,7 @@ func (c *CatchpointCatchupAccessorImpl) BuildMerkleTrie(ctx context.Context, pro
 			return
 		}
 		if uncommitedHashesCount > 0 {
-			err = atomicKVWrites(kv, func(kvRead kvReadDB, kvWrite kvWrite) (err error) {
+			err = atomicKVWrites(kv, func(kvRead kvReadDB, kvWrite kvWriteBatch) (err error) {
 				// set a long 30-second window for the evict before warning is generated.
 				//db.ResetTransactionWarnDeadline(transactionCtx, tx.sqlTx, time.Now().Add(30*time.Second))
 				mc, err = MakeMerkleCommitter(kvRead, kvWrite, true)
@@ -665,7 +665,7 @@ func (c *CatchpointCatchupAccessorImpl) StoreBalancesRound(ctx context.Context, 
 	kv := c.ledger.trackerKV()
 	start := time.Now()
 	ledgerStorebalancesroundCount.Inc(nil)
-	err = atomicKVWrites(kv, func(kvRead kvReadDB, kvWrite kvWrite) (err error) {
+	err = atomicKVWrites(kv, func(kvRead kvReadDB, kvWrite kvWriteBatch) (err error) {
 		sq, err := accountsDbInit(kvRead, kvWrite)
 		if err != nil {
 			return fmt.Errorf("CatchpointCatchupAccessorImpl::StoreBalancesRound: unable to initialize accountsDbInit: %v", err)

@@ -17,7 +17,6 @@
 package ledger
 
 import (
-	"context"
 	"crypto/rand"
 	"fmt"
 	"io/ioutil"
@@ -221,11 +220,11 @@ func TestArchivalRestart(t *testing.T) {
 	l.WaitForCommit(blk.Round())
 
 	var latest, earliest basics.Round
-	err = atomicReads(l.blockDBs.Rdb, l.blockKVs, func(ctx context.Context, tx *atomicReadTx) error {
-		latest, err = blockLatest(tx.kvRead)
+	err = atomicKVReads(l.blockKVs, true, func(kvRead kvRead, kvWrite kvWrite) error {
+		latest, err = blockLatest(kvRead)
 		require.NoError(t, err)
 
-		earliest, err = blockEarliest(tx.kvRead)
+		earliest, err = blockEarliest(kvRead)
 		require.NoError(t, err)
 		return err
 	})
@@ -238,11 +237,11 @@ func TestArchivalRestart(t *testing.T) {
 	require.NoError(t, err)
 	defer l.Close()
 
-	err = atomicReads(l.blockDBs.Rdb, l.blockKVs, func(ctx context.Context, tx *atomicReadTx) error {
-		latest, err = blockLatest(tx.kvRead)
+	err = atomicKVReads(l.blockKVs, true, func(kvRead kvRead, kvWrite kvWrite) error {
+		latest, err = blockLatest(kvRead)
 		require.NoError(t, err)
 
-		earliest, err = blockEarliest(tx.kvRead)
+		earliest, err = blockEarliest(kvRead)
 		require.NoError(t, err)
 		return err
 	})
@@ -757,11 +756,11 @@ func TestArchivalFromNonArchival(t *testing.T) {
 	l.WaitForCommit(blk.Round())
 
 	var latest, earliest basics.Round
-	err = atomicReads(l.blockDBs.Rdb, l.blockKVs, func(ctx context.Context, tx *atomicReadTx) error {
-		latest, err = blockLatest(tx.kvRead)
+	err = atomicKVReads(l.blockKVs, true, func(kvRead kvRead, kvWrite kvWrite) error {
+		latest, err = blockLatest(kvRead)
 		require.NoError(t, err)
 
-		earliest, err = blockEarliest(tx.kvRead)
+		earliest, err = blockEarliest(kvRead)
 		require.NoError(t, err)
 		return err
 	})
@@ -777,11 +776,11 @@ func TestArchivalFromNonArchival(t *testing.T) {
 	require.NoError(t, err)
 	defer l.Close()
 
-	err = atomicReads(l.blockDBs.Rdb, l.blockKVs, func(ctx context.Context, tx *atomicReadTx) error {
-		latest, err = blockLatest(tx.kvRead)
+	err = atomicKVReads(l.blockKVs, true, func(kvRead kvRead, kvWrite kvWrite) error {
+		latest, err = blockLatest(kvRead)
 		require.NoError(t, err)
 
-		earliest, err = blockEarliest(tx.kvRead)
+		earliest, err = blockEarliest(kvRead)
 		require.NoError(t, err)
 		return err
 	})

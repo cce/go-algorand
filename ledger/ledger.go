@@ -153,8 +153,8 @@ func OpenLedger(
 
 	start := time.Now()
 	ledgerInitblocksdbCount.Inc(nil)
-	err = atomicWrites(l.blockDBs.Wdb, l.blockKVs, func(ctx context.Context, tx *atomicWriteTx) error {
-		return initBlocksDB(tx, l, []bookkeeping.Block{genesisInitState.Block}, cfg.Archival)
+	err = atomicKVWrites(l.blockKVs, func(kvRead kvReadDB, kvWrite kvWriteBatch) error {
+		return initBlocksDB(kvRead, kvWrite, l, []bookkeeping.Block{genesisInitState.Block}, cfg.Archival)
 	})
 	ledgerInitblocksdbMicros.AddMicrosecondsSince(start, nil)
 	if err != nil {
@@ -226,13 +226,13 @@ func (l *Ledger) verifyMatchingGenesisHash() (err error) {
 	// Check that the genesis hash, if present, matches.
 	start := time.Now()
 	ledgerVerifygenhashCount.Inc(nil)
-	err = atomicReads(l.blockDBs.Rdb, l.blockKVs, func(ctx context.Context, tx *atomicReadTx) error {
-		latest, err := blockLatest(tx.kvRead)
+	err = atomicKVReads(l.blockKVs, true, func(kvRead kvRead, kvWrite kvWrite) error {
+		latest, err := blockLatest(kvRead)
 		if err != nil {
 			return err
 		}
 
-		hdr, err := blockGetHdr(tx.kvRead, latest)
+		hdr, err := blockGetHdr(kvRead, latest)
 		if err != nil {
 			return err
 		}
@@ -315,8 +315,8 @@ func (l *Ledger) setSynchronousMode(ctx context.Context, synchronousMode db.Sync
 // initBlocksDB performs DB initialization:
 // - creates and populates it with genesis blocks
 // - ensures DB is in good shape for archival mode and resets it if not
-func initBlocksDB(tx *atomicWriteTx, l *Ledger, initBlocks []bookkeeping.Block, isArchival bool) (err error) {
-	err = blockInit(tx, initBlocks)
+func initBlocksDB(kvRead kvRead, kvWrite kvWriteBatch, l *Ledger, initBlocks []bookkeeping.Block, isArchival bool) (err error) {
+	err = blockInit(kvRead, kvWrite, initBlocks)
 	if err != nil {
 		err = fmt.Errorf("initBlocksDB.blockInit %v", err)
 		return err
@@ -324,8 +324,8 @@ func initBlocksDB(tx *atomicWriteTx, l *Ledger, initBlocks []bookkeeping.Block, 
 
 	// in archival mode check if DB contains all blocks up to the latest
 	if isArchival {
-		tx.writeBarrier()
-		earliest, err := blockEarliest(tx.kvRead)
+		kvWrite.WriteBarrier()
+		earliest, err := blockEarliest(kvRead)
 		if err != nil {
 			err = fmt.Errorf("initBlocksDB.blockEarliest %v", err)
 			return err
@@ -335,12 +335,12 @@ func initBlocksDB(tx *atomicWriteTx, l *Ledger, initBlocks []bookkeeping.Block, 
 		// So reset the DB and init it again
 		if earliest != basics.Round(0) {
 			l.log.Warnf("resetting blocks DB (earliest block is %v)", earliest)
-			err := blockResetDB(tx.sqlTx, tx.kvWrite)
+			err := blockResetDB(kvWrite)
 			if err != nil {
 				err = fmt.Errorf("initBlocksDB.blockResetDB %v", err)
 				return err
 			}
-			err = blockInit(tx, initBlocks)
+			err = blockInit(kvRead, kvWrite, initBlocks)
 			if err != nil {
 				err = fmt.Errorf("initBlocksDB.blockInit 2 %v", err)
 				return err
