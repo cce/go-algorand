@@ -1027,12 +1027,13 @@ func (ledger *evalTestLedger) Validate(ctx context.Context, blk bookkeeping.Bloc
 // payset being evaluated is known in advance, a paysetHint >= 0 can be
 // passed, avoiding unnecessary payset slice growth.
 func (ledger *evalTestLedger) StartEvaluator(hdr bookkeeping.BlockHeader, paysetHint, maxTxnBytesPerBlock int) (*BlockEvaluator, error) {
-	proto, ok := config.Consensus[hdr.CurrentProtocol]
-	if !ok {
-		return nil, protocol.Error(hdr.CurrentProtocol)
-	}
-
-	return StartEvaluator(ledger, hdr, proto, paysetHint, true, true, maxTxnBytesPerBlock)
+	return StartEvaluator(ledger, hdr,
+		EvaluatorOptions{
+			PaysetHint:          paysetHint,
+			Validate:            true,
+			Generate:            true,
+			MaxTxnBytesPerBlock: maxTxnBytesPerBlock,
+		})
 }
 
 // GetCreatorForRound takes a CreatableIndex and a CreatableType and tries to
@@ -1646,7 +1647,7 @@ func TestCowBaseCreatorsCache(t *testing.T) {
 
 	base := roundCowBase{
 		l:        &l,
-		creators: map[Creatable]ledgercore.FoundAddress{},
+		creators: map[creatable]foundAddress{},
 	}
 
 	cindex := []basics.CreatableIndex{9, 10, 9, 10}
