@@ -104,7 +104,7 @@ var defaultLocal = Local{
 	TLSKeyFile:                              "",
 	TelemetryToLog:                          true,
 	TxPoolExponentialIncreaseFactor:         2,
-	TxPoolSize:                              50000,
+	TxPoolSize:                              75000,
 	TxSyncIntervalSeconds:                   60,
 	TxSyncServeResponseSize:                 1000000,
 	TxSyncTimeoutSeconds:                    30,
