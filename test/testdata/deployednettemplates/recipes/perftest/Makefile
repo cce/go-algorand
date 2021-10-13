@@ -1,4 +1,4 @@
-PARAMS="-w 20 -R 1 -N 3 -n 3 -H 20 --node-template node.json --relay-template relay.json --non-participating-node-template nonPartNode.json"
+PARAMS="-w 25 -R 1 -N 3 -n 3 -H 25 --node-template node.json --relay-template relay.json --non-participating-node-template nonPartNode.json"
 
 all:	net.json genesis.json
 
