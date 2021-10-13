@@ -95,26 +95,6 @@
     {
       "Name": "NPN20",
       "Template": "AWS-US-EAST-2-c5d.4xl"
-    },
-    {
-      "Name": "NPN21",
-      "Template": "AWS-US-EAST-2-c5d.4xl"
-    },
-    {
-      "Name": "NPN22",
-      "Template": "AWS-US-EAST-2-c5d.4xl"
-    },
-    {
-      "Name": "NPN23",
-      "Template": "AWS-US-EAST-2-c5d.4xl"
-    },
-    {
-      "Name": "NPN24",
-      "Template": "AWS-US-EAST-2-c5d.4xl"
-    },
-    {
-      "Name": "NPN25",
-      "Template": "AWS-US-EAST-2-c5d.4xl"
     }
   ]
 }

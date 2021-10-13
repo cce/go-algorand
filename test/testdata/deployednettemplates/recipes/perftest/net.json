@@ -54,14 +54,6 @@
 						{
 							"Name": "Wallet19",
 							"ParticipationOnly": false
-						},
-						{
-							"Name": "Wallet22",
-							"ParticipationOnly": false
-						},
-						{
-							"Name": "Wallet25",
-							"ParticipationOnly": false
 						}
 					],
 					"APIEndpoint": "{{APIEndpoint}}",
@@ -110,10 +102,6 @@
 						{
 							"Name": "Wallet20",
 							"ParticipationOnly": false
-						},
-						{
-							"Name": "Wallet23",
-							"ParticipationOnly": false
 						}
 					],
 					"APIEndpoint": "{{APIEndpoint}}",
@@ -158,14 +146,6 @@
 						{
 							"Name": "Wallet18",
 							"ParticipationOnly": false
-						},
-						{
-							"Name": "Wallet21",
-							"ParticipationOnly": false
-						},
-						{
-							"Name": "Wallet24",
-							"ParticipationOnly": false
 						}
 					],
 					"APIEndpoint": "{{APIEndpoint}}",
@@ -188,7 +168,7 @@
 					"Name": "nonParticipatingNode1",
 					"Wallets": [
 						{
-							"Name": "Wallet26",
+							"Name": "Wallet21",
 							"ParticipationOnly": false
 						}
 					],
@@ -210,7 +190,7 @@
 					"Name": "nonParticipatingNode2",
 					"Wallets": [
 						{
-							"Name": "Wallet27",
+							"Name": "Wallet22",
 							"ParticipationOnly": false
 						}
 					],
@@ -232,7 +212,7 @@
 					"Name": "nonParticipatingNode3",
 					"Wallets": [
 						{
-							"Name": "Wallet28",
+							"Name": "Wallet23",
 							"ParticipationOnly": false
 						}
 					],
@@ -254,7 +234,7 @@
 					"Name": "nonParticipatingNode4",
 					"Wallets": [
 						{
-							"Name": "Wallet29",
+							"Name": "Wallet24",
 							"ParticipationOnly": false
 						}
 					],
@@ -276,7 +256,7 @@
 					"Name": "nonParticipatingNode5",
 					"Wallets": [
 						{
-							"Name": "Wallet30",
+							"Name": "Wallet25",
 							"ParticipationOnly": false
 						}
 					],
@@ -298,7 +278,7 @@
 					"Name": "nonParticipatingNode6",
 					"Wallets": [
 						{
-							"Name": "Wallet31",
+							"Name": "Wallet26",
 							"ParticipationOnly": false
 						}
 					],
@@ -320,7 +300,7 @@
 					"Name": "nonParticipatingNode7",
 					"Wallets": [
 						{
-							"Name": "Wallet32",
+							"Name": "Wallet27",
 							"ParticipationOnly": false
 						}
 					],
@@ -342,7 +322,7 @@
 					"Name": "nonParticipatingNode8",
 					"Wallets": [
 						{
-							"Name": "Wallet33",
+							"Name": "Wallet28",
 							"ParticipationOnly": false
 						}
 					],
@@ -364,7 +344,7 @@
 					"Name": "nonParticipatingNode9",
 					"Wallets": [
 						{
-							"Name": "Wallet34",
+							"Name": "Wallet29",
 							"ParticipationOnly": false
 						}
 					],
@@ -386,7 +366,7 @@
 					"Name": "nonParticipatingNode10",
 					"Wallets": [
 						{
-							"Name": "Wallet35",
+							"Name": "Wallet30",
 							"ParticipationOnly": false
 						}
 					],
@@ -408,7 +388,7 @@
 					"Name": "nonParticipatingNode11",
 					"Wallets": [
 						{
-							"Name": "Wallet36",
+							"Name": "Wallet31",
 							"ParticipationOnly": false
 						}
 					],
@@ -430,7 +410,7 @@
 					"Name": "nonParticipatingNode12",
 					"Wallets": [
 						{
-							"Name": "Wallet37",
+							"Name": "Wallet32",
 							"ParticipationOnly": false
 						}
 					],
@@ -452,7 +432,7 @@
 					"Name": "nonParticipatingNode13",
 					"Wallets": [
 						{
-							"Name": "Wallet38",
+							"Name": "Wallet33",
 							"ParticipationOnly": false
 						}
 					],
@@ -474,7 +454,7 @@
 					"Name": "nonParticipatingNode14",
 					"Wallets": [
 						{
-							"Name": "Wallet39",
+							"Name": "Wallet34",
 							"ParticipationOnly": false
 						}
 					],
@@ -496,7 +476,7 @@
 					"Name": "nonParticipatingNode15",
 					"Wallets": [
 						{
-							"Name": "Wallet40",
+							"Name": "Wallet35",
 							"ParticipationOnly": false
 						}
 					],
@@ -518,7 +498,7 @@
 					"Name": "nonParticipatingNode16",
 					"Wallets": [
 						{
-							"Name": "Wallet41",
+							"Name": "Wallet36",
 							"ParticipationOnly": false
 						}
 					],
@@ -540,7 +520,7 @@
 					"Name": "nonParticipatingNode17",
 					"Wallets": [
 						{
-							"Name": "Wallet42",
+							"Name": "Wallet37",
 							"ParticipationOnly": false
 						}
 					],
@@ -562,7 +542,7 @@
 					"Name": "nonParticipatingNode18",
 					"Wallets": [
 						{
-							"Name": "Wallet43",
+							"Name": "Wallet38",
 							"ParticipationOnly": false
 						}
 					],
@@ -584,7 +564,7 @@
 					"Name": "nonParticipatingNode19",
 					"Wallets": [
 						{
-							"Name": "Wallet44",
+							"Name": "Wallet39",
 							"ParticipationOnly": false
 						}
 					],
@@ -606,117 +586,7 @@
 					"Name": "nonParticipatingNode20",
 					"Wallets": [
 						{
-							"Name": "Wallet45",
-							"ParticipationOnly": false
-						}
-					],
-					"APIEndpoint": "{{APIEndpoint}}",
-					"APIToken": "{{APIToken}}",
-					"EnableTelemetry": false,
-					"EnableMetrics": false,
-					"EnableService": false,
-					"EnableBlockStats": false,
-					"ConfigJSONOverride": "{  \"TxPoolExponentialIncreaseFactor\": 1, \"DNSBootstrapID\": \"<network>.algodev.network\", \"DeadlockDetection\": -1, \"BaseLoggerDebugLevel\": 4, \"CadaverSizeTarget\": 0  }"
-				}
-			]
-		},
-		{
-			"Name": "NPN21",
-			"Group": "",
-			"Nodes": [
-				{
-					"Name": "nonParticipatingNode21",
-					"Wallets": [
-						{
-							"Name": "Wallet46",
-							"ParticipationOnly": false
-						}
-					],
-					"APIEndpoint": "{{APIEndpoint}}",
-					"APIToken": "{{APIToken}}",
-					"EnableTelemetry": false,
-					"EnableMetrics": false,
-					"EnableService": false,
-					"EnableBlockStats": false,
-					"ConfigJSONOverride": "{  \"TxPoolExponentialIncreaseFactor\": 1, \"DNSBootstrapID\": \"<network>.algodev.network\", \"DeadlockDetection\": -1, \"BaseLoggerDebugLevel\": 4, \"CadaverSizeTarget\": 0  }"
-				}
-			]
-		},
-		{
-			"Name": "NPN22",
-			"Group": "",
-			"Nodes": [
-				{
-					"Name": "nonParticipatingNode22",
-					"Wallets": [
-						{
-							"Name": "Wallet47",
-							"ParticipationOnly": false
-						}
-					],
-					"APIEndpoint": "{{APIEndpoint}}",
-					"APIToken": "{{APIToken}}",
-					"EnableTelemetry": false,
-					"EnableMetrics": false,
-					"EnableService": false,
-					"EnableBlockStats": false,
-					"ConfigJSONOverride": "{  \"TxPoolExponentialIncreaseFactor\": 1, \"DNSBootstrapID\": \"<network>.algodev.network\", \"DeadlockDetection\": -1, \"BaseLoggerDebugLevel\": 4, \"CadaverSizeTarget\": 0  }"
-				}
-			]
-		},
-		{
-			"Name": "NPN23",
-			"Group": "",
-			"Nodes": [
-				{
-					"Name": "nonParticipatingNode23",
-					"Wallets": [
-						{
-							"Name": "Wallet48",
-							"ParticipationOnly": false
-						}
-					],
-					"APIEndpoint": "{{APIEndpoint}}",
-					"APIToken": "{{APIToken}}",
-					"EnableTelemetry": false,
-					"EnableMetrics": false,
-					"EnableService": false,
-					"EnableBlockStats": false,
-					"ConfigJSONOverride": "{  \"TxPoolExponentialIncreaseFactor\": 1, \"DNSBootstrapID\": \"<network>.algodev.network\", \"DeadlockDetection\": -1, \"BaseLoggerDebugLevel\": 4, \"CadaverSizeTarget\": 0  }"
-				}
-			]
-		},
-		{
-			"Name": "NPN24",
-			"Group": "",
-			"Nodes": [
-				{
-					"Name": "nonParticipatingNode24",
-					"Wallets": [
-						{
-							"Name": "Wallet49",
-							"ParticipationOnly": false
-						}
-					],
-					"APIEndpoint": "{{APIEndpoint}}",
-					"APIToken": "{{APIToken}}",
-					"EnableTelemetry": false,
-					"EnableMetrics": false,
-					"EnableService": false,
-					"EnableBlockStats": false,
-					"ConfigJSONOverride": "{  \"TxPoolExponentialIncreaseFactor\": 1, \"DNSBootstrapID\": \"<network>.algodev.network\", \"DeadlockDetection\": -1, \"BaseLoggerDebugLevel\": 4, \"CadaverSizeTarget\": 0  }"
-				}
-			]
-		},
-		{
-			"Name": "NPN25",
-			"Group": "",
-			"Nodes": [
-				{
-					"Name": "nonParticipatingNode25",
-					"Wallets": [
-						{
-							"Name": "Wallet50",
+							"Name": "Wallet40",
 							"ParticipationOnly": false
 						}
 					],
