@@ -30,6 +30,7 @@ import (
 	"github.com/algorand/go-algorand/ledger/ledgercore"
 	"github.com/algorand/go-algorand/protocol"
 	"github.com/algorand/go-algorand/util/db"
+	"github.com/algorand/go-algorand/util/metrics"
 )
 
 // accountsDbQueries is used to cache a prepared SQL statement to look up
@@ -1307,6 +1308,9 @@ func MakeMerkleCommitter(kvR kvRead, kvW kvWrite, staging bool) (mc *MerkleCommi
 
 // StorePage is the merkletrie.Committer interface implementation, stores a single page in a sqlite database table.
 func (mc *MerkleCommitter) StorePage(page uint64, content []byte) error {
+	merkleCommitterStorePageCount.Inc(nil)
+	defer merkleCommitterStorePageMicros.AddMicrosecondsSince(time.Now(), nil)
+
 	if len(content) == 0 {
 		err := kvDeleteAccountHashes(mc.kvWrite, mc.table, page)
 		return err
@@ -1317,6 +1321,9 @@ func (mc *MerkleCommitter) StorePage(page uint64, content []byte) error {
 
 // LoadPage is the merkletrie.Committer interface implementation, load a single page from a sqlite database table.
 func (mc *MerkleCommitter) LoadPage(page uint64) (content []byte, err error) {
+	merkleCommitterLoadPageCount.Inc(nil)
+	defer merkleCommitterLoadPageMicros.AddMicrosecondsSince(time.Now(), nil)
+
 	content, err = kvGetAccountHashes(mc.kvRead, mc.table, page)
 	if err == sql.ErrNoRows {
 		content = nil
@@ -1674,3 +1681,8 @@ func (iterator *catchpointPendingHashesIterator) Close() {
 func (pac *persistedAccountData) before(other *persistedAccountData) bool {
 	return pac.round < other.round
 }
+
+var merkleCommitterStorePageCount = metrics.NewCounter("merkle_storepage_count", "calls")
+var merkleCommitterStorePageMicros = metrics.NewCounter("merkle_storepage_micros", "µs spent")
+var merkleCommitterLoadPageCount = metrics.NewCounter("merkle_loadpage_count", "calls")
+var merkleCommitterLoadPageMicros = metrics.NewCounter("merkle_loadpage_micros", "µs spent")
