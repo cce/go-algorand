@@ -111,6 +111,7 @@ func (bq *blockQueue) syncer() {
 		ledgerSyncBlockputCount.Inc(nil)
 		err := bq.l.blockDBs.Wdb.Atomic(func(ctx context.Context, tx *sql.Tx) error {
 			for _, e := range workQ {
+				ledgerSyncBlockputBlockCount.Inc(nil)
 				err0 := blockPut(tx, e.block, e.cert)
 				if err0 != nil {
 					return err0
@@ -342,6 +343,7 @@ func (bq *blockQueue) getBlockCert(r basics.Round) (blk bookkeeping.Block, cert 
 var ledgerBlockqInitCount = metrics.NewCounter("ledger_blockq_init_count", "calls to init block queue")
 var ledgerBlockqInitMicros = metrics.NewCounter("ledger_blockq_init_micros", "µs spent to init block queue")
 var ledgerSyncBlockputCount = metrics.NewCounter("ledger_blockq_sync_put_count", "calls to sync block queue")
+var ledgerSyncBlockputBlockCount = metrics.NewCounter("ledger_blockq_sync_blockput_count", "calls to sync blockPut")
 var ledgerSyncBlockputMicros = metrics.NewCounter("ledger_blockq_sync_put_micros", "µs spent to sync block queue")
 var ledgerSyncBlockforgetCount = metrics.NewCounter("ledger_blockq_sync_forget_count", "calls")
 var ledgerSyncBlockforgetMicros = metrics.NewCounter("ledger_blockq_sync_forget_micros", "µs spent")
