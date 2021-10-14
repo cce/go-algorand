@@ -624,7 +624,7 @@ func initConsensusProtocols() {
 		MinTxnFee:           1000,
 		MaxTxnLife:          1000,
 		MaxTxnNoteBytes:     1024,
-		MaxTxnBytesPerBlock: 7000000,
+		MaxTxnBytesPerBlock: 5500000,
 		DefaultKeyDilution:  10000,
 
 		MaxTimestampIncrement: 25,
