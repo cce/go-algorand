@@ -756,6 +756,7 @@ func kvGetOldestCatchpointFiles(kv kvRead, filesToKeep int, fileCount int) (acco
 	// inner query: SELECT round FROM sc ORDER BY round DESC limit 1 OFFSET filesToKeep
 	// reverse iterate over whole keyspace (largest round number first)
 	iter := kv.NewIterator([]byte(kvPrefixStoredCatchpoints), []byte(kvPrefixStoredCatchpointsEndRange), true)
+	defer iter.Close()
 	i := 0
 	for ; i < filesToKeep && iter.Valid(); i++ {
 		iter.Next()
@@ -769,7 +770,6 @@ func kvGetOldestCatchpointFiles(kv kvRead, filesToKeep int, fileCount int) (acco
 		}
 		lessThanRound = rnd
 	}
-	iter.Close()
 
 	// outer query: SELECT round, filename FROM storedcatchpoints WHERE round <= lessThanRound ORDER BY round ASC LIMIT fileCount
 	return &oldestCatchpointFilesIterator{

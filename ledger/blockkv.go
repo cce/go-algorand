@@ -60,6 +60,7 @@ func kvBlockMinRound(kv kvRead) (sql.NullInt64, error) { return kvBlockFirstRoun
 
 func kvBlockFirstRound(kv kvRead, reverse bool) (sql.NullInt64, error) {
 	iter := kv.NewIterator([]byte(kvPrefixBlocks), []byte(kvPrefixBlocksEndRange), reverse)
+	defer iter.Close()
 	if !iter.Valid() {
 		return sql.NullInt64{}, nil
 	}
