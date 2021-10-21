@@ -54,9 +54,9 @@ type routerHandle struct {
 // If there are many state machines of this type (for instance, there is one voteMachineStep for each step)
 // then the sender must specify a round, period, and step to disambiguate between these state machines.
 func (h *routerHandle) dispatch(ctx context.Context, state player, e event, dest stateMachineTag, r round, p period, s step) event {
-	h.t.ein(h.src, dest, e, r, p, s)
+	ctx = h.t.ein(ctx, h.src, dest, e, r, p, s)
 	e = h.r.dispatch(ctx, h.t, state, e, h.src, dest, r, p, s)
-	h.t.eout(h.src, dest, e, r, p, s)
+	h.t.eout(ctx, h.src, dest, e, r, p, s)
 	return e
 }
 
@@ -143,13 +143,13 @@ func (router *rootRouter) update(state player, r round, gc bool) {
 func (router *rootRouter) submitTop(ctx context.Context, t *tracer, state player, e event) (player, []action) {
 	// TODO move cadaver calls to somewhere cleaner
 	t.traceInput(state.Round, state.Period, state, e) // cadaver
-	t.ainTop(demultiplexer, playerMachine, state, e, 0, 0, 0)
+	ctx = t.ainTop(ctx, demultiplexer, playerMachine, state, e, 0, 0, 0)
 
 	router.update(state, 0, true)
 	handle := routerHandle{t: t, r: router, src: playerMachine}
 	a := router.root.handle(ctx, handle, e)
 
-	t.aoutTop(demultiplexer, playerMachine, a, 0, 0, 0)
+	t.aoutTop(ctx, demultiplexer, playerMachine, a, 0, 0, 0)
 	t.traceOutput(state.Round, state.Period, state, a) // cadaver
 
 	p := router.root.underlying().(*player)

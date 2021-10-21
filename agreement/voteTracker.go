@@ -103,7 +103,7 @@ func (tracker *voteTracker) handle(ctx context.Context, r routerHandle, p player
 		var res thresholdEvent
 		defer func() {
 			if voteCausesStateChange {
-				r.t.logVoteTrackerResult(p, e, res, e.Vote.Cred.Weight, tracker.count(e.Vote.R.Proposal), tracker.count(res.Proposal), proto)
+				r.t.logVoteTrackerResult(ctx, p, e, res, e.Vote.Cred.Weight, tracker.count(e.Vote.R.Proposal), tracker.count(res.Proposal), proto)
 			}
 		}()
 

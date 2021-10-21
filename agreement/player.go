@@ -82,7 +82,7 @@ func (p *player) handle(ctx context.Context, r routerHandle, e event) []action {
 		}
 
 		if !p.Napping {
-			r.t.logTimeout(*p)
+			r.t.logTimeout(ctx, *p)
 		}
 
 		switch p.Step {
@@ -139,7 +139,7 @@ func (p *player) handleFastTimeout(ctx context.Context, r routerHandle, e timeou
 		return nil
 	}
 	p.FastRecoveryDeadline = lower + delta
-	r.t.logFastTimeout(*p)
+	r.t.logFastTimeout(ctx, *p)
 	return p.issueFastVote(ctx, r)
 }
 
@@ -150,7 +150,7 @@ func (p *player) issueSoftVote(ctx context.Context, r routerHandle) (actions []a
 
 	e := r.dispatch(ctx, *p, proposalFrozenEvent{}, proposalMachinePeriod, p.Round, p.Period, 0)
 	a := pseudonodeAction{T: attest, Round: p.Round, Period: p.Period, Step: soft, Proposal: e.(proposalFrozenEvent).Proposal}
-	r.t.logProposalFrozen(a.Proposal, a.Round, a.Period)
+	r.t.logProposalFrozen(ctx, a.Proposal, a.Round, a.Period)
 	r.t.timeR().RecStep(p.Period, soft, a.Proposal)
 
 	res := r.dispatch(ctx, *p, nextThresholdStatusRequestEvent{}, voteMachinePeriod, p.Round, p.Period-1, 0)
@@ -320,7 +320,7 @@ func (p *player) enterPeriod(ctx context.Context, r routerHandle, source thresho
 	// this needs to happen before changing player state so the correct old blockAssemblers can be promoted
 	// TODO might be better passing through the old period explicitly in the {soft,next}Threshold event
 	e := r.dispatch(ctx, *p, source, proposalMachine, p.Round, p.Period, 0)
-	r.t.logPeriodConcluded(*p, target, source.Proposal)
+	r.t.logPeriodConcluded(ctx, *p, target, source.Proposal)
 
 	p.LastConcluding = p.Step
 	p.Period = target
@@ -425,7 +425,7 @@ func (p *player) partitionPolicy(ctx context.Context, r routerHandle) (actions [
 	if bundleResponse.Ok {
 		// TODO do we want to authenticate our own bundles?
 		b := bundleResponse.Event.Bundle
-		r.t.logBundleBroadcast(*p, b)
+		r.t.logBundleBroadcast(ctx, *p, b)
 		a0 := broadcastAction(protocol.VoteBundleTag, b)
 		actions = append(actions, a0)
 	}
@@ -455,7 +455,7 @@ func (p *player) partitionPolicy(ctx context.Context, r routerHandle) (actions [
 		resStaged := stagedValue(ctx, *p, r, bundleRound, bundlePeriod)
 		if resStaged.Committable {
 			transmit := compoundMessage{Proposal: resStaged.Payload.u()}
-			r.t.logProposalRepropagate(resStaged.Proposal, bundleRound, bundlePeriod)
+			r.t.logProposalRepropagate(ctx, resStaged.Proposal, bundleRound, bundlePeriod)
 			a1 := broadcastAction(protocol.ProposalPayloadTag, transmit)
 			actions = append(actions, a1)
 		} else {
@@ -463,7 +463,7 @@ func (p *player) partitionPolicy(ctx context.Context, r routerHandle) (actions [
 			resPinned := pinnedValue(ctx, *p, r, bundleRound)
 			if resPinned.PayloadOK {
 				transmit := compoundMessage{Proposal: resPinned.Payload.u()}
-				r.t.logProposalRepropagate(resPinned.Proposal, bundleRound, bundlePeriod)
+				r.t.logProposalRepropagate(ctx, resPinned.Proposal, bundleRound, bundlePeriod)
 				a1 := broadcastAction(protocol.ProposalPayloadTag, transmit)
 				actions = append(actions, a1)
 			}

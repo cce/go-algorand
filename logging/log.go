@@ -35,6 +35,7 @@ logger.Info("New wallet was created")
 package logging
 
 import (
+	"context"
 	"io"
 	"runtime"
 	"runtime/debug"
@@ -128,6 +129,9 @@ type Logger interface {
 	// Add one key-value to log
 	With(key string, value interface{}) Logger
 
+	// WithContext logs a message with a given context
+	WithContext(ctx context.Context) Logger
+
 	// WithFields logs a message with specific fields
 	WithFields(Fields) Logger
 
@@ -175,6 +179,13 @@ type logger struct {
 func (l logger) With(key string, value interface{}) Logger {
 	return logger{
 		l.entry.WithField(key, value),
+		l.loggerState,
+	}
+}
+
+func (l logger) WithContext(ctx context.Context) Logger {
+	return logger{
+		l.entry.WithContext(ctx),
 		l.loggerState,
 	}
 }

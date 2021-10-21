@@ -38,10 +38,12 @@ import (
 	"github.com/algorand/go-algorand/data/basics"
 	"github.com/algorand/go-algorand/data/bookkeeping"
 	"github.com/algorand/go-algorand/logging"
+	"github.com/algorand/go-algorand/logging/otellogrus"
 	"github.com/algorand/go-algorand/protocol"
 	"github.com/algorand/go-algorand/test/partitiontest"
 	"github.com/algorand/go-algorand/util/db"
 	"github.com/algorand/go-algorand/util/timers"
+	"github.com/lightstep/otel-launcher-go/launcher"
 )
 
 type testingClock struct {
@@ -723,6 +725,7 @@ func setupAgreementWithValidator(t *testing.T, numNodes int, traceLevel traceLev
 	log.SetJSONFormatter()
 	log.SetOutput(f)
 	log.SetLevel(logging.Debug)
+	log.AddHook(otellogrus.NewLoggingHook())
 
 	// node setup
 	clocks := make([]timers.Clock, numNodes)
@@ -911,11 +914,19 @@ func simulateAgreementWithLedgerFactory(t *testing.T, numNodes int, numRounds in
 func TestAgreementSynchronous1(t *testing.T) {
 	partitiontest.PartitionTest(t)
 
+	ls := launcher.ConfigureOpentelemetry(
+		launcher.WithServiceName("service_test_s1"),
+		//launcher.WithServiceVersion("v1"),
+		launcher.WithAccessToken("cg1GHhQkLdLlNAD1u6OPIj/FVQryox3qdiY2zn3rcllRtkdowzZlDVq0LopNc6J4VgnZkHlPSTOfYMUIGV/7v+Gg3FZkqkuhmzKiUs4w"),
+	)
+	defer ls.Shutdown()
+	//logrus.AddHook(otellogrus.NewLoggingHook())
+
 	// if testing.Short() {
 	// 	t.Skip("Skipping agreement integration test")
 	// }
 
-	simulateAgreement(t, 1, 5, disabled)
+	simulateAgreement(t, 1, 1, disabled)
 }
 
 func TestAgreementSynchronous2(t *testing.T) {

@@ -27,6 +27,8 @@ import (
 	"github.com/algorand/go-algorand/util/db"
 	"github.com/algorand/go-algorand/util/execpool"
 	"github.com/algorand/go-algorand/util/timers"
+	"go.opentelemetry.io/otel/semconv"
+	"go.opentelemetry.io/otel/trace"
 )
 
 const (
@@ -220,6 +222,13 @@ func (s *Service) mainLoop(input <-chan externalEvent, output chan<- []action, r
 		s.Clock = clock
 	}
 
+	ctx, span := oteltr.Start(context.Background(), "service.mainLoop",
+		trace.WithSpanKind(trace.SpanKindServer),
+		trace.WithAttributes(
+			semconv.ServiceNameKey.String("service.mainLoop"),
+			semconv.ServiceInstanceIDKey.String(s.tracer.tag),
+		),
+	)
 	for {
 		output <- a
 		ready <- externalDemuxSignals{Deadline: status.Deadline, FastRecoveryDeadline: status.FastRecoveryDeadline, CurrentRound: status.Round}
@@ -228,7 +237,7 @@ func (s *Service) mainLoop(input <-chan externalEvent, output chan<- []action, r
 			break
 		}
 
-		status, a = router.submitTop(context.Background(), s.tracer, status, e)
+		status, a = router.submitTop(ctx, s.tracer, status, e)
 
 		if persistent(a) {
 			s.persistRouter = router
@@ -236,6 +245,7 @@ func (s *Service) mainLoop(input <-chan externalEvent, output chan<- []action, r
 			s.persistActions = a
 		}
 	}
+	span.End()
 	close(output)
 }
 

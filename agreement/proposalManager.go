@@ -127,7 +127,7 @@ func (m *proposalManager) handleMessageEvent(ctx context.Context, r routerHandle
 	var pipelinedRound round
 	var pipelinedPeriod period
 	defer func() {
-		r.t.logProposalManagerResult(p, e.messageEvent, res, pipelinedRound, pipelinedPeriod)
+		r.t.logProposalManagerResult(ctx, p, e.messageEvent, res, pipelinedRound, pipelinedPeriod)
 	}()
 
 	switch e.t() {

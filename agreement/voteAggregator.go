@@ -73,7 +73,7 @@ func (agg *voteAggregator) underlying() listener {
 func (agg *voteAggregator) handle(ctx context.Context, r routerHandle, pr player, em event) (res event) {
 	e := em.(filterableMessageEvent)
 	defer func() {
-		r.t.logVoteAggregatorResult(e, res)
+		r.t.logVoteAggregatorResult(ctx, e, res)
 	}()
 
 	switch e.t() {

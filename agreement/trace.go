@@ -17,6 +17,7 @@
 package agreement
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -27,6 +28,9 @@ import (
 	"github.com/algorand/go-algorand/logging"
 	"github.com/algorand/go-algorand/logging/logspec"
 	"github.com/algorand/go-algorand/logging/telemetryspec"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 )
 
 //msgp:ignore traceLevel
@@ -129,15 +133,29 @@ func (t *tracer) setMetadata(metadata tracerMetadata) {
 	t.playerInfo = metadata
 }
 
-func (t *tracer) ein(src, dest stateMachineTag, e event, r round, p period, s step) {
+func (t *tracer) ein(ctx context.Context, src, dest stateMachineTag, e event, r round, p period, s step) context.Context {
 	t.seq++
 	if t.level >= all {
 		// fmt.Fprintf(t.w, "%v %3v %23v  -> %23v: %30v\n", t.tag, t.seq, src, dest, e)
 		fmt.Fprintf(t.w, "%v] %23v  -> %23v: %30v\n", t.tag, src, dest, e)
 	}
+
+	opname := e.t().String()
+	ctx, span := oteltr.Start(ctx, opname, trace.WithAttributes(
+		attribute.Stringer("src_machine", src),
+		attribute.Stringer("dst_machine", dest),
+		attribute.Any("round", r),
+		attribute.Any("period", p),
+		attribute.Any("step", s),
+	))
+	span.SetAttributes(attributesFromEvent(e, "in_")...)
+	return ctx
 }
 
-func (t *tracer) eout(src, dest stateMachineTag, e event, r round, p period, s step) {
+func (t *tracer) eout(ctx context.Context, src, dest stateMachineTag, e event, r round, p period, s step) {
+	span := trace.SpanFromContext(ctx)
+	span.SetAttributes(attributesFromEvent(e, "out_")...)
+	span.End()
 	t.seq++
 	if t.level >= all {
 		// fmt.Fprintf(t.w, "%v %3v %23v <-  %23v: %30v\n", t.tag, t.seq, src, dest, e)
@@ -151,15 +169,52 @@ func (t *tracer) eout(src, dest stateMachineTag, e event, r round, p period, s s
 	}
 }
 
-func (t *tracer) ainTop(src, dest stateMachineTag, state player, e event, r round, p period, s step) {
+func attributesFromEvent(e event, prefix string) []attribute.KeyValue {
+	return []attribute.KeyValue{
+		attribute.Stringer(prefix+"eventtype", e.t()),
+		attribute.Stringer(prefix+"event", e),
+	}
+}
+
+func attributesFromActions(a []action) []attribute.KeyValue {
+	var atypes []string
+	var astrs []string
+	for _, ai := range a {
+		atypes = append(atypes, ai.t().String())
+		astrs = append(astrs, ai.String())
+	}
+	return []attribute.KeyValue{
+		attribute.Array("actiontype", atypes),
+		attribute.Array("action", astrs),
+	}
+}
+
+var oteltr trace.Tracer
+
+func init() {
+	oteltr = otel.Tracer("agreement")
+}
+
+func (t *tracer) ainTop(ctx context.Context, src, dest stateMachineTag, state player, e event, r round, p period, s step) context.Context {
 	t.seq++
 	if t.level >= top {
 		// fmt.Fprintf(t.w, "%v %3v %23v  => %23v: %30v\n", t.tag, t.seq, src, dest, e)
 		fmt.Fprintf(t.w, "%v] %23v =>  %23v: %30v\n", t.tag, src, dest, e)
 	}
+	ctx, span := oteltr.Start(ctx, "router.submitTop", trace.WithAttributes(
+		attribute.Stringer("src_machine", src),
+		attribute.Stringer("dst_machine", dest),
+		attribute.Any("player", state),
+	))
+	span.SetAttributes(attributesFromEvent(e, "top_")...)
+	return ctx
 }
 
-func (t *tracer) aoutTop(src, dest stateMachineTag, as []action, r round, p period, s step) {
+func (t *tracer) aoutTop(ctx context.Context, src, dest stateMachineTag, as []action, r round, p period, s step) {
+	span := trace.SpanFromContext(ctx)
+	span.SetAttributes(attributesFromActions(as)...)
+	span.End()
+
 	if t.log.IsLevelEnabled(logging.Debug) {
 		var tags []string
 		for _, a := range as {
@@ -178,7 +233,7 @@ func (t *tracer) aoutTop(src, dest stateMachineTag, as []action, r round, p peri
 
 /* Ad-hoc logging */
 
-func (t *tracer) logTimeout(p player) {
+func (t *tracer) logTimeout(ctx context.Context, p player) {
 	if !t.log.IsLevelEnabled(logging.Info) {
 		return
 	}
@@ -188,10 +243,10 @@ func (t *tracer) logTimeout(p player) {
 		Period: uint64(p.Period),
 		Step:   uint64(p.Step),
 	}
-	t.log.with(logEvent).Infof("timeout fired on (%v, %v, %v) with value %v (napping: %v)", p.Round, p.Period, p.Step, p.Deadline, p.Napping)
+	t.log.with(logEvent).WithContext(ctx).Infof("timeout fired on (%v, %v, %v) with value %v (napping: %v)", p.Round, p.Period, p.Step, p.Deadline, p.Napping)
 }
 
-func (t *tracer) logFastTimeout(p player) {
+func (t *tracer) logFastTimeout(ctx context.Context, p player) {
 	if !t.log.IsLevelEnabled(logging.Info) {
 		return
 	}
@@ -201,20 +256,20 @@ func (t *tracer) logFastTimeout(p player) {
 		Period: uint64(p.Period),
 		Step:   uint64(p.Step),
 	}
-	t.log.with(logEvent).Infof("timeout fired on (%v, %v, %v) with value %v (napping: %v)", p.Round, p.Period, p.Step, p.FastRecoveryDeadline, p.Napping)
+	t.log.with(logEvent).WithContext(ctx).Infof("timeout fired on (%v, %v, %v) with value %v (napping: %v)", p.Round, p.Period, p.Step, p.FastRecoveryDeadline, p.Napping)
 }
 
-func (t *tracer) logProposalFrozen(prop proposalValue, propRound round, propPeriod period) {
+func (t *tracer) logProposalFrozen(ctx context.Context, prop proposalValue, propRound round, propPeriod period) {
 	logEvent := logspec.AgreementEvent{
 		Type:         logspec.ProposalFrozen,
 		Hash:         prop.BlockDigest.String(),
 		ObjectRound:  uint64(propRound),
 		ObjectPeriod: uint64(propPeriod),
 	}
-	t.log.with(logEvent).Infof("froze proposal %v for (%v, %v)", prop, propRound, propPeriod)
+	t.log.with(logEvent).WithContext(ctx).Infof("froze proposal %v for (%v, %v)", prop, propRound, propPeriod)
 }
 
-func (t *tracer) logPeriodConcluded(p player, target period, prop proposalValue) {
+func (t *tracer) logPeriodConcluded(ctx context.Context, p player, target period, prop proposalValue) {
 	logEvent := logspec.AgreementEvent{
 		Type:         logspec.PeriodConcluded,
 		Hash:         prop.BlockDigest.String(),
@@ -223,13 +278,13 @@ func (t *tracer) logPeriodConcluded(p player, target period, prop proposalValue)
 		ObjectRound:  uint64(p.Round),
 		ObjectPeriod: uint64(target),
 	}
-	t.log.with(logEvent).Infof("entering non-zero period (%v - %v) with value %v", p.Period, target, prop)
+	t.log.with(logEvent).WithContext(ctx).Infof("entering non-zero period (%v - %v) with value %v", p.Period, target, prop)
 
 	if !t.verboseReports {
 		return
 	}
 	// we should rarely need to enter a new period under common case operation.
-	t.log.EventWithDetails(telemetryspec.Agreement, telemetryspec.NewPeriodEvent, telemetryspec.NewRoundPeriodDetails{
+	t.log.WithContext(ctx).EventWithDetails(telemetryspec.Agreement, telemetryspec.NewPeriodEvent, telemetryspec.NewRoundPeriodDetails{
 		OldRound:  uint64(p.Round),
 		OldPeriod: uint64(p.Period),
 		OldStep:   uint64(p.Step),
@@ -250,7 +305,7 @@ func (t *tracer) logRoundStart(p player, target round) {
 
 }
 
-func (t *tracer) logBundleBroadcast(p player, b unauthenticatedBundle) {
+func (t *tracer) logBundleBroadcast(ctx context.Context, p player, b unauthenticatedBundle) {
 	if !t.log.IsLevelEnabled(logging.Info) {
 		return
 	}
@@ -264,10 +319,10 @@ func (t *tracer) logBundleBroadcast(p player, b unauthenticatedBundle) {
 		ObjectPeriod: uint64(b.Period),
 		ObjectStep:   uint64(b.Step),
 	}
-	t.log.with(logEvent).Infof("broadcast bundle for (%v, %v, %v)", b.Round, b.Period, b.Step)
+	t.log.with(logEvent).WithContext(ctx).Infof("broadcast bundle for (%v, %v, %v)", b.Round, b.Period, b.Step)
 }
 
-func (t *tracer) logProposalRepropagate(prop proposalValue, propRound round, propPeriod period) {
+func (t *tracer) logProposalRepropagate(ctx context.Context, prop proposalValue, propRound round, propPeriod period) {
 	if !t.log.IsLevelEnabled(logging.Info) {
 		return
 	}
@@ -277,10 +332,10 @@ func (t *tracer) logProposalRepropagate(prop proposalValue, propRound round, pro
 		Round:  uint64(propRound),
 		Period: uint64(propPeriod),
 	}
-	t.log.with(logEvent).Infof("resent block for (%v, %v)", propRound, propPeriod)
+	t.log.with(logEvent).WithContext(ctx).Infof("resent block for (%v, %v)", propRound, propPeriod)
 }
 
-func (t *tracer) logProposalManagerResult(p player, input messageEvent, output event, pipelinedRound round, pipelinedPeriod period) {
+func (t *tracer) logProposalManagerResult(ctx context.Context, p player, input messageEvent, output event, pipelinedRound round, pipelinedPeriod period) {
 	switch output.t() {
 	case voteFiltered, voteMalformed:
 		filtered := output.t() == voteFiltered
@@ -299,9 +354,9 @@ func (t *tracer) logProposalManagerResult(p player, input messageEvent, output e
 			ObjectPeriod: uint64(uv.R.Period),
 		}
 		if filtered {
-			t.log.with(logEvent).Debugf("rejected proposal for (%v, %v): %v", uv.R.Round, uv.R.Period, output.(filteredEvent).Err)
+			t.log.with(logEvent).WithContext(ctx).Debugf("rejected proposal for (%v, %v): %v", uv.R.Round, uv.R.Period, output.(filteredEvent).Err)
 		} else {
-			t.log.with(logEvent).Warnf("malformed proposal for (%v, %v): %v", uv.R.Round, uv.R.Period, output.(filteredEvent).Err)
+			t.log.with(logEvent).WithContext(ctx).Warnf("malformed proposal for (%v, %v): %v", uv.R.Round, uv.R.Period, output.(filteredEvent).Err)
 		}
 
 	case payloadRejected, payloadMalformed:
@@ -319,9 +374,9 @@ func (t *tracer) logProposalManagerResult(p player, input messageEvent, output e
 		}
 
 		if rejected {
-			t.log.with(logEvent).Debugf("rejected block for (%v, %v): %v", p.Round, p.Period, output.(payloadProcessedEvent).Err)
+			t.log.with(logEvent).WithContext(ctx).Debugf("rejected block for (%v, %v): %v", p.Round, p.Period, output.(payloadProcessedEvent).Err)
 		} else {
-			t.log.with(logEvent).Warnf("rejected block for (%v, %v): %v", p.Round, p.Period, output.(filteredEvent).Err)
+			t.log.with(logEvent).WithContext(ctx).Warnf("rejected block for (%v, %v): %v", p.Round, p.Period, output.(filteredEvent).Err)
 		}
 
 	case payloadPipelined:
@@ -339,7 +394,7 @@ func (t *tracer) logProposalManagerResult(p player, input messageEvent, output e
 			ObjectRound:  uint64(pipelinedRound),
 			ObjectPeriod: uint64(pipelinedPeriod),
 		}
-		t.log.with(logEvent).Infof("pipelined block for (%v, %v): %v", pipelinedRound, pipelinedPeriod, output.(payloadProcessedEvent).Err)
+		t.log.with(logEvent).WithContext(ctx).Infof("pipelined block for (%v, %v): %v", pipelinedRound, pipelinedPeriod, output.(payloadProcessedEvent).Err)
 
 	case proposalAccepted:
 		if !t.log.IsLevelEnabled(logging.Info) {
@@ -357,7 +412,7 @@ func (t *tracer) logProposalManagerResult(p player, input messageEvent, output e
 			ObjectRound:  uint64(pev.Round),
 			ObjectPeriod: uint64(pev.Period),
 		}
-		t.log.with(logEvent).Infof("proposal %v accepted at (%v, %v)", pev.Proposal, pev.Round, pev.Period)
+		t.log.with(logEvent).WithContext(ctx).Infof("proposal %v accepted at (%v, %v)", pev.Proposal, pev.Round, pev.Period)
 
 	case payloadAccepted, proposalCommittable:
 		if !t.log.IsLevelEnabled(logging.Info) {
@@ -381,15 +436,15 @@ func (t *tracer) logProposalManagerResult(p player, input messageEvent, output e
 
 		if output.t() == payloadAccepted {
 			logEvent.Type = logspec.BlockAssembled
-			t.log.with(logEvent).Infof("block assembled for %v at (%v, %v)", logEvent.Hash, p.Round, p.Period)
+			t.log.with(logEvent).WithContext(ctx).Infof("block assembled for %v at (%v, %v)", logEvent.Hash, p.Round, p.Period)
 		} else {
 			logEvent.Type = logspec.BlockCommittable
-			t.log.with(logEvent).Infof("block committable for %v at (%v, %v)", logEvent.Hash, p.Round, p.Period)
+			t.log.with(logEvent).WithContext(ctx).Infof("block committable for %v at (%v, %v)", logEvent.Hash, p.Round, p.Period)
 		}
 	}
 }
 
-func (t *tracer) logVoteAggregatorResult(input filterableMessageEvent, output event) {
+func (t *tracer) logVoteAggregatorResult(ctx context.Context, input filterableMessageEvent, output event) {
 	switch output.t() {
 	case voteFiltered, voteMalformed:
 		filtered := output.t() == voteFiltered
@@ -411,9 +466,9 @@ func (t *tracer) logVoteAggregatorResult(input filterableMessageEvent, output ev
 		// [TODO] Add Metrics here to capture telemetryspec.VoteRejectedEvent details
 		// 	Reason:           fmt.Sprintf("rejected malformed message: %v", e.Err),
 		if filtered {
-			t.log.with(logEvent).Debugf("filtered vote for (%v, %v, %v): %v", uv.R.Round, uv.R.Period, uv.R.Step, output.(filteredEvent).Err)
+			t.log.with(logEvent).WithContext(ctx).Debugf("filtered vote for (%v, %v, %v): %v", uv.R.Round, uv.R.Period, uv.R.Step, output.(filteredEvent).Err)
 		} else {
-			t.log.with(logEvent).Warnf("malformed vote for (%v, %v, %v): %v", uv.R.Round, uv.R.Period, uv.R.Step, output.(filteredEvent).Err)
+			t.log.with(logEvent).WithContext(ctx).Warnf("malformed vote for (%v, %v, %v): %v", uv.R.Round, uv.R.Period, uv.R.Step, output.(filteredEvent).Err)
 		}
 	case bundleFiltered, bundleMalformed:
 		filtered := output.t() == bundleFiltered
@@ -432,9 +487,9 @@ func (t *tracer) logVoteAggregatorResult(input filterableMessageEvent, output ev
 			ObjectStep:   uint64(ub.Step),
 		}
 		if filtered {
-			t.log.with(logEvent).Debugf("bundle filtered for %v at (%v, %v, %v): %v", ub.Proposal, ub.Round, ub.Period, ub.Step, output.(filteredEvent).Err)
+			t.log.with(logEvent).WithContext(ctx).Debugf("bundle filtered for %v at (%v, %v, %v): %v", ub.Proposal, ub.Round, ub.Period, ub.Step, output.(filteredEvent).Err)
 		} else {
-			t.log.with(logEvent).Warnf("bundle malformed for %v at (%v, %v, %v): %v", ub.Proposal, ub.Round, ub.Period, ub.Step, output.(filteredEvent).Err)
+			t.log.with(logEvent).WithContext(ctx).Warnf("bundle malformed for %v at (%v, %v, %v): %v", ub.Proposal, ub.Round, ub.Period, ub.Step, output.(filteredEvent).Err)
 		}
 	case softThreshold, certThreshold, nextThreshold:
 		if input.t() != bundleVerified {
@@ -452,11 +507,11 @@ func (t *tracer) logVoteAggregatorResult(input filterableMessageEvent, output ev
 			Step:   uint64(b.Step),
 			Hash:   b.Proposal.BlockDigest.String(),
 		}
-		t.log.with(logEvent).Infof("bundle accepted for %v at (%v, %v, %v)", b.Proposal, b.Round, b.Period, b.Step)
+		t.log.with(logEvent).WithContext(ctx).Infof("bundle accepted for %v at (%v, %v, %v)", b.Proposal, b.Round, b.Period, b.Step)
 	}
 }
 
-func (t *tracer) logVoteTrackerResult(p player, input voteAcceptedEvent, output thresholdEvent, weight uint64, inputTotal uint64, outputTotal uint64, proto config.ConsensusParams) {
+func (t *tracer) logVoteTrackerResult(ctx context.Context, p player, input voteAcceptedEvent, output thresholdEvent, weight uint64, inputTotal uint64, outputTotal uint64, proto config.ConsensusParams) {
 	if !t.log.IsLevelEnabled(logging.Info) {
 		return
 	}
@@ -474,7 +529,7 @@ func (t *tracer) logVoteTrackerResult(p player, input voteAcceptedEvent, output 
 		Weight:       weight,
 		WeightTotal:  inputTotal,
 	}
-	t.log.with(logEvent).Infof("vote accepted for %v at (%v, %v, %v)", input.Vote.R.Proposal, input.Vote.R.Round, input.Vote.R.Period, input.Vote.R.Step)
+	t.log.with(logEvent).WithContext(ctx).Infof("vote accepted for %v at (%v, %v, %v)", input.Vote.R.Proposal, input.Vote.R.Round, input.Vote.R.Period, input.Vote.R.Step)
 
 	if output.T != none {
 		logEvent := logspec.AgreementEvent{
@@ -489,7 +544,7 @@ func (t *tracer) logVoteTrackerResult(p player, input voteAcceptedEvent, output 
 			Weight:       outputTotal,
 			WeightTotal:  output.Step.threshold(proto),
 		}
-		t.log.with(logEvent).Infof("threshold reached for %v at (%v, %v, %v)", output.Proposal.BlockDigest, output.Round, output.Period, output.Step)
+		t.log.with(logEvent).WithContext(ctx).Infof("threshold reached for %v at (%v, %v, %v)", output.Proposal.BlockDigest, output.Round, output.Period, output.Step)
 	}
 }
 
@@ -513,4 +568,37 @@ func (log serviceLogger) with(e logspec.AgreementEvent) serviceLogger {
 		"WeightTotal":  e.WeightTotal,
 	}
 	return serviceLogger{log.Logger.WithFields(fields)}
+}
+
+// mini opentelemery tracing interface
+
+type spanTracer interface {
+	// Start creates a span.
+	Start(ctx context.Context, spanName string, opts ...spanOption) (context.Context, span)
+}
+
+type spanOption interface {
+	ApplySpan(*spanConfig)
+}
+
+type spanConfig struct {
+	// Attributes describe the associated qualities of a Span.
+	Attributes map[string]interface{}
+	// Timestamp is a time in a Span life-cycle.
+	Timestamp time.Time
+	// Links are the associations a Span has with other Spans.
+	//Links []Link
+	// NewRoot identifies a Span as the root Span for a new trace. This is
+	// commonly used when an existing trace crosses trust boundaries and the
+	// remote parent span context should be ignored for security.
+	NewRoot bool
+	// SpanKind is the role a Span has in a trace.
+	SpanKind spanKind
+}
+
+type spanKind int
+
+type span interface {
+	End(options ...spanOption)
+	SetName(name string)
 }
