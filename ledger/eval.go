@@ -47,7 +47,7 @@ var ErrRoundZero = errors.New("cannot start evaluator for round 0")
 // maxPaysetHint makes sure that we don't allocate too much memory up front
 // in the block evaluator, since there cannot reasonably be more than this
 // many transactions in a block.
-const maxPaysetHint = 20000
+const maxPaysetHint = 100000
 
 // asyncAccountLoadingThreadCount controls how many go routines would be used
 // to load the account data before the eval() start processing individual
