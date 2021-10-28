@@ -677,7 +677,7 @@ func (pool *TransactionPool) recomputeBlockEvaluator(committedTxIds map[transact
 	if hint < 0 || int(knownCommitted) < 0 {
 		hint = 0
 	}
-	pool.pendingBlockEvaluator, err = pool.ledger.StartEvaluator(next.BlockHeader, hint)
+	pool.pendingBlockEvaluator, err = pool.ledger.StartEvaluator(next.BlockHeader, hint, 0)
 	if err != nil {
 		// The pendingBlockEvaluator is an interface, and in case of an evaluator error
 		// we want to remove the interface itself rather then keeping an interface
@@ -915,7 +915,7 @@ func (pool *TransactionPool) assembleEmptyBlock(round basics.Round) (assembled *
 		return nil, err
 	}
 	next := bookkeeping.MakeBlock(prev)
-	blockEval, err := pool.ledger.StartEvaluator(next.BlockHeader, 0)
+	blockEval, err := pool.ledger.StartEvaluator(next.BlockHeader, 0, 0)
 	if err != nil {
 		var nonSeqBlockEval ledgercore.ErrNonSequentialBlockEval
 		if errors.As(err, &nonSeqBlockEval) {
