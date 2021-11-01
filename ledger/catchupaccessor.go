@@ -345,7 +345,7 @@ func (c *CatchpointCatchupAccessorImpl) processStagingBalances(ctx context.Conte
 		defer wg.Done()
 		hasCreatables := false
 		for _, accBal := range normalizedAccountBalances {
-			if len(accBal.accountData.AssetParams) > 0 || len(accBal.accountData.AppParams) > 0 {
+			if len(accBal.accountData.XAssetParams) > 0 || len(accBal.accountData.XAppParams) > 0 {
 				hasCreatables = true
 				break
 			}

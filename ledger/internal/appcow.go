@@ -646,9 +646,9 @@ func applyStorageDelta(data basics.AccountData, aapp storagePtr, store *storageD
 	// having basics.AppParams and basics.AppLocalState under a common interface with additional loops and type assertions
 	if aapp.global {
 		var owned map[basics.AppIndex]basics.AppParams
-		if len(data.AppParams) > 0 {
-			owned = make(map[basics.AppIndex]basics.AppParams, len(data.AppParams))
-			for k, v := range data.AppParams {
+		if len(data.XAppParams) > 0 {
+			owned = make(map[basics.AppIndex]basics.AppParams, len(data.XAppParams))
+			for k, v := range data.XAppParams {
 				owned[k] = v
 			}
 		}
@@ -683,13 +683,13 @@ func applyStorageDelta(data basics.AccountData, aapp storagePtr, store *storageD
 			owned[aapp.aidx] = params
 		}
 
-		data.AppParams = owned
+		data.XAppParams = owned
 
 	} else {
 		var owned map[basics.AppIndex]basics.AppLocalState
-		if len(data.AppLocalStates) > 0 {
-			owned = make(map[basics.AppIndex]basics.AppLocalState, len(data.AppLocalStates))
-			for k, v := range data.AppLocalStates {
+		if len(data.XAppLocalStates) > 0 {
+			owned = make(map[basics.AppIndex]basics.AppLocalState, len(data.XAppLocalStates))
+			for k, v := range data.XAppLocalStates {
 				owned[k] = v
 			}
 		}
@@ -725,7 +725,7 @@ func applyStorageDelta(data basics.AccountData, aapp storagePtr, store *storageD
 			owned[aapp.aidx] = states
 		}
 
-		data.AppLocalStates = owned
+		data.XAppLocalStates = owned
 	}
 	return data, nil
 }

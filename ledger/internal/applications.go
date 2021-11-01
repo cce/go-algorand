@@ -37,6 +37,9 @@ type cowForLogicLedger interface {
 	GetAppParams(addr basics.Address, aidx basics.AppIndex) (basics.AppParams, error)
 	GetAssetParams(addr basics.Address, aidx basics.AssetIndex) (basics.AssetParams, error)
 	GetAssetHolding(addr basics.Address, aidx basics.AssetIndex) (basics.AssetHolding, error)
+	TotalAssetHolding(addr basics.Address) (int, error)
+	TotalAppParams(addr basics.Address) (int, error)
+	TotalAppLocalState(addr basics.Address) (int, error)
 	GetCreatableID(groupIdx int) basics.CreatableIndex
 	GetCreator(cidx basics.CreatableIndex, ctype basics.CreatableType) (basics.Address, bool, error)
 	GetKey(addr basics.Address, aidx basics.AppIndex, global bool, key string, accountIdx uint64) (basics.TealValue, bool, error)
@@ -88,8 +91,20 @@ func (al *logicLedger) MinBalance(addr basics.Address, proto *config.ConsensusPa
 	if err != nil {
 		return
 	}
+	totalAssets, err := al.cow.TotalAssetHolding(addr)
+	if err != nil {
+		return
+	}
+	totalAppParams, err := al.cow.TotalAppParams(addr)
+	if err != nil {
+		return
+	}
+	totalAppLocalStates, err := al.cow.TotalAppLocalState(addr)
+	if err != nil {
+		return
+	}
 
-	return record.MinBalance(proto), nil
+	return record.MinBalance(proto, uint64(totalAssets), uint64(totalAppParams), uint64(totalAppLocalStates)), nil
 }
 
 func (al *logicLedger) Authorizer(addr basics.Address) (basics.Address, error) {

@@ -168,12 +168,12 @@ func (x *roundCowBase) allocated(addr basics.Address, aidx basics.AppIndex, glob
 
 	// For global, check if app params exist
 	if global {
-		_, ok := acct.AppParams[aidx]
+		_, ok := acct.XAppParams[aidx]
 		return ok, nil
 	}
 
 	// Otherwise, check app local states
-	_, ok := acct.AppLocalStates[aidx]
+	_, ok := acct.XAppLocalStates[aidx]
 	return ok, nil
 }
 
@@ -189,12 +189,12 @@ func (x *roundCowBase) getKey(addr basics.Address, aidx basics.AppIndex, global 
 	kv := basics.TealKeyValue{}
 	if global {
 		var app basics.AppParams
-		if app, exist = ad.AppParams[aidx]; exist {
+		if app, exist = ad.XAppParams[aidx]; exist {
 			kv = app.GlobalState
 		}
 	} else {
 		var ls basics.AppLocalState
-		if ls, exist = ad.AppLocalStates[aidx]; exist {
+		if ls, exist = ad.XAppLocalStates[aidx]; exist {
 			kv = ls.KeyValue
 		}
 	}
@@ -220,12 +220,12 @@ func (x *roundCowBase) getStorageCounts(addr basics.Address, aidx basics.AppInde
 	kv := basics.TealKeyValue{}
 	if global {
 		var app basics.AppParams
-		if app, exist = ad.AppParams[aidx]; exist {
+		if app, exist = ad.XAppParams[aidx]; exist {
 			kv = app.GlobalState
 		}
 	} else {
 		var ls basics.AppLocalState
-		if ls, exist = ad.AppLocalStates[aidx]; exist {
+		if ls, exist = ad.XAppLocalStates[aidx]; exist {
 			kv = ls.KeyValue
 		}
 	}
@@ -259,7 +259,7 @@ func (x *roundCowBase) getStorageLimits(addr basics.Address, aidx basics.AppInde
 		return basics.StateSchema{}, err
 	}
 
-	params, ok := record.AppParams[aidx]
+	params, ok := record.XAppParams[aidx]
 	if !ok {
 		// This should never happen. If app exists then we should have
 		// found the creator successfully.
@@ -858,11 +858,24 @@ func (eval *BlockEvaluator) checkMinBalance(cow *roundCowState) error {
 			continue
 		}
 
+		totalAssets, err := cow.TotalAssetHolding(addr)
+		if err != nil {
+			return err
+		}
+		totalAppParams, err := cow.TotalAppParams(addr)
+		if err != nil {
+			return err
+		}
+		totalAppLocalStates, err := cow.TotalAppLocalState(addr)
+		if err != nil {
+			return err
+		}
+
 		dataNew := data.WithUpdatedRewards(eval.proto, rewardlvl)
-		effectiveMinBalance := dataNew.MinBalance(&eval.proto)
+		effectiveMinBalance := dataNew.MinBalance(&eval.proto, uint64(totalAssets), uint64(totalAppParams), uint64(totalAppLocalStates))
 		if dataNew.MicroAlgos.Raw < effectiveMinBalance.Raw {
 			return fmt.Errorf("account %v balance %d below min %d (%d assets)",
-				addr, dataNew.MicroAlgos.Raw, effectiveMinBalance.Raw, len(dataNew.Assets))
+				addr, dataNew.MicroAlgos.Raw, effectiveMinBalance.Raw, totalAssets)
 		}
 
 		// Check if we have exceeded the maximum minimum balance

@@ -26,28 +26,28 @@ func (cs *roundCowState) TotalAppParams(creator basics.Address) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	return len(acct.AppParams), nil
+	return len(acct.XAppParams), nil
 }
 func (cs *roundCowState) TotalAppLocalState(addr basics.Address) (int, error) {
 	acct, err := cs.lookup(addr)
 	if err != nil {
 		return 0, err
 	}
-	return len(acct.AppLocalStates), nil
+	return len(acct.XAppLocalStates), nil
 }
 func (cs *roundCowState) TotalAssetHolding(addr basics.Address) (int, error) {
 	acct, err := cs.lookup(addr)
 	if err != nil {
 		return 0, err
 	}
-	return len(acct.Assets), nil
+	return len(acct.XAssets), nil
 }
 func (cs *roundCowState) TotalAssetParams(addr basics.Address) (int, error) {
 	acct, err := cs.lookup(addr)
 	if err != nil {
 		return 0, err
 	}
-	return len(acct.AssetParams), nil
+	return len(acct.XAssetParams), nil
 }
 
 func (cs *roundCowState) GetAppParams(creator basics.Address, aidx basics.AppIndex) (params basics.AppParams, err error) {
@@ -55,7 +55,7 @@ func (cs *roundCowState) GetAppParams(creator basics.Address, aidx basics.AppInd
 	if err != nil {
 		return
 	}
-	params, ok := acct.AppParams[aidx]
+	params, ok := acct.XAppParams[aidx]
 	if !ok {
 		err = apply.ErrCreatableNotFound
 		return
@@ -67,7 +67,7 @@ func (cs *roundCowState) GetAppLocalState(addr basics.Address, aidx basics.AppIn
 	if err != nil {
 		return
 	}
-	state, ok := acct.AppLocalStates[aidx]
+	state, ok := acct.XAppLocalStates[aidx]
 	if !ok {
 		err = apply.ErrCreatableNotFound
 		return
@@ -79,7 +79,7 @@ func (cs *roundCowState) GetAssetHolding(addr basics.Address, aidx basics.AssetI
 	if err != nil {
 		return
 	}
-	holding, ok := acct.Assets[aidx]
+	holding, ok := acct.XAssets[aidx]
 	if !ok {
 		err = apply.ErrCreatableNotFound
 		return
@@ -91,7 +91,7 @@ func (cs *roundCowState) GetAssetParams(addr basics.Address, aidx basics.AssetIn
 	if err != nil {
 		return
 	}
-	params, ok := acct.AssetParams[aidx]
+	params, ok := acct.XAssetParams[aidx]
 	if !ok {
 		err = apply.ErrCreatableNotFound
 		return
@@ -104,12 +104,12 @@ func (cs *roundCowState) PutAppParams(addr basics.Address, aidx basics.AppIndex,
 	if err != nil {
 		return err
 	}
-	ap := make(map[basics.AppIndex]basics.AppParams, len(acct.AppParams))
-	for k, v := range acct.AppParams {
+	ap := make(map[basics.AppIndex]basics.AppParams, len(acct.XAppParams))
+	for k, v := range acct.XAppParams {
 		ap[k] = v
 	}
 	ap[aidx] = params
-	acct.AppParams = ap
+	acct.XAppParams = ap
 	return cs.Put(addr, acct)
 }
 func (cs *roundCowState) PutAppLocalState(addr basics.Address, aidx basics.AppIndex, state basics.AppLocalState) error {
@@ -117,12 +117,12 @@ func (cs *roundCowState) PutAppLocalState(addr basics.Address, aidx basics.AppIn
 	if err != nil {
 		return err
 	}
-	als := make(map[basics.AppIndex]basics.AppLocalState, len(acct.AppLocalStates))
-	for k, v := range acct.AppLocalStates {
+	als := make(map[basics.AppIndex]basics.AppLocalState, len(acct.XAppLocalStates))
+	for k, v := range acct.XAppLocalStates {
 		als[k] = v
 	}
 	als[aidx] = state
-	acct.AppLocalStates = als
+	acct.XAppLocalStates = als
 	return cs.Put(addr, acct)
 }
 func (cs *roundCowState) PutAssetHolding(addr basics.Address, aidx basics.AssetIndex, data basics.AssetHolding) error {
@@ -130,12 +130,12 @@ func (cs *roundCowState) PutAssetHolding(addr basics.Address, aidx basics.AssetI
 	if err != nil {
 		return err
 	}
-	ah := make(map[basics.AssetIndex]basics.AssetHolding, len(acct.Assets))
-	for k, v := range acct.Assets {
+	ah := make(map[basics.AssetIndex]basics.AssetHolding, len(acct.XAssets))
+	for k, v := range acct.XAssets {
 		ah[k] = v
 	}
 	ah[aidx] = data
-	acct.Assets = ah
+	acct.XAssets = ah
 	return cs.Put(addr, acct)
 }
 func (cs *roundCowState) PutAssetParams(addr basics.Address, aidx basics.AssetIndex, data basics.AssetParams) error {
@@ -143,12 +143,12 @@ func (cs *roundCowState) PutAssetParams(addr basics.Address, aidx basics.AssetIn
 	if err != nil {
 		return err
 	}
-	ap := make(map[basics.AssetIndex]basics.AssetParams, len(acct.AssetParams))
-	for k, v := range acct.AssetParams {
+	ap := make(map[basics.AssetIndex]basics.AssetParams, len(acct.XAssetParams))
+	for k, v := range acct.XAssetParams {
 		ap[k] = v
 	}
 	ap[aidx] = data
-	acct.AssetParams = ap
+	acct.XAssetParams = ap
 	return cs.Put(addr, acct)
 }
 
@@ -157,7 +157,7 @@ func (cs *roundCowState) DeleteAppParams(addr basics.Address, aidx basics.AppInd
 	if err != nil {
 		return err
 	}
-	delete(acct.AppParams, aidx)
+	delete(acct.XAppParams, aidx)
 	return cs.Put(addr, acct)
 }
 func (cs *roundCowState) DeleteAppLocalState(addr basics.Address, aidx basics.AppIndex) error {
@@ -165,7 +165,7 @@ func (cs *roundCowState) DeleteAppLocalState(addr basics.Address, aidx basics.Ap
 	if err != nil {
 		return err
 	}
-	delete(acct.AppLocalStates, aidx)
+	delete(acct.XAppLocalStates, aidx)
 	return cs.Put(addr, acct)
 }
 func (cs *roundCowState) DeleteAssetHolding(addr basics.Address, aidx basics.AssetIndex) error {
@@ -173,7 +173,7 @@ func (cs *roundCowState) DeleteAssetHolding(addr basics.Address, aidx basics.Ass
 	if err != nil {
 		return err
 	}
-	delete(acct.Assets, aidx)
+	delete(acct.XAssets, aidx)
 	return cs.Put(addr, acct)
 }
 func (cs *roundCowState) DeleteAssetParams(addr basics.Address, aidx basics.AssetIndex) error {
@@ -181,7 +181,7 @@ func (cs *roundCowState) DeleteAssetParams(addr basics.Address, aidx basics.Asse
 	if err != nil {
 		return err
 	}
-	delete(acct.AssetParams, aidx)
+	delete(acct.XAssetParams, aidx)
 	return cs.Put(addr, acct)
 }
 
@@ -190,7 +190,7 @@ func (cs *roundCowState) CheckAppLocalState(addr basics.Address, aidx basics.App
 	if err != nil {
 		return
 	}
-	_, ok = acct.AppLocalStates[aidx]
+	_, ok = acct.XAppLocalStates[aidx]
 	return
 }
 
@@ -199,6 +199,6 @@ func (cs *roundCowState) CheckAssetParams(addr basics.Address, aidx basics.Asset
 	if err != nil {
 		return
 	}
-	_, ok = acct.AssetParams[aidx]
+	_, ok = acct.XAssetParams[aidx]
 	return
 }

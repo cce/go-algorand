@@ -179,7 +179,7 @@ type AccountData struct {
 	// NOTE: do not modify this value in-place in existing AccountData
 	// structs; allocate a copy and modify that instead.  AccountData
 	// is expected to have copy-by-value semantics.
-	AssetParams map[AssetIndex]AssetParams `codec:"apar,allocbound=encodedMaxAssetsPerAccount"`
+	XAssetParams map[AssetIndex]AssetParams `codec:"apar,allocbound=encodedMaxAssetsPerAccount"`
 
 	// Assets is the set of assets that can be held by this
 	// account.  Assets (i.e., slots in this map) are explicitly
@@ -196,7 +196,7 @@ type AccountData struct {
 	// NOTE: do not modify this value in-place in existing AccountData
 	// structs; allocate a copy and modify that instead.  AccountData
 	// is expected to have copy-by-value semantics.
-	Assets map[AssetIndex]AssetHolding `codec:"asset,allocbound=encodedMaxAssetsPerAccount"`
+	XAssets map[AssetIndex]AssetHolding `codec:"asset,allocbound=encodedMaxAssetsPerAccount"`
 
 	// AuthAddr is the address against which signatures/multisigs/logicsigs should be checked.
 	// If empty, the address of the account whose AccountData this is is used.
@@ -206,11 +206,11 @@ type AccountData struct {
 
 	// AppLocalStates stores the local states associated with any applications
 	// that this account has opted in to.
-	AppLocalStates map[AppIndex]AppLocalState `codec:"appl,allocbound=EncodedMaxAppLocalStates"`
+	XAppLocalStates map[AppIndex]AppLocalState `codec:"appl,allocbound=EncodedMaxAppLocalStates"`
 
 	// AppParams stores the global parameters and state associated with any
 	// applications that this account has created.
-	AppParams map[AppIndex]AppParams `codec:"appp,allocbound=EncodedMaxAppParams"`
+	XAppParams map[AppIndex]AppParams `codec:"appp,allocbound=EncodedMaxAppParams"`
 
 	// TotalAppSchema stores the sum of all of the LocalStateSchemas
 	// and GlobalStateSchemas in this account (global for applications
@@ -461,22 +461,22 @@ func (u AccountData) WithUpdatedRewards(proto config.ConsensusParams, rewardsLev
 // MinBalance computes the minimum balance requirements for an account based on
 // some consensus parameters. MinBalance should correspond roughly to how much
 // storage the account is allowed to store on disk.
-func (u AccountData) MinBalance(proto *config.ConsensusParams) (res MicroAlgos) {
+func (u AccountData) MinBalance(proto *config.ConsensusParams, totalAssets, totalAppParams, totalAppLocalStates uint64) (res MicroAlgos) {
 	var min uint64
 
 	// First, base MinBalance
 	min = proto.MinBalance
 
 	// MinBalance for each Asset
-	assetCost := MulSaturate(proto.MinBalance, uint64(len(u.Assets)))
+	assetCost := MulSaturate(proto.MinBalance, uint64(totalAssets))
 	min = AddSaturate(min, assetCost)
 
 	// Base MinBalance for each created application
-	appCreationCost := MulSaturate(proto.AppFlatParamsMinBalance, uint64(len(u.AppParams)))
+	appCreationCost := MulSaturate(proto.AppFlatParamsMinBalance, uint64(totalAppParams))
 	min = AddSaturate(min, appCreationCost)
 
 	// Base MinBalance for each opted in application
-	appOptInCost := MulSaturate(proto.AppFlatOptInMinBalance, uint64(len(u.AppLocalStates)))
+	appOptInCost := MulSaturate(proto.AppFlatOptInMinBalance, uint64(totalAppLocalStates))
 	min = AddSaturate(min, appOptInCost)
 
 	// MinBalance for state usage measured by LocalStateSchemas and
@@ -530,8 +530,8 @@ func (u OnlineAccountData) KeyDilution(proto config.ConsensusParams) uint64 {
 
 // IsZero checks if an AccountData value is the same as its zero value.
 func (u AccountData) IsZero() bool {
-	if u.Assets != nil && len(u.Assets) == 0 {
-		u.Assets = nil
+	if u.XAssets != nil && len(u.XAssets) == 0 {
+		u.XAssets = nil
 	}
 
 	return reflect.DeepEqual(u, AccountData{})

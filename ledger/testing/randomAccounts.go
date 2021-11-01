@@ -23,6 +23,7 @@ import (
 	"github.com/algorand/go-algorand/crypto"
 	"github.com/algorand/go-algorand/data/basics"
 	"github.com/algorand/go-algorand/protocol"
+
 	//"github.com/algorand/go-algorand/data/bookkeeping"
 
 	"github.com/algorand/go-algorand/ledger/ledgercore"
@@ -78,7 +79,7 @@ func RandomFullAccountData(rewardsLevel, lastCreatableID uint64) (basics.Account
 	data.VoteKeyDilution = crypto.RandUint64()
 	if 1 == (crypto.RandUint64() % 2) {
 		// if account has created assets, have these defined.
-		data.AssetParams = make(map[basics.AssetIndex]basics.AssetParams)
+		data.XAssetParams = make(map[basics.AssetIndex]basics.AssetParams)
 		createdAssetsCount := crypto.RandUint64()%20 + 1
 		for i := uint64(0); i < createdAssetsCount; i++ {
 			ap := basics.AssetParams{
@@ -95,19 +96,19 @@ func RandomFullAccountData(rewardsLevel, lastCreatableID uint64) (basics.Account
 			crypto.RandBytes(ap.Freeze[:])
 			crypto.RandBytes(ap.Clawback[:])
 			lastCreatableID++
-			data.AssetParams[basics.AssetIndex(lastCreatableID)] = ap
+			data.XAssetParams[basics.AssetIndex(lastCreatableID)] = ap
 		}
 	}
 	if 1 == (crypto.RandUint64()%2) && lastCreatableID > 0 {
 		// if account owns assets
-		data.Assets = make(map[basics.AssetIndex]basics.AssetHolding)
+		data.XAssets = make(map[basics.AssetIndex]basics.AssetHolding)
 		ownedAssetsCount := crypto.RandUint64()%20 + 1
 		for i := uint64(0); i < ownedAssetsCount; i++ {
 			ah := basics.AssetHolding{
 				Amount: crypto.RandUint64(),
 				Frozen: (crypto.RandUint64()%2 == 0),
 			}
-			data.Assets[basics.AssetIndex(crypto.RandUint64()%lastCreatableID)] = ah
+			data.XAssets[basics.AssetIndex(crypto.RandUint64()%lastCreatableID)] = ah
 		}
 	}
 	if 1 == (crypto.RandUint64() % 5) {
@@ -115,7 +116,7 @@ func RandomFullAccountData(rewardsLevel, lastCreatableID uint64) (basics.Account
 	}
 
 	if 1 == (crypto.RandUint64()%3) && lastCreatableID > 0 {
-		data.AppLocalStates = make(map[basics.AppIndex]basics.AppLocalState)
+		data.XAppLocalStates = make(map[basics.AppIndex]basics.AppLocalState)
 		appStatesCount := crypto.RandUint64()%20 + 1
 		for i := uint64(0); i < appStatesCount; i++ {
 			ap := basics.AppLocalState{
@@ -146,7 +147,7 @@ func RandomFullAccountData(rewardsLevel, lastCreatableID uint64) (basics.Account
 			if len(ap.KeyValue) == 0 {
 				ap.KeyValue = nil
 			}
-			data.AppLocalStates[basics.AppIndex(crypto.RandUint64()%lastCreatableID)] = ap
+			data.XAppLocalStates[basics.AppIndex(crypto.RandUint64()%lastCreatableID)] = ap
 		}
 	}
 
@@ -157,7 +158,7 @@ func RandomFullAccountData(rewardsLevel, lastCreatableID uint64) (basics.Account
 		}
 	}
 	if 1 == (crypto.RandUint64() % 3) {
-		data.AppParams = make(map[basics.AppIndex]basics.AppParams)
+		data.XAppParams = make(map[basics.AppIndex]basics.AppParams)
 		appParamsCount := crypto.RandUint64()%5 + 1
 		for i := uint64(0); i < appParamsCount; i++ {
 			ap := basics.AppParams{
@@ -207,7 +208,7 @@ func RandomFullAccountData(rewardsLevel, lastCreatableID uint64) (basics.Account
 				ap.GlobalState = nil
 			}
 			lastCreatableID++
-			data.AppParams[basics.AppIndex(lastCreatableID)] = ap
+			data.XAppParams[basics.AppIndex(lastCreatableID)] = ap
 		}
 
 	}
@@ -256,12 +257,12 @@ func RandomDeltasImpl(niter int, base map[basics.Address]basics.AccountData, rew
 	lastCreatableID = lastCreatableIDIn
 	if !simple {
 		for _, ad := range base {
-			for aid := range ad.AssetParams {
+			for aid := range ad.XAssetParams {
 				if uint64(aid) > lastCreatableID {
 					lastCreatableID = uint64(aid)
 				}
 			}
-			for aid := range ad.AppParams {
+			for aid := range ad.XAppParams {
 				if uint64(aid) > lastCreatableID {
 					lastCreatableID = uint64(aid)
 				}

@@ -418,8 +418,8 @@ func writeCatchpointStagingCreatable(ctx context.Context, tx *sql.Tx, bals []nor
 
 	for _, balance := range bals {
 		// if the account has any asset params, it means that it's the creator of an asset.
-		if len(balance.accountData.AssetParams) > 0 {
-			for aidx := range balance.accountData.AssetParams {
+		if len(balance.accountData.XAssetParams) > 0 {
+			for aidx := range balance.accountData.XAssetParams {
 				_, err := insertStmt.ExecContext(ctx, basics.CreatableIndex(aidx), balance.address[:], basics.AssetCreatable)
 				if err != nil {
 					return err
@@ -427,8 +427,8 @@ func writeCatchpointStagingCreatable(ctx context.Context, tx *sql.Tx, bals []nor
 			}
 		}
 
-		if len(balance.accountData.AppParams) > 0 {
-			for aidx := range balance.accountData.AppParams {
+		if len(balance.accountData.XAppParams) > 0 {
+			for aidx := range balance.accountData.XAppParams {
 				_, err := insertStmt.ExecContext(ctx, basics.CreatableIndex(aidx), balance.address[:], basics.AppCreatable)
 				if err != nil {
 					return err
