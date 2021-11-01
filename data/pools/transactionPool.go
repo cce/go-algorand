@@ -89,6 +89,9 @@ type TransactionPool struct {
 	rememberedTxids    map[transactions.Txid]transactions.SignedTxn
 
 	log logging.Logger
+
+	// proposalAssemblyTime is the ProposalAssemblyTime configured for this node.
+	proposalAssemblyTime time.Duration
 }
 
 // BlockEvaluator defines the block evaluator interface exposed by the ledger package.
@@ -117,6 +120,7 @@ func MakeTransactionPool(ledger *ledger.Ledger, cfg config.Local, log logging.Lo
 		logAssembleStats:     cfg.EnableAssembleStats,
 		expFeeFactor:         cfg.TxPoolExponentialIncreaseFactor,
 		txPoolMaxSize:        cfg.TxPoolSize,
+		proposalAssemblyTime: cfg.ProposalAssemblyTime,
 		log:                  log,
 	}
 	pool.cond.L = &pool.mu
@@ -741,7 +745,7 @@ func (pool *TransactionPool) recomputeBlockEvaluator(committedTxIds map[transact
 		// assembly. We want to figure out how long have we spent before trying to evaluate the first transaction.
 		// ( ideally it's near zero. The goal here is to see if we get to a near time-out situation before processing the
 		// first transaction group )
-		asmStats.TransactionsLoopStartTime = int64(firstTxnGrpTime.Sub(pool.assemblyDeadline.Add(-config.ProposalAssemblyTime)))
+		asmStats.TransactionsLoopStartTime = int64(firstTxnGrpTime.Sub(pool.assemblyDeadline.Add(-pool.proposalAssemblyTime)))
 	}
 
 	if !pool.assemblyResults.ok && pool.assemblyRound <= pool.pendingBlockEvaluator.Round() {
@@ -941,6 +945,6 @@ func (pool *TransactionPool) AssembleDevModeBlock() (assembled *ledgercore.Valid
 
 	// The above was already pregenerating the entire block,
 	// so there won't be any waiting on this call.
-	assembled, err = pool.AssembleBlock(pool.pendingBlockEvaluator.Round(), time.Now().Add(config.ProposalAssemblyTime))
+	assembled, err = pool.AssembleBlock(pool.pendingBlockEvaluator.Round(), time.Now().Add(pool.proposalAssemblyTime))
 	return
 }
