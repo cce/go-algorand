@@ -286,16 +286,16 @@ func (dl *dryrunLedger) LookupWithoutRewards(rnd basics.Round, addr basics.Addre
 		if err != nil {
 			return basics.AccountData{}, 0, err
 		}
-		if out.AppParams == nil {
-			out.AppParams = make(map[basics.AppIndex]basics.AppParams)
-			out.AppParams[basics.AppIndex(app.Id)] = params
+		if out.XAppParams == nil {
+			out.XAppParams = make(map[basics.AppIndex]basics.AppParams)
+			out.XAppParams[basics.AppIndex(app.Id)] = params
 		} else {
-			ap, ok := out.AppParams[basics.AppIndex(app.Id)]
+			ap, ok := out.XAppParams[basics.AppIndex(app.Id)]
 			if ok {
 				MergeAppParams(&ap, &params)
-				out.AppParams[basics.AppIndex(app.Id)] = ap
+				out.XAppParams[basics.AppIndex(app.Id)] = ap
 			} else {
-				out.AppParams[basics.AppIndex(app.Id)] = params
+				out.XAppParams[basics.AppIndex(app.Id)] = params
 			}
 		}
 	}

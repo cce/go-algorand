@@ -110,10 +110,10 @@ func (v2 *Handlers) AccountInformation(ctx echo.Context, address string, params 
 	}
 	amountWithoutPendingRewards := recordWithoutPendingRewards.MicroAlgos
 
-	assetsCreators := make(map[basics.AssetIndex]string, len(record.Assets))
-	if len(record.Assets) > 0 {
+	assetsCreators := make(map[basics.AssetIndex]string, len(record.XAssets))
+	if len(record.XAssets) > 0 {
 		//assets = make(map[uint64]v1.AssetHolding)
-		for curid := range record.Assets {
+		for curid := range record.XAssets {
 			var creator string
 			creatorAddr, ok, err := myLedger.GetCreator(basics.CreatableIndex(curid), basics.AssetCreatable)
 			if err == nil && ok {
@@ -685,7 +685,7 @@ func (v2 *Handlers) GetApplicationByID(ctx echo.Context, applicationID uint64) e
 		return internalError(ctx, err, errFailedLookingUpLedger, v2.Log)
 	}
 
-	appParams, ok := record.AppParams[appIdx]
+	appParams, ok := record.XAppParams[appIdx]
 	if !ok {
 		return notFound(ctx, errors.New(errAppDoesNotExist), errAppDoesNotExist, v2.Log)
 	}
@@ -713,7 +713,7 @@ func (v2 *Handlers) GetAssetByID(ctx echo.Context, assetID uint64) error {
 		return internalError(ctx, err, errFailedLookingUpLedger, v2.Log)
 	}
 
-	assetParams, ok := record.AssetParams[assetIdx]
+	assetParams, ok := record.XAssetParams[assetIdx]
 	if !ok {
 		return notFound(ctx, errors.New(errAssetDoesNotExist), errAssetDoesNotExist, v2.Log)
 	}

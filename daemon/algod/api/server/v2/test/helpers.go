@@ -262,7 +262,7 @@ func testingenv(t testing.TB, numAccounts, numTxs int, offlineAccounts bool) (*d
 	var addr basics.Address
 	copy(addr[:], lhash[:])
 	ad := basics.MakeAccountData(basics.NotParticipating, basics.MicroAlgos{Raw: 100000 * uint64(proto.RewardsRateRefreshInterval)})
-	ad.AppLocalStates = map[basics.AppIndex]basics.AppLocalState{1: {}}
+	ad.XAppLocalStates = map[basics.AppIndex]basics.AppLocalState{1: {}}
 	genesis[addr] = ad
 
 	bootstrap := bookkeeping.MakeGenesisBalances(genesis, sinkAddr, poolAddr)

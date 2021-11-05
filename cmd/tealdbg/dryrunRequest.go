@@ -47,23 +47,6 @@ func ddrFromParams(dp *DebugParams) (ddr v2.DryrunRequest, err error) {
 	return
 }
 
-func convertAccounts(accounts []generatedV2.Account) (records []basics.BalanceRecord, err error) {
-	for _, a := range accounts {
-		var addr basics.Address
-		addr, err = basics.UnmarshalChecksumAddress(a.Address)
-		if err != nil {
-			return
-		}
-		var ad basics.AccountData
-		ad, err = v2.AccountToAccountData(&a)
-		if err != nil {
-			return
-		}
-		records = append(records, basics.BalanceRecord{Addr: addr, AccountData: ad})
-	}
-	return
-}
-
 func balanceRecordsFromDdr(ddr *v2.DryrunRequest) (records []basics.BalanceRecord, err error) {
 	accounts := make(map[basics.Address]basics.AccountData)
 	for _, a := range ddr.Accounts {
@@ -93,16 +76,16 @@ func balanceRecordsFromDdr(ddr *v2.DryrunRequest) (records []basics.BalanceRecor
 		}
 		appIdx := basics.AppIndex(a.Id)
 		ad := accounts[addr]
-		if ad.AppParams == nil {
-			ad.AppParams = make(map[basics.AppIndex]basics.AppParams, 1)
-			ad.AppParams[appIdx] = params
+		if ad.XAppParams == nil {
+			ad.XAppParams = make(map[basics.AppIndex]basics.AppParams, 1)
+			ad.XAppParams[appIdx] = params
 		} else {
-			ap, ok := ad.AppParams[appIdx]
+			ap, ok := ad.XAppParams[appIdx]
 			if ok {
 				v2.MergeAppParams(&ap, &params)
-				ad.AppParams[appIdx] = ap
+				ad.XAppParams[appIdx] = ap
 			} else {
-				ad.AppParams[appIdx] = params
+				ad.XAppParams[appIdx] = params
 			}
 		}
 		accounts[addr] = ad

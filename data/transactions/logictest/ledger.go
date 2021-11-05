@@ -23,6 +23,7 @@ import (
 	"github.com/algorand/go-algorand/config"
 	"github.com/algorand/go-algorand/data/basics"
 	"github.com/algorand/go-algorand/data/transactions"
+	"github.com/algorand/go-algorand/ledger/apply"
 	"github.com/algorand/go-algorand/protocol"
 )
 
@@ -750,19 +751,54 @@ func (l *Ledger) Perform(txn *transactions.Transaction, spec transactions.Specia
 // inside is affected.
 
 // Get returns the AccountData of an address. This test ledger does
-// not handle rewards, so the pening rewards flag is ignored.
-func (l *Ledger) Get(addr basics.Address, withPendingRewards bool) (basics.AccountData, error) {
+// not handle rewards, so the pending rewards flag is ignored.
+func (l *Ledger) Get(addr basics.Address, withPendingRewards bool) (apply.AccountData, error) {
+	acct, err := l.getAccount(addr, withPendingRewards)
+	return apply.ToApplyAccountData(acct), err
+}
+
+func (l *Ledger) getAccount(addr basics.Address, withPendingRewards bool) (basics.AccountData, error) {
 	br, ok := l.balances[addr]
 	if !ok {
 		return basics.AccountData{}, fmt.Errorf("addr %s not in test.Ledger", addr.String())
 	}
 	return basics.AccountData{
-		MicroAlgos:     basics.MicroAlgos{Raw: br.balance},
-		AssetParams:    map[basics.AssetIndex]basics.AssetParams{},
-		Assets:         map[basics.AssetIndex]basics.AssetHolding{},
-		AppLocalStates: map[basics.AppIndex]basics.AppLocalState{},
-		AppParams:      map[basics.AppIndex]basics.AppParams{},
+		MicroAlgos:      basics.MicroAlgos{Raw: br.balance},
+		XAssetParams:    map[basics.AssetIndex]basics.AssetParams{},
+		XAssets:         map[basics.AssetIndex]basics.AssetHolding{},
+		XAppLocalStates: map[basics.AppIndex]basics.AppLocalState{},
+		XAppParams:      map[basics.AppIndex]basics.AppParams{},
 	}, nil
+}
+
+// GetAppParams returns the AppParams for a given address and app ID.
+func (l *Ledger) GetAppParams(addr basics.Address, aidx basics.AppIndex) (ret basics.AppParams, ok bool, err error) {
+	acct, err := l.getAccount(addr, false)
+	if err != nil {
+		return
+	}
+	ret, ok = acct.XAppParams[aidx]
+	return
+}
+
+// GetAssetParams returns the AssetParams for a given address and asset ID.
+func (l *Ledger) GetAssetParams(addr basics.Address, aidx basics.AssetIndex) (ret basics.AssetParams, ok bool, err error) {
+	acct, err := l.getAccount(addr, false)
+	if err != nil {
+		return
+	}
+	ret, ok = acct.XAssetParams[aidx]
+	return
+}
+
+// GetAssetHolding returns the AssetHolding for a given address and asset ID.
+func (l *Ledger) GetAssetHolding(addr basics.Address, aidx basics.AssetIndex) (ret basics.AssetHolding, ok bool, err error) {
+	acct, err := l.getAccount(addr, false)
+	if err != nil {
+		return
+	}
+	ret, ok = acct.XAssets[aidx]
+	return
 }
 
 // GetCreator returns the creator of the given creatable, an app or asa.

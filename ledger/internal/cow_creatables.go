@@ -26,7 +26,7 @@ func (cs *roundCowState) MinBalance(addr basics.Address, proto *config.Consensus
 	if err != nil {
 		return
 	}
-	return acct.MinBalance(proto), nil
+	return acct.MinBalance(proto, uint64(len(acct.XAssets)), uint64(len(acct.XAppParams)), uint64(len(acct.XAppLocalStates))), nil
 }
 
 func (cs *roundCowState) TotalAppParams(creator basics.Address) (int, error) {

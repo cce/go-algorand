@@ -900,7 +900,7 @@ var readStateAppCmd = &cobra.Command{
 			}
 
 			// Get application local state
-			local, ok := ad.AppLocalStates[basics.AppIndex(appIdx)]
+			local, ok := ad.XAppLocalStates[basics.AppIndex(appIdx)]
 			if !ok {
 				reportErrorf(errorAccountNotOptedInToApp, account, appIdx)
 			}
@@ -932,7 +932,7 @@ var readStateAppCmd = &cobra.Command{
 			}
 
 			// Get app params
-			params, ok := ad.AppParams[basics.AppIndex(appIdx)]
+			params, ok := ad.XAppParams[basics.AppIndex(appIdx)]
 			if !ok {
 				reportErrorf(errorNoSuchApplication, appIdx)
 			}

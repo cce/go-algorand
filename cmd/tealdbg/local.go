@@ -466,7 +466,7 @@ func (r *LocalRunner) Setup(dp *DebugParams) (err error) {
 				// and error if it is not there
 				found := false
 				for _, rec := range records {
-					for a, ap := range rec.AppParams {
+					for a, ap := range rec.XAppParams {
 						if a == appIdx {
 							var program []byte
 							if stxn.Txn.OnCompletion == transactions.ClearStateOC {

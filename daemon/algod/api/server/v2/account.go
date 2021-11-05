@@ -33,8 +33,8 @@ func AccountDataToAccount(
 	lastRound basics.Round, amountWithoutPendingRewards basics.MicroAlgos,
 ) (generated.Account, error) {
 
-	assets := make([]generated.AssetHolding, 0, len(record.Assets))
-	for curid, holding := range record.Assets {
+	assets := make([]generated.AssetHolding, 0, len(record.XAssets))
+	for curid, holding := range record.XAssets {
 		// Empty is ok, asset may have been deleted, so we can no
 		// longer fetch the creator
 		creator := assetsCreators[curid]
@@ -51,8 +51,8 @@ func AccountDataToAccount(
 		return assets[i].AssetId < assets[j].AssetId
 	})
 
-	createdAssets := make([]generated.Asset, 0, len(record.AssetParams))
-	for idx, params := range record.AssetParams {
+	createdAssets := make([]generated.Asset, 0, len(record.XAssetParams))
+	for idx, params := range record.XAssetParams {
 		asset := AssetParamsToAsset(address, idx, &params)
 		createdAssets = append(createdAssets, asset)
 	}
@@ -71,8 +71,8 @@ func AccountDataToAccount(
 		}
 	}
 
-	createdApps := make([]generated.Application, 0, len(record.AppParams))
-	for appIdx, appParams := range record.AppParams {
+	createdApps := make([]generated.Application, 0, len(record.XAppParams))
+	for appIdx, appParams := range record.XAppParams {
 		app := AppParamsToApplication(address, appIdx, &appParams)
 		createdApps = append(createdApps, app)
 	}
@@ -80,8 +80,8 @@ func AccountDataToAccount(
 		return createdApps[i].Id < createdApps[j].Id
 	})
 
-	appsLocalState := make([]generated.ApplicationLocalState, 0, len(record.AppLocalStates))
-	for appIdx, state := range record.AppLocalStates {
+	appsLocalState := make([]generated.ApplicationLocalState, 0, len(record.XAppLocalStates))
+	for appIdx, state := range record.XAppLocalStates {
 		localState := convertTKVToGenerated(&state.KeyValue)
 		appsLocalState = append(appsLocalState, generated.ApplicationLocalState{
 			Id:       uint64(appIdx),
@@ -334,9 +334,9 @@ func AccountToAccountData(a *generated.Account) (basics.AccountData, error) {
 		VoteFirstValid:     voteFirstValid,
 		VoteLastValid:      voteLastValid,
 		VoteKeyDilution:    voteKeyDilution,
-		Assets:             assets,
-		AppLocalStates:     appLocalStates,
-		AppParams:          appParams,
+		XAssets:            assets,
+		XAppLocalStates:    appLocalStates,
+		XAppParams:         appParams,
 		TotalAppSchema:     totalSchema,
 		TotalExtraAppPages: totalExtraPages,
 	}
@@ -349,16 +349,16 @@ func AccountToAccountData(a *generated.Account) (basics.AccountData, error) {
 		ad.AuthAddr = authAddr
 	}
 	if len(assetParams) > 0 {
-		ad.AssetParams = assetParams
+		ad.XAssetParams = assetParams
 	}
 	if len(assets) > 0 {
-		ad.Assets = assets
+		ad.XAssets = assets
 	}
 	if len(appLocalStates) > 0 {
-		ad.AppLocalStates = appLocalStates
+		ad.XAppLocalStates = appLocalStates
 	}
 	if len(appParams) > 0 {
-		ad.AppParams = appParams
+		ad.XAppParams = appParams
 	}
 
 	return ad, nil

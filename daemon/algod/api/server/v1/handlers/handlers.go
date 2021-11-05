@@ -811,9 +811,9 @@ func AccountInformation(ctx lib.ReqContext, context echo.Context) {
 	}
 
 	var assets map[uint64]v1.AssetHolding
-	if len(record.Assets) > 0 {
+	if len(record.XAssets) > 0 {
 		assets = make(map[uint64]v1.AssetHolding)
-		for curid, holding := range record.Assets {
+		for curid, holding := range record.XAssets {
 			var creator string
 			creatorAddr, ok, err := ledger.GetCreator(basics.CreatableIndex(curid), basics.AssetCreatable)
 			if err == nil && ok {
@@ -832,25 +832,25 @@ func AccountInformation(ctx lib.ReqContext, context echo.Context) {
 	}
 
 	var assetParams map[uint64]v1.AssetParams
-	if len(record.AssetParams) > 0 {
-		assetParams = make(map[uint64]v1.AssetParams, len(record.AssetParams))
-		for idx, params := range record.AssetParams {
+	if len(record.XAssetParams) > 0 {
+		assetParams = make(map[uint64]v1.AssetParams, len(record.XAssetParams))
+		for idx, params := range record.XAssetParams {
 			assetParams[uint64(idx)] = modelAssetParams(addr, params)
 		}
 	}
 
 	var apps map[uint64]v1.AppLocalState
-	if len(record.AppLocalStates) > 0 {
-		apps = make(map[uint64]v1.AppLocalState, len(record.AppLocalStates))
-		for idx, state := range record.AppLocalStates {
+	if len(record.XAppLocalStates) > 0 {
+		apps = make(map[uint64]v1.AppLocalState, len(record.XAppLocalStates))
+		for idx, state := range record.XAppLocalStates {
 			apps[uint64(idx)] = modelAppLocalState(state)
 		}
 	}
 
 	var appParams map[uint64]v1.AppParams
-	if len(record.AppParams) > 0 {
-		appParams = make(map[uint64]v1.AppParams, len(record.AppParams))
-		for idx, params := range record.AppParams {
+	if len(record.XAppParams) > 0 {
+		appParams = make(map[uint64]v1.AppParams, len(record.XAppParams))
+		for idx, params := range record.XAppParams {
 			appParams[uint64(idx)] = modelAppParams(addr, params)
 		}
 	}
@@ -1327,7 +1327,7 @@ func AssetInformation(ctx lib.ReqContext, context echo.Context) {
 		return
 	}
 
-	if asset, ok := record.AssetParams[aidx]; ok {
+	if asset, ok := record.XAssetParams[aidx]; ok {
 		thisAssetParams := modelAssetParams(creator, asset)
 		SendJSON(AssetInformationResponse{&thisAssetParams}, w, ctx.Log)
 	} else {
@@ -1428,7 +1428,7 @@ func Assets(ctx lib.ReqContext, context echo.Context) {
 		}
 
 		// Ensure no race with asset deletion
-		rp, ok := creatorRecord.AssetParams[basics.AssetIndex(aloc.Index)]
+		rp, ok := creatorRecord.XAssetParams[basics.AssetIndex(aloc.Index)]
 		if !ok {
 			continue
 		}

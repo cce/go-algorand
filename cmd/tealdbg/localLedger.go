@@ -121,14 +121,14 @@ func makeBalancesAdapter(
 	states.appIdx = appIdx
 	for _, aid := range apps {
 		for addr, ad := range balances {
-			if params, ok := ad.AppParams[aid]; ok {
+			if params, ok := ad.XAppParams[aid]; ok {
 				if aid == appIdx {
 					states.schemas = params.StateSchemas
 				}
 				states.global[aid] = params.GlobalState
 				appsExist[aid] = true
 			}
-			if local, ok := ad.AppLocalStates[aid]; ok {
+			if local, ok := ad.XAppLocalStates[aid]; ok {
 				ls, ok := states.locals[addr]
 				if !ok {
 					ls = make(map[basics.AppIndex]basics.TealKeyValue)
@@ -149,7 +149,7 @@ func makeBalancesAdapter(
 					return nil, AppState{}, err
 				}
 				ad := basics.AccountData{
-					AppParams: map[basics.AppIndex]basics.AppParams{
+					XAppParams: map[basics.AppIndex]basics.AppParams{
 						aid: {
 							StateSchemas: makeSchemas(),
 							GlobalState:  make(basics.TealKeyValue),
@@ -162,16 +162,16 @@ func makeBalancesAdapter(
 				ad, ok := balances[addr]
 				if !ok {
 					ad = basics.AccountData{
-						AppLocalStates: map[basics.AppIndex]basics.AppLocalState{},
+						XAppLocalStates: map[basics.AppIndex]basics.AppLocalState{},
 					}
 					balances[addr] = ad
 				}
-				if ad.AppLocalStates == nil {
-					ad.AppLocalStates = make(map[basics.AppIndex]basics.AppLocalState)
+				if ad.XAppLocalStates == nil {
+					ad.XAppLocalStates = make(map[basics.AppIndex]basics.AppLocalState)
 				}
-				_, ok = ad.AppLocalStates[aid]
+				_, ok = ad.XAppLocalStates[aid]
 				if !ok {
-					ad.AppLocalStates[aid] = basics.AppLocalState{
+					ad.XAppLocalStates[aid] = basics.AppLocalState{
 						Schema: makeLocalSchema(),
 					}
 				}
@@ -297,7 +297,7 @@ func (l *localLedger) GetCreatorForRound(rnd basics.Round, cidx basics.Creatable
 	case basics.AssetCreatable:
 		assetIdx := basics.AssetIndex(cidx)
 		for addr, br := range l.balances {
-			if _, ok := br.AssetParams[assetIdx]; ok {
+			if _, ok := br.XAssetParams[assetIdx]; ok {
 				return addr, true, nil
 			}
 		}
@@ -305,7 +305,7 @@ func (l *localLedger) GetCreatorForRound(rnd basics.Round, cidx basics.Creatable
 	case basics.AppCreatable:
 		appIdx := basics.AppIndex(cidx)
 		for addr, br := range l.balances {
-			if _, ok := br.AppParams[appIdx]; ok {
+			if _, ok := br.XAppParams[appIdx]; ok {
 				return addr, true, nil
 			}
 		}
