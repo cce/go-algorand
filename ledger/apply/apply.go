@@ -17,16 +17,69 @@
 package apply
 
 import (
-	"errors"
-
 	"github.com/algorand/go-algorand/config"
+	"github.com/algorand/go-algorand/crypto"
 	"github.com/algorand/go-algorand/data/basics"
 	"github.com/algorand/go-algorand/data/transactions"
 	"github.com/algorand/go-algorand/data/transactions/logic"
 )
 
-// ErrCreatableNotFound is returned by calls to Balances if AppParams, AppLocalState, AssetData, or AssetHolding can't be found
-var ErrCreatableNotFound = errors.New("no app or asset data found")
+// AccountData is like basics.AccountData, but without any maps
+// containing AppParams, AppLocalState, AssetHolding, or AssetParams.
+type AccountData struct {
+	Status             basics.Status
+	MicroAlgos         basics.MicroAlgos
+	RewardsBase        uint64
+	RewardedMicroAlgos basics.MicroAlgos
+
+	VoteID          crypto.OneTimeSignatureVerifier
+	SelectionID     crypto.VRFVerifier
+	VoteFirstValid  basics.Round
+	VoteLastValid   basics.Round
+	VoteKeyDilution uint64
+
+	AuthAddr           basics.Address
+	TotalAppSchema     basics.StateSchema
+	TotalExtraAppPages uint32
+}
+
+// ToApplyAccountData returns apply.AccountData from basics.AccountData
+func ToApplyAccountData(acct basics.AccountData) AccountData {
+	return AccountData{
+		Status:             acct.Status,
+		MicroAlgos:         acct.MicroAlgos,
+		RewardsBase:        acct.RewardsBase,
+		RewardedMicroAlgos: acct.RewardedMicroAlgos,
+
+		VoteID:          acct.VoteID,
+		SelectionID:     acct.SelectionID,
+		VoteFirstValid:  acct.VoteFirstValid,
+		VoteLastValid:   acct.VoteLastValid,
+		VoteKeyDilution: acct.VoteKeyDilution,
+
+		AuthAddr:           acct.AuthAddr,
+		TotalAppSchema:     acct.TotalAppSchema,
+		TotalExtraAppPages: acct.TotalExtraAppPages,
+	}
+}
+
+// AssignAccountData assigns the contents of apply.AccountData to the fields in basics.AccountData
+func AssignAccountData(a *basics.AccountData, acct AccountData) {
+	a.Status = acct.Status
+	a.MicroAlgos = acct.MicroAlgos
+	a.RewardsBase = acct.RewardsBase
+	a.RewardedMicroAlgos = acct.RewardedMicroAlgos
+
+	a.VoteID = acct.VoteID
+	a.SelectionID = acct.SelectionID
+	a.VoteFirstValid = acct.VoteFirstValid
+	a.VoteLastValid = acct.VoteLastValid
+	a.VoteKeyDilution = acct.VoteKeyDilution
+
+	a.AuthAddr = acct.AuthAddr
+	a.TotalAppSchema = acct.TotalAppSchema
+	a.TotalExtraAppPages = acct.TotalExtraAppPages
+}
 
 // Balances allow to move MicroAlgos from one address to another and to update balance records, or to access and modify individual balance records
 // After a call to Put (or Move), future calls to Get or Move will reflect the updated balance record(s)
@@ -35,28 +88,29 @@ type Balances interface {
 	// If the account is known to be empty, then err should be nil and the returned balance record should have the given address and empty AccountData
 	// withPendingRewards specifies whether pending rewards should be applied.
 	// A non-nil error means the lookup is impossible (e.g., if the database doesn't have necessary state anymore)
-	Get(addr basics.Address, withPendingRewards bool) (basics.AccountData, error)
+	Get(addr basics.Address, withPendingRewards bool) (AccountData, error)
 
-	Put(basics.Address, basics.AccountData) error
+	Put(basics.Address, AccountData) error
+	CloseAccount(basics.Address) error
 
 	TotalAppParams(addr basics.Address) (int, error)
-	GetAppParams(addr basics.Address, aidx basics.AppIndex) (basics.AppParams, error)
+	GetAppParams(addr basics.Address, aidx basics.AppIndex) (basics.AppParams, bool, error)
 	PutAppParams(addr basics.Address, aidx basics.AppIndex, params basics.AppParams) error
 	DeleteAppParams(addr basics.Address, aidx basics.AppIndex) error
 
 	TotalAppLocalState(addr basics.Address) (int, error)
-	GetAppLocalState(addr basics.Address, aidx basics.AppIndex) (basics.AppLocalState, error)
+	GetAppLocalState(addr basics.Address, aidx basics.AppIndex) (basics.AppLocalState, bool, error)
 	CheckAppLocalState(addr basics.Address, aidx basics.AppIndex) (bool, error)
 	PutAppLocalState(addr basics.Address, aidx basics.AppIndex, state basics.AppLocalState) error
 	DeleteAppLocalState(addr basics.Address, aidx basics.AppIndex) error
 
 	TotalAssetHolding(addr basics.Address) (int, error)
-	GetAssetHolding(addr basics.Address, aidx basics.AssetIndex) (basics.AssetHolding, error)
+	GetAssetHolding(addr basics.Address, aidx basics.AssetIndex) (basics.AssetHolding, bool, error)
 	PutAssetHolding(addr basics.Address, aidx basics.AssetIndex, data basics.AssetHolding) error
 	DeleteAssetHolding(addr basics.Address, aidx basics.AssetIndex) error
 
 	TotalAssetParams(addr basics.Address) (int, error)
-	GetAssetParams(addr basics.Address, aidx basics.AssetIndex) (basics.AssetParams, error)
+	GetAssetParams(addr basics.Address, aidx basics.AssetIndex) (basics.AssetParams, bool, error)
 	CheckAssetParams(addr basics.Address, aidx basics.AssetIndex) (bool, error)
 	PutAssetParams(addr basics.Address, aidx basics.AssetIndex, data basics.AssetParams) error
 	DeleteAssetParams(addr basics.Address, aidx basics.AssetIndex) error
