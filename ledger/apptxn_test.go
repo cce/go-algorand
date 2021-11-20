@@ -264,7 +264,7 @@ func TestPayAction(t *testing.T) {
 	vb = l.endBlock(t, eval)
 
 	deltas := vb.Delta()
-	for _, addr := range deltas.Accts.ModifiedAccounts() {
+	for _, addr := range deltas.NewAccts.ModifiedAccounts() {
 		if addr == addrs[2] {
 			found = true
 		}

@@ -207,7 +207,7 @@ type deferredCommitContext struct {
 
 	genesisProto config.ConsensusParams
 
-	deltas                 []ledgercore.AccountDeltas
+	deltas                 []ledgercore.NewAccountDeltas
 	roundTotals            ledgercore.AccountTotals
 	compactAccountDeltas   compactAccountDeltas
 	compactCreatableDeltas map[basics.CreatableIndex]ledgercore.ModifiedCreatable

@@ -303,10 +303,11 @@ func TestReproducibleCatchpointLabels(t *testing.T) {
 	for i := basics.Round(1); i <= basics.Round(testCatchpointLabelsCount*cfg.CatchpointInterval); i++ {
 		rewardLevelDelta := crypto.RandUint64() % 5
 		rewardLevel += rewardLevelDelta
-		var updates ledgercore.AccountDeltas
-		var totals map[basics.Address]basics.AccountData
+		var updates ledgercore.NewAccountDeltas
+		var totals map[basics.Address]ledgercore.AccountData
 		base := accts[i-1]
 		updates, totals, lastCreatableID = ledgertesting.RandomDeltasBalancedFull(1, base, rewardLevel, lastCreatableID)
+		newAccts := updates.ToBasicsAccountDataMap()
 		prevTotals, err := au.Totals(basics.Round(i - 1))
 		require.NoError(t, err)
 
@@ -325,14 +326,14 @@ func TestReproducibleCatchpointLabels(t *testing.T) {
 		blk.RewardsLevel = rewardLevel
 		blk.CurrentProtocol = testProtocolVersion
 		delta := ledgercore.MakeStateDelta(&blk.BlockHeader, 0, updates.Len(), 0)
-		delta.Accts.MergeAccounts(updates)
+		delta.NewAccts.MergeAccounts(updates)
 		delta.Creatables = creatablesFromUpdates(base, updates, knownCreatables)
 		delta.Totals = newTotals
 
 		ml.trackers.newBlock(blk, delta)
 		ml.trackers.committedUpTo(i)
 		ml.addMockBlock(blockEntry{block: blk}, delta)
-		accts = append(accts, totals)
+		accts = append(accts, newAccts)
 		rewardsLevels = append(rewardsLevels, rewardLevel)
 		roundDeltas[i] = delta
 

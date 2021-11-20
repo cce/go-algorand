@@ -100,6 +100,7 @@ func createApplication(ac *transactions.ApplicationCallTxnFields, balances Balan
 	totalExtraPages := record.TotalExtraAppPages
 	totalExtraPages = basics.AddSaturate32(totalExtraPages, ac.ExtraProgramPages)
 	record.TotalExtraAppPages = totalExtraPages
+	record.TotalAppParams += 1
 
 	// Write back to the creator's balance record
 	err = balances.Put(creator, record)
@@ -140,6 +141,7 @@ func deleteApplication(balances Balances, creator basics.Address, appIdx basics.
 	globalSchema := params.GlobalStateSchema
 	totalSchema = totalSchema.SubSchema(globalSchema)
 	record.TotalAppSchema = totalSchema
+	record.TotalAppParams = basics.SubSaturate32(record.TotalAppParams, 1)
 
 	// Delete app's extra program pages
 	totalExtraPages := record.TotalExtraAppPages
@@ -239,6 +241,7 @@ func optInApplication(balances Balances, sender basics.Address, appIdx basics.Ap
 	totalSchema := record.TotalAppSchema
 	totalSchema = totalSchema.AddSchema(params.LocalStateSchema)
 	record.TotalAppSchema = totalSchema
+	record.TotalAppLocalStates += 1
 
 	// Write opted-in user back to cow
 	err = balances.Put(sender, record)
@@ -282,6 +285,7 @@ func closeOutApplication(balances Balances, sender basics.Address, appIdx basics
 	totalSchema := record.TotalAppSchema
 	totalSchema = totalSchema.SubSchema(localState.Schema)
 	record.TotalAppSchema = totalSchema
+	record.TotalAppLocalStates = basics.SubSaturate32(record.TotalAppLocalStates, 1)
 
 	// Delete the local state
 	err = balances.DeleteAppLocalState(sender, appIdx)
