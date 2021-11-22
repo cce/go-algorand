@@ -159,14 +159,14 @@ func TestAccountDBInit(t *testing.T) {
 }
 
 // creatablesFromUpdates calculates creatables from updates
-func creatablesFromUpdates(base map[basics.Address]basics.AccountData, updates ledgercore.AccountDeltas, seen map[basics.CreatableIndex]bool) map[basics.CreatableIndex]ledgercore.ModifiedCreatable {
+func creatablesFromUpdates(base map[basics.Address]basics.AccountData, updates ledgercore.NewAccountDeltas, seen map[basics.CreatableIndex]bool) map[basics.CreatableIndex]ledgercore.ModifiedCreatable {
 	creatables := make(map[basics.CreatableIndex]ledgercore.ModifiedCreatable)
-	for i := 0; i < updates.Len(); i++ {
-		addr, update := updates.GetByIdx(i)
+	converted := updates.ToBasicsAccountDataMap()
+	for addr, update := range converted {
 		// no sets in Go, so iterate over
 		if ad, ok := base[addr]; ok {
-			for idx := range ad.Assets {
-				if _, ok := update.Assets[idx]; !ok {
+			for idx := range ad.AssetParams {
+				if _, ok := update.AssetParams[idx]; !ok {
 					creatables[basics.CreatableIndex(idx)] = ledgercore.ModifiedCreatable{
 						Ctype:   basics.AssetCreatable,
 						Created: false, // exists in base, not in new => deleted
@@ -184,13 +184,13 @@ func creatablesFromUpdates(base map[basics.Address]basics.AccountData, updates l
 				}
 			}
 		}
-		for idx := range update.Assets {
+		for idx := range update.AssetParams {
 			if seen[basics.CreatableIndex(idx)] {
 				continue
 			}
 			ad, found := base[addr]
 			if found {
-				if _, ok := ad.Assets[idx]; !ok {
+				if _, ok := ad.AssetParams[idx]; !ok {
 					found = false
 				}
 			}
@@ -254,17 +254,17 @@ func TestAccountDBRound(t *testing.T) {
 	ctbsList, randomCtbs := randomCreatables(numElementsPerSegement)
 	expectedDbImage := make(map[basics.CreatableIndex]ledgercore.ModifiedCreatable)
 	var baseAccounts lruAccounts
-	var newaccts map[basics.Address]basics.AccountData
+	var newacctsTotals map[basics.Address]ledgercore.AccountData
 	baseAccounts.init(nil, 100, 80)
 	for i := 1; i < 10; i++ {
-		var updates ledgercore.AccountDeltas
-		updates, newaccts, _, lastCreatableID = ledgertesting.RandomDeltasFull(20, accts, 0, lastCreatableID)
+		var updates ledgercore.NewAccountDeltas
+		updates, newacctsTotals, _, lastCreatableID = ledgertesting.RandomDeltasFull(20, accts, 0, lastCreatableID)
 		totals = ledgertesting.CalculateNewRoundAccountTotals(t, updates, 0, proto, accts, totals)
-		accts = newaccts
+		accts = updates.ToBasicsAccountDataMap()
 		ctbsWithDeletes := randomCreatableSampling(i, ctbsList, randomCtbs,
 			expectedDbImage, numElementsPerSegement)
 
-		updatesCnt := makeCompactAccountDeltas([]ledgercore.AccountDeltas{updates}, baseAccounts)
+		updatesCnt := makeCompactAccountDeltas([]ledgercore.NewAccountDeltas{updates}, baseAccounts)
 		err = updatesCnt.accountsLoadOld(tx)
 		require.NoError(t, err)
 		err = accountsPutTotals(tx, totals, false)
@@ -278,8 +278,8 @@ func TestAccountDBRound(t *testing.T) {
 	}
 
 	// test the accounts totals
-	var updates ledgercore.AccountDeltas
-	for addr, acctData := range newaccts {
+	var updates ledgercore.NewAccountDeltas
+	for addr, acctData := range newacctsTotals {
 		updates.Upsert(addr, acctData)
 	}
 

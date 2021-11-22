@@ -218,7 +218,7 @@ func prepareNormalizedBalances(bals []encodedBalanceRecord, proto config.Consens
 // makeCompactAccountDeltas takes an array of account AccountDeltas ( one array entry per round ), and compacts the arrays into a single
 // data structure that contains all the account deltas changes. While doing that, the function eliminate any intermediate account changes.
 // It counts the number of changes per round by specifying it in the ndeltas field of the accountDeltaCount/modifiedCreatable.
-func makeCompactAccountDeltas(accountDeltas []ledgercore.AccountDeltas, baseAccounts lruAccounts) (outAccountDeltas compactAccountDeltas) {
+func makeCompactAccountDeltas(accountDeltas []ledgercore.NewAccountDeltas, baseAccounts lruAccounts) (outAccountDeltas compactAccountDeltas) {
 	if len(accountDeltas) == 0 {
 		return
 	}
@@ -229,11 +229,12 @@ func makeCompactAccountDeltas(accountDeltas []ledgercore.AccountDeltas, baseAcco
 	outAccountDeltas.deltas = make([]accountDelta, 0, size)
 	outAccountDeltas.misses = make([]int, 0, size)
 
+	// TODO: convert partial deltas to full deltas
 	for _, roundDelta := range accountDeltas {
-		for i := 0; i < roundDelta.Len(); i++ {
-			addr, acctDelta := roundDelta.GetByIdx(i)
+		updates := roundDelta.ToBasicsAccountDataMap()
+		for addr, acctDelta := range updates {
 			if prev, idx := outAccountDeltas.get(addr); idx != -1 {
-				outAccountDeltas.update(idx, accountDelta{ // update instead of upsert economizes one map lookup
+				outAccountDeltas.update(idx, accountDelta{
 					old:     prev.old,
 					new:     acctDelta,
 					ndeltas: prev.ndeltas + 1,
@@ -246,7 +247,9 @@ func makeCompactAccountDeltas(accountDeltas []ledgercore.AccountDeltas, baseAcco
 				}
 				if baseAccountData, has := baseAccounts.read(addr); has {
 					newEntry.old = baseAccountData
-					outAccountDeltas.insert(addr, newEntry) // insert instead of upsert economizes one map lookup
+					// partial delta support: apply partial delta into a full basics ad
+					newEntry.new = mergeBasicsAccountData(baseAccountData.accountData, acctDelta)
+					outAccountDeltas.insert(addr, newEntry)
 				} else {
 					outAccountDeltas.insertMissing(addr, newEntry)
 				}
@@ -354,7 +357,10 @@ func (a *compactAccountDeltas) insertMissing(addr basics.Address, delta accountD
 func (a *compactAccountDeltas) upsertOld(old persistedAccountData) {
 	addr := old.addr
 	if idx, exist := a.cache[addr]; exist {
-		a.deltas[idx].old = old
+		delta := a.deltas[idx]
+		delta.old = old
+		delta.new = mergeBasicsAccountData(old.accountData, delta.new)
+		a.deltas[idx] = delta
 		return
 	}
 	a.insert(addr, accountDelta{old: old})
@@ -362,7 +368,10 @@ func (a *compactAccountDeltas) upsertOld(old persistedAccountData) {
 
 // updateOld updates existing or inserts a new partial entry with only old field filled
 func (a *compactAccountDeltas) updateOld(idx int, old persistedAccountData) {
-	a.deltas[idx].old = old
+	delta := a.deltas[idx]
+	delta.old = old
+	delta.new = mergeBasicsAccountData(old.accountData, delta.new)
+	a.deltas[idx] = delta
 }
 
 // writeCatchpointStagingBalances inserts all the account balances in the provided array into the catchpoint balance staging table catchpointbalances.
@@ -568,7 +577,8 @@ func accountsInit(tx *sql.Tx, initAccounts map[basics.Address]basics.AccountData
 				return true, err
 			}
 
-			totals.AddAccount(proto, data, &ot)
+			ad := ledgercore.ToAccountData(data)
+			totals.AddAccount(proto, ad, &ot)
 		}
 
 		if ot.Overflowed {

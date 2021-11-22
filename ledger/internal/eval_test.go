@@ -270,7 +270,7 @@ func TestTestnetFixup(t *testing.T) {
 	partitiontest.PartitionTest(t)
 
 	eval := &BlockEvaluator{}
-	var rewardPoolBalance basics.AccountData
+	var rewardPoolBalance ledgercore.AccountData
 	rewardPoolBalance.MicroAlgos.Raw = 1234
 	var headerRound basics.Round
 	testnetGenesisHash, _ := crypto.DigestFromString("JBR3KGFEWPEE5SAQ6IWU6EEBZMHXD4CZU6WCBXWGF57XBZIJHIRA")
@@ -307,7 +307,7 @@ func testnetFixupExecution(t *testing.T, headerRound basics.Round, poolBonus uin
 	genesisInitState.Block.BlockHeader.GenesisID = "testnet"
 	genesisInitState.GenesisHash = testnetGenesisHash
 
-	rewardPoolBalance := genesisInitState.Accounts[testPoolAddr]
+	rewardPoolBalance := ledgercore.ToAccountData(genesisInitState.Accounts[testPoolAddr])
 	nextPoolBalance := rewardPoolBalance.MicroAlgos.Raw + poolBonus
 
 	l := newTestLedger(t, bookkeeping.GenesisBalances{
@@ -434,7 +434,7 @@ func newTestLedger(t testing.TB, balances bookkeeping.GenesisBalances) *evalTest
 	var ot basics.OverflowTracker
 	proto := config.Consensus[protocol.ConsensusCurrentVersion]
 	for _, acctData := range balances.Balances {
-		l.latestTotals.AddAccount(proto, acctData, &ot)
+		l.latestTotals.AddAccount(proto, ledgercore.ToAccountData(acctData), &ot)
 	}
 
 	require.False(t, genBlock.FeeSink.IsZero())
@@ -525,8 +525,8 @@ func (ledger *evalTestLedger) AddValidatedBlock(vb ledgercore.ValidatedBlock, ce
 	}
 	// update
 	deltas := vb.Delta()
-	for _, addr := range deltas.Accts.ModifiedAccounts() {
-		accountData, _ := deltas.Accts.Get(addr)
+	balances := deltas.NewAccts.ToBasicsAccountDataMap()
+	for addr, accountData := range balances {
 		newBalances[addr] = accountData
 	}
 	ledger.roundBalances[vb.Block().Round()] = newBalances
@@ -839,8 +839,8 @@ type failRoundCowParent struct {
 	roundCowBase
 }
 
-func (p *failRoundCowParent) lookup(basics.Address) (basics.AccountData, error) {
-	return basics.AccountData{}, fmt.Errorf("disk I/O fail (on purpose)")
+func (p *failRoundCowParent) lookup(basics.Address) (ledgercore.AccountData, error) {
+	return ledgercore.AccountData{}, fmt.Errorf("disk I/O fail (on purpose)")
 }
 
 // TestExpiredAccountGenerationWithDiskFailure tests edge cases where disk failures can lead to ledger look up failures
@@ -924,7 +924,7 @@ func TestExpiredAccountGenerationWithDiskFailure(t *testing.T) {
 	eval.block.ExpiredParticipationAccounts = []basics.Address{
 		basics.Address{},
 	}
-	eval.state.mods.Accts = ledgercore.AccountDeltas{}
+	eval.state.mods.NewAccts = ledgercore.NewAccountDeltas{}
 	eval.state.lookupParent = &failRoundCowParent{}
 	err = eval.endOfBlock()
 	require.Error(t, err)
