@@ -136,7 +136,7 @@ type persistedAccountData struct {
 	// data structure in queues directly, without "attaching" the address as the address as the map key.
 	addr basics.Address
 	// The underlaying account data
-	accountData basics.AccountData
+	accountData baseAccountData
 	// The rowid, when available. If the entry was loaded from the disk, then we have the rowid for it. Entries
 	// that doesn't have rowid ( hence, rowid == 0 ) represent either deleted accounts or non-existing accounts.
 	rowid int64
