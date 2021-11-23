@@ -737,7 +737,6 @@ func (au *accountUpdates) newBlockImpl(blk bookkeeping.Block, delta ledgercore.S
 	if rnd != au.latest()+1 {
 		au.log.Panicf("accountUpdates: newBlockImpl %d too far in the future, dbRound %d, deltas %d", rnd, au.cachedDBRound, len(au.deltas))
 	}
-
 	au.deltas = append(au.deltas, delta.Accts)
 	au.versions = append(au.versions, blk.CurrentProtocol)
 	au.creatableDeltas = append(au.creatableDeltas, delta.Creatables)
@@ -771,46 +770,6 @@ func (au *accountUpdates) newBlockImpl(blk bookkeeping.Block, delta ledgercore.S
 	if au.voters != nil {
 		au.voters.newBlock(blk.BlockHeader)
 	}
-}
-
-// mergeBasicsAccountData applies partial delta from "delta" into "ad" and returns a deep copy
-func mergeBasicsAccountData(ad basics.AccountData, delta basics.AccountData) (result basics.AccountData) {
-	// set the base part of account data (balance, status, voting data...)
-	result = delta
-
-	result.AssetParams = make(map[basics.AssetIndex]basics.AssetParams)
-	for aidx, params := range ad.AssetParams {
-		result.AssetParams[aidx] = params
-	}
-	for aidx, params := range delta.AssetParams {
-		result.AssetParams[aidx] = params
-	}
-
-	result.Assets = make(map[basics.AssetIndex]basics.AssetHolding)
-	for aidx, holding := range ad.Assets {
-		result.Assets[aidx] = holding
-	}
-	for aidx, holding := range delta.Assets {
-		result.Assets[aidx] = holding
-	}
-
-	result.AppParams = make(map[basics.AppIndex]basics.AppParams)
-	for aidx, params := range ad.AppParams {
-		result.AppParams[aidx] = params
-	}
-	for aidx, params := range delta.AppParams {
-		result.AppParams[aidx] = params
-	}
-
-	result.AppLocalStates = make(map[basics.AppIndex]basics.AppLocalState)
-	for aidx, state := range ad.AppLocalStates {
-		result.AppLocalStates[aidx] = state
-	}
-	for aidx, state := range delta.AppLocalStates {
-		result.AppLocalStates[aidx] = state
-	}
-
-	return result
 }
 
 // lookupWithRewards returns the account data for a given address at a given round.

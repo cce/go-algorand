@@ -264,7 +264,6 @@ func makeCompactAccountDeltas(accountDeltas []ledgercore.NewAccountDeltas, baseA
 	outAccountDeltas.deltas = make([]accountDelta, 0, size)
 	outAccountDeltas.misses = make([]int, 0, size)
 
-	// TODO: convert partial deltas to full deltas
 	for _, roundDelta := range accountDeltas {
 		for i := 0; i < roundDelta.Len(); i++ {
 			addr, acctDelta := roundDelta.GetByIdx(i)
@@ -1601,7 +1600,6 @@ func accountsNewRound(tx *sql.Tx, updates compactAccountDeltas, creatables map[b
 				// if we didn't had it before, and we don't have anything now, just skip it.
 			} else {
 				// create a new entry.
-				//basics.NormalizedOnlineAccountBalance()
 				normBalance := data.newAcct.NormalizedOnlineBalance(proto)
 				result, err = insertStmt.Exec(addr[:], normBalance, protocol.Encode(&data.newAcct))
 				if err == nil {
