@@ -473,18 +473,32 @@ func (l *Ledger) Lookup(rnd basics.Round, addr basics.Address) (basics.AccountDa
 	return data, nil
 }
 
+// LookupResource loads a resource that matches the request parameters from the accounts update
+func (l *Ledger) LookupResource(rnd basics.Round, addr basics.Address, aidx basics.CreatableIndex, ctype basics.CreatableType) (ledgercore.AccountResource, error) {
+	l.trackerMu.RLock()
+	defer l.trackerMu.RUnlock()
+
+	// Intentionally apply (pending) rewards up to rnd.
+	res, err := l.accts.LookupResource(rnd, addr, aidx, ctype)
+	if err != nil {
+		return ledgercore.AccountResource{}, err
+	}
+
+	return res, nil
+}
+
 // LookupAgreement returns account data used by agreement.
 func (l *Ledger) LookupAgreement(rnd basics.Round, addr basics.Address) (basics.OnlineAccountData, error) {
 	l.trackerMu.RLock()
 	defer l.trackerMu.RUnlock()
 
 	// Intentionally apply (pending) rewards up to rnd.
-	data, err := l.accts.LookupWithRewards(rnd, addr)
+	data, err := l.accts.LookupOnlineAccountData(rnd, addr)
 	if err != nil {
 		return basics.OnlineAccountData{}, err
 	}
 
-	return data.OnlineAccountData(), nil
+	return data, nil
 }
 
 // LookupWithoutRewards is like Lookup but does not apply pending rewards up

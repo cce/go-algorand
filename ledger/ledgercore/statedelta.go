@@ -176,7 +176,7 @@ func MakeStateDelta(hdr *bookkeeping.BlockHeader, prevTimestamp int64, hint int,
 // 	return ad.accts[idx].AccountData, true
 // }
 
-// Get lookups AccountData by address
+// GetData lookups AccountData by address
 func (ad NewAccountDeltas) GetData(addr basics.Address) (AccountData, bool) {
 	idx, ok := ad.acctsCache[addr]
 	if !ok {
@@ -627,4 +627,24 @@ func (ad NewAccountDeltas) ToBasicsAccountDataMap() map[basics.Address]basics.Ac
 	}
 
 	return result
+}
+
+// GetAllAppParams todo
+func (ad *NewAccountDeltas) GetAllAppParams() map[AccountApp]*basics.AppParams {
+	return ad.appParams
+}
+
+// GetAllAppLocalStates todo
+func (ad *NewAccountDeltas) GetAllAppLocalStates() map[AccountApp]*basics.AppLocalState {
+	return ad.appLocalStates
+}
+
+// GetAllAssetParams todo
+func (ad *NewAccountDeltas) GetAllAssetParams() map[AccountAsset]*basics.AssetParams {
+	return ad.assetParams
+}
+
+// GetAllAssets todo
+func (ad *NewAccountDeltas) GetAllAssets() map[AccountAsset]*basics.AssetHolding {
+	return ad.assets
 }

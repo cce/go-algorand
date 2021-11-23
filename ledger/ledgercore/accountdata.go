@@ -121,43 +121,43 @@ func (ad AccountData) WithUpdatedRewards(proto config.ConsensusParams, rewardsLe
 }
 
 // ClearOnlineState resets the account's fields to indicate that the account is an offline account
-func (u *AccountData) ClearOnlineState() {
-	u.Status = basics.Offline
-	u.VoteFirstValid = basics.Round(0)
-	u.VoteLastValid = basics.Round(0)
-	u.VoteKeyDilution = 0
-	u.VoteID = crypto.OneTimeSignatureVerifier{}
-	u.SelectionID = crypto.VRFVerifier{}
+func (ad *AccountData) ClearOnlineState() {
+	ad.Status = basics.Offline
+	ad.VoteFirstValid = basics.Round(0)
+	ad.VoteLastValid = basics.Round(0)
+	ad.VoteKeyDilution = 0
+	ad.VoteID = crypto.OneTimeSignatureVerifier{}
+	ad.SelectionID = crypto.VRFVerifier{}
 }
 
 // MinBalance computes the minimum balance requirements for an account based on
 // some consensus parameters. MinBalance should correspond roughly to how much
 // storage the account is allowed to store on disk.
-func (u AccountData) MinBalance(proto *config.ConsensusParams) (res basics.MicroAlgos) {
+func (ad AccountData) MinBalance(proto *config.ConsensusParams) (res basics.MicroAlgos) {
 	var min uint64
 
 	// First, base MinBalance
 	min = proto.MinBalance
 
 	// MinBalance for each Asset
-	assetCost := basics.MulSaturate(proto.MinBalance, uint64(u.TotalAssets))
+	assetCost := basics.MulSaturate(proto.MinBalance, uint64(ad.TotalAssets))
 	min = basics.AddSaturate(min, assetCost)
 
 	// Base MinBalance for each created application
-	appCreationCost := basics.MulSaturate(proto.AppFlatParamsMinBalance, uint64(u.TotalAppParams))
+	appCreationCost := basics.MulSaturate(proto.AppFlatParamsMinBalance, uint64(ad.TotalAppParams))
 	min = basics.AddSaturate(min, appCreationCost)
 
 	// Base MinBalance for each opted in application
-	appOptInCost := basics.MulSaturate(proto.AppFlatOptInMinBalance, uint64(u.TotalAppLocalStates))
+	appOptInCost := basics.MulSaturate(proto.AppFlatOptInMinBalance, uint64(ad.TotalAppLocalStates))
 	min = basics.AddSaturate(min, appOptInCost)
 
 	// MinBalance for state usage measured by LocalStateSchemas and
 	// GlobalStateSchemas
-	schemaCost := u.TotalAppSchema.MinBalance(proto)
+	schemaCost := ad.TotalAppSchema.MinBalance(proto)
 	min = basics.AddSaturate(min, schemaCost.Raw)
 
 	// MinBalance for each extra app program page
-	extraAppProgramLenCost := basics.MulSaturate(proto.AppFlatParamsMinBalance, uint64(u.TotalExtraAppPages))
+	extraAppProgramLenCost := basics.MulSaturate(proto.AppFlatParamsMinBalance, uint64(ad.TotalExtraAppPages))
 	min = basics.AddSaturate(min, extraAppProgramLenCost)
 
 	res.Raw = min
@@ -165,11 +165,30 @@ func (u AccountData) MinBalance(proto *config.ConsensusParams) (res basics.Micro
 }
 
 // IsZero checks if an AccountData value is the same as its zero value.
-func (u AccountData) IsZero() bool {
-	return reflect.DeepEqual(u, AccountData{})
+func (ad AccountData) IsZero() bool {
+	return reflect.DeepEqual(ad, AccountData{})
 }
 
-func (u AccountData) Money(proto config.ConsensusParams, rewardsLevel uint64) (money basics.MicroAlgos, rewards basics.MicroAlgos) {
-	e := u.WithUpdatedRewards(proto, rewardsLevel)
+func (ad AccountData) Money(proto config.ConsensusParams, rewardsLevel uint64) (money basics.MicroAlgos, rewards basics.MicroAlgos) {
+	e := ad.WithUpdatedRewards(proto, rewardsLevel)
 	return e.MicroAlgos, e.RewardedMicroAlgos
+}
+
+// OnlineAccountData calculates the online account data given an AccountData, by adding the rewards.
+func (ad *AccountData) OnlineAccountData(proto config.ConsensusParams, rewardsLevel uint64) basics.OnlineAccountData {
+	u := basics.AccountData{
+		Status:             ad.Status,
+		MicroAlgos:         ad.MicroAlgos,
+		RewardsBase:        ad.RewardsBase,
+		RewardedMicroAlgos: ad.RewardedMicroAlgos,
+	}
+	u = u.WithUpdatedRewards(proto, rewardsLevel)
+	return basics.OnlineAccountData{
+		MicroAlgosWithRewards: u.MicroAlgos,
+		VoteID:                ad.VoteID,
+		SelectionID:           ad.SelectionID,
+		VoteFirstValid:        ad.VoteFirstValid,
+		VoteLastValid:         ad.VoteLastValid,
+		VoteKeyDilution:       ad.VoteKeyDilution,
+	}
 }

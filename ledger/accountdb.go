@@ -797,6 +797,30 @@ func (ba *baseAccountData) GetAccountData() basics.AccountData {
 	}
 }
 
+func (ba *baseAccountData) GetCoreAccountData() ledgercore.AccountData {
+	return ledgercore.AccountData{
+		AccountBaseData: ledgercore.AccountBaseData{
+			Status:             ba.Status,
+			MicroAlgos:         ba.MicroAlgos,
+			RewardsBase:        ba.RewardsBase,
+			RewardedMicroAlgos: ba.RewardedMicroAlgos,
+			AuthAddr:           ba.AuthAddr,
+			TotalAppSchema: basics.StateSchema{
+				NumUint:      ba.TotalAppSchemaNumUint,
+				NumByteSlice: ba.TotalAppSchemaNumByteSlice,
+			},
+			TotalExtraAppPages: ba.TotalExtraAppPages,
+		},
+		VotingData: ledgercore.VotingData{
+			VoteID:          ba.VoteID,
+			SelectionID:     ba.SelectionID,
+			VoteFirstValid:  ba.VoteFirstValid,
+			VoteLastValid:   ba.VoteLastValid,
+			VoteKeyDilution: ba.VoteKeyDilution,
+		},
+	}
+}
+
 type resourceFlags uint8
 
 const (
