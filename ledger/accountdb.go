@@ -149,12 +149,33 @@ type persistedAccountData struct {
 	round basics.Round
 }
 
+//msgp:ignore persistedResourcesData
+type persistedResourcesData struct {
+	// addrid is the rowid of the account address that holds this resource.
+	addrid int64
+	// creatable index
+	aidx basics.CreatableIndex
+	// rtype is the resource type ( asset / app )
+	rtype basics.CreatableType
+	// actual resource data
+	data resourcesData
+	// the round number that is associated with the resourcesData. This field is the corresponding one to the round field
+	// in persistedAccountData, and serves the same purpose.
+	round basics.Round
+}
+
+type resourcesDeltas struct {
+	oldAcct     persistedResourcesData
+	newAcct     resourcesData
+	nAcctDeltas int
+}
+
 // compactAccountDeltas and accountDelta is an extension to ledgercore.AccountDeltas that is being used by the commitRound function for counting the
 // number of changes we've made per account. The ndeltas is used exclusively for consistency checking - making sure that
 // all the pending changes were written and that there are no outstanding writes missing.
-type compactAccountDeltas struct {
-	// actual data
-	deltas []accountDelta
+type compactResourcesDeltas struct {
+	// actual account deltas
+	deltas []resourcesDeltas
 	// addresses for deltas
 	addresses []basics.Address
 	// cache for addr to deltas index resolution
@@ -164,9 +185,23 @@ type compactAccountDeltas struct {
 }
 
 type accountDelta struct {
-	old     persistedAccountData
-	new     basics.AccountData
-	ndeltas int
+	oldAcct     persistedAccountData
+	newAcct     baseAccountData
+	nAcctDeltas int
+}
+
+// compactAccountDeltas and accountDelta is an extension to ledgercore.AccountDeltas that is being used by the commitRound function for counting the
+// number of changes we've made per account. The ndeltas is used exclusively for consistency checking - making sure that
+// all the pending changes were written and that there are no outstanding writes missing.
+type compactAccountDeltas struct {
+	// actual account deltas
+	deltas []accountDelta
+	// addresses for deltas
+	addresses []basics.Address
+	// cache for addr to deltas index resolution
+	cache map[basics.Address]int
+	// misses holds indices of addresses for which old portion of delta needs to be loaded from disk
+	misses []int
 }
 
 // catchpointState is used to store catchpoint related variables into the catchpointstate table.
@@ -217,7 +252,7 @@ func prepareNormalizedBalances(bals []encodedBalanceRecord, proto config.Consens
 
 // makeCompactAccountDeltas takes an array of account AccountDeltas ( one array entry per round ), and compacts the arrays into a single
 // data structure that contains all the account deltas changes. While doing that, the function eliminate any intermediate account changes.
-// It counts the number of changes per round by specifying it in the ndeltas field of the accountDeltaCount/modifiedCreatable.
+// It counts the number of changes each account get modified across the round range by specifying it in the nAcctDeltas field of the accountDeltaCount/modifiedCreatable.
 func makeCompactAccountDeltas(accountDeltas []ledgercore.NewAccountDeltas, baseAccounts lruAccounts) (outAccountDeltas compactAccountDeltas) {
 	if len(accountDeltas) == 0 {
 		return
@@ -231,25 +266,24 @@ func makeCompactAccountDeltas(accountDeltas []ledgercore.NewAccountDeltas, baseA
 
 	// TODO: convert partial deltas to full deltas
 	for _, roundDelta := range accountDeltas {
-		updates := roundDelta.ToBasicsAccountDataMap()
-		for addr, acctDelta := range updates {
+		for i := 0; i < roundDelta.Len(); i++ {
+			addr, acctDelta := roundDelta.GetByIdx(i)
 			if prev, idx := outAccountDeltas.get(addr); idx != -1 {
-				outAccountDeltas.update(idx, accountDelta{
-					old:     prev.old,
-					new:     acctDelta,
-					ndeltas: prev.ndeltas + 1,
-				})
+				updEntry := accountDelta{
+					oldAcct:     prev.oldAcct,
+					nAcctDeltas: prev.nAcctDeltas + 1,
+				}
+				updEntry.newAcct.SetCoreAccountData(&acctDelta)
+				outAccountDeltas.update(idx, updEntry)
 			} else {
 				// it's a new entry.
 				newEntry := accountDelta{
-					new:     acctDelta,
-					ndeltas: 1,
+					nAcctDeltas: 1,
 				}
+				newEntry.newAcct.SetCoreAccountData(&acctDelta)
 				if baseAccountData, has := baseAccounts.read(addr); has {
-					newEntry.old = baseAccountData
-					// partial delta support: apply partial delta into a full basics ad
-					newEntry.new = mergeBasicsAccountData(baseAccountData.accountData, acctDelta)
-					outAccountDeltas.insert(addr, newEntry)
+					newEntry.oldAcct = baseAccountData
+					outAccountDeltas.insert(addr, newEntry) // insert instead of upsert economizes one map lookup
 				} else {
 					outAccountDeltas.insertMissing(addr, newEntry)
 				}
@@ -357,21 +391,15 @@ func (a *compactAccountDeltas) insertMissing(addr basics.Address, delta accountD
 func (a *compactAccountDeltas) upsertOld(old persistedAccountData) {
 	addr := old.addr
 	if idx, exist := a.cache[addr]; exist {
-		delta := a.deltas[idx]
-		delta.old = old
-		delta.new = mergeBasicsAccountData(old.accountData, delta.new)
-		a.deltas[idx] = delta
+		a.deltas[idx].oldAcct = old
 		return
 	}
-	a.insert(addr, accountDelta{old: old})
+	a.insert(addr, accountDelta{oldAcct: old})
 }
 
 // updateOld updates existing or inserts a new partial entry with only old field filled
 func (a *compactAccountDeltas) updateOld(idx int, old persistedAccountData) {
-	delta := a.deltas[idx]
-	delta.old = old
-	delta.new = mergeBasicsAccountData(old.accountData, delta.new)
-	a.deltas[idx] = delta
+	a.deltas[idx].oldAcct = old
 }
 
 // writeCatchpointStagingBalances inserts all the account balances in the provided array into the catchpoint balance staging table catchpointbalances.
@@ -704,6 +732,30 @@ type baseAccountData struct {
 	baseOnlineAccountData
 
 	UpdateRound uint64 `codec:"z"`
+}
+
+func (ba *baseAccountData) NormalizedOnlineBalance(proto config.ConsensusParams) uint64 {
+	return basics.NormalizedOnlineAccountBalance(ba.Status, ba.RewardsBase, ba.MicroAlgos, proto)
+}
+
+func (ba *baseAccountData) SetCoreAccountData(ad *ledgercore.AccountData) {
+	ba.Status = ad.Status
+	ba.MicroAlgos = ad.MicroAlgos
+	ba.RewardsBase = ad.RewardsBase
+	ba.RewardedMicroAlgos = ad.RewardedMicroAlgos
+	ba.VoteID = ad.VoteID
+	ba.SelectionID = ad.SelectionID
+	ba.VoteFirstValid = ad.VoteFirstValid
+	ba.VoteLastValid = ad.VoteLastValid
+	ba.VoteKeyDilution = ad.VoteKeyDilution
+	ba.AuthAddr = ad.AuthAddr
+	ba.TotalAppSchemaNumUint = ad.TotalAppSchema.NumUint
+	ba.TotalAppSchemaNumByteSlice = ad.TotalAppSchema.NumByteSlice
+	ba.TotalExtraAppPages = ad.TotalExtraAppPages
+	ba.TotalAssetParams = ad.TotalAssetParams
+	ba.TotalAssets = ad.TotalAssets
+	ba.TotalAppParams = ad.TotalAppParams
+	ba.TotalAppLocalStates = ad.TotalAppLocalStates
 }
 
 func (ba *baseAccountData) SetAccountData(ad *basics.AccountData) {
@@ -1543,43 +1595,44 @@ func accountsNewRound(tx *sql.Tx, updates compactAccountDeltas, creatables map[b
 	updatedAccountIdx := 0
 	for i := 0; i < updates.len(); i++ {
 		addr, data := updates.getByIdx(i)
-		if data.old.rowid == 0 {
+		if data.oldAcct.rowid == 0 {
 			// zero rowid means we don't have a previous value.
-			if data.new.IsZero() {
+			if data.newAcct.MsgIsZero() {
 				// if we didn't had it before, and we don't have anything now, just skip it.
 			} else {
 				// create a new entry.
-				normBalance := data.new.NormalizedOnlineBalance(proto)
-				result, err = insertStmt.Exec(addr[:], normBalance, protocol.Encode(&data.new))
+				//basics.NormalizedOnlineAccountBalance()
+				normBalance := data.newAcct.NormalizedOnlineBalance(proto)
+				result, err = insertStmt.Exec(addr[:], normBalance, protocol.Encode(&data.newAcct))
 				if err == nil {
 					updatedAccounts[updatedAccountIdx].rowid, err = result.LastInsertId()
-					updatedAccounts[updatedAccountIdx].accountData = data.new
+					updatedAccounts[updatedAccountIdx].accountData = data.newAcct
 				}
 			}
 		} else {
 			// non-zero rowid means we had a previous value.
-			if data.new.IsZero() {
+			if data.newAcct.MsgIsZero() {
 				// new value is zero, which means we need to delete the current value.
-				result, err = deleteByRowIDStmt.Exec(data.old.rowid)
+				result, err = deleteByRowIDStmt.Exec(data.oldAcct.rowid)
 				if err == nil {
 					// we deleted the entry successfully.
 					updatedAccounts[updatedAccountIdx].rowid = 0
-					updatedAccounts[updatedAccountIdx].accountData = basics.AccountData{}
+					updatedAccounts[updatedAccountIdx].accountData = baseAccountData{}
 					rowsAffected, err = result.RowsAffected()
 					if rowsAffected != 1 {
-						err = fmt.Errorf("failed to delete accountbase row for account %v, rowid %d", addr, data.old.rowid)
+						err = fmt.Errorf("failed to delete accountbase row for account %v, rowid %d", addr, data.oldAcct.rowid)
 					}
 				}
 			} else {
-				normBalance := data.new.NormalizedOnlineBalance(proto)
-				result, err = updateStmt.Exec(normBalance, protocol.Encode(&data.new), data.old.rowid)
+				normBalance := data.newAcct.NormalizedOnlineBalance(proto)
+				result, err = updateStmt.Exec(normBalance, protocol.Encode(&data.newAcct), data.oldAcct.rowid)
 				if err == nil {
 					// rowid doesn't change on update.
-					updatedAccounts[updatedAccountIdx].rowid = data.old.rowid
-					updatedAccounts[updatedAccountIdx].accountData = data.new
+					updatedAccounts[updatedAccountIdx].rowid = data.oldAcct.rowid
+					updatedAccounts[updatedAccountIdx].accountData = data.newAcct
 					rowsAffected, err = result.RowsAffected()
 					if rowsAffected != 1 {
-						err = fmt.Errorf("failed to update accountbase row for account %v, rowid %d", addr, data.old.rowid)
+						err = fmt.Errorf("failed to update accountbase row for account %v, rowid %d", addr, data.oldAcct.rowid)
 					}
 				}
 			}
