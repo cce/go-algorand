@@ -128,7 +128,7 @@ func (ml *mockLedgerForTracker) fork(t testing.TB) *mockLedgerForTracker {
 	copy(newLedgerTracker.blocks, ml.blocks)
 	copy(newLedgerTracker.deltas, ml.deltas)
 
-	// calling Vacuum implies flushing the datbaase content to disk..
+	// calling Vacuum implies flushing the database content to disk..
 	ml.dbs.Wdb.Vacuum(context.Background())
 	// copy the database files.
 	for _, ext := range []string{"", "-shm", "-wal"} {

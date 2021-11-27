@@ -440,7 +440,7 @@ submit:  itxn_submit
 	require.True(t, in)
 	require.Equal(t, amount, uint64(0))
 
-	// Now, suceed, because opted in.
+	// Now, succeed, because opted in.
 	eval = testingEvaluator{l.nextBlock(t), l}
 	eval.txn(t, &fundgold)
 	l.endBlock(t, eval)

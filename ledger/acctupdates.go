@@ -794,6 +794,7 @@ func (au *accountUpdates) newBlockImpl(blk bookkeeping.Block, delta ledgercore.S
 		mres := au.resources[key]
 		mres.resource.AssetHolding = holding
 		mres.ndeltas++
+		au.resources[key] = mres
 	}
 	for acctAsset, params := range delta.NewAccts.GetAllAssetParams() {
 		key := accountCreatable{
@@ -803,6 +804,7 @@ func (au *accountUpdates) newBlockImpl(blk bookkeeping.Block, delta ledgercore.S
 		mres := au.resources[key]
 		mres.resource.AssetParam = params
 		mres.ndeltas++
+		au.resources[key] = mres
 	}
 	for acctApp, localStates := range delta.NewAccts.GetAllAppLocalStates() {
 		key := accountCreatable{
@@ -812,6 +814,7 @@ func (au *accountUpdates) newBlockImpl(blk bookkeeping.Block, delta ledgercore.S
 		mres := au.resources[key]
 		mres.resource.AppLocalState = localStates
 		mres.ndeltas++
+		au.resources[key] = mres
 	}
 	for acctApp, appParams := range delta.NewAccts.GetAllAppParams() {
 		key := accountCreatable{
@@ -821,6 +824,7 @@ func (au *accountUpdates) newBlockImpl(blk bookkeeping.Block, delta ledgercore.S
 		mres := au.resources[key]
 		mres.resource.AppParams = appParams
 		mres.ndeltas++
+		au.resources[key] = mres
 	}
 
 	for cidx, cdelta := range delta.Creatables {
@@ -1434,6 +1438,8 @@ func (au *accountUpdates) postCommit(ctx context.Context, dcc *deferredCommitCon
 			macct.ndeltas -= cnt
 			au.accounts[addr] = macct
 		}
+		// todo : tsachi -
+		// remove the entries from au.resources as needed.
 	}
 
 	for _, persistedAcct := range dcc.updatedPersistedAccounts {
