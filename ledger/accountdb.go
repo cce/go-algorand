@@ -1099,10 +1099,10 @@ func (rd *resourcesData) IsEmptyAsset() bool {
 		rd.UnitName == "" &&
 		rd.AssetName == "" &&
 		rd.URL == "" &&
-		rd.MetadataHash == [32]byte{} ||
-		rd.Manager.IsZero() ||
-		rd.Reserve.IsZero() ||
-		rd.Freeze.IsZero() ||
+		rd.MetadataHash == [32]byte{} &&
+		rd.Manager.IsZero() &&
+		rd.Reserve.IsZero() &&
+		rd.Freeze.IsZero() &&
 		rd.Clawback.IsZero()
 }
 
