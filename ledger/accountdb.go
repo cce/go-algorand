@@ -1004,6 +1004,7 @@ const (
 	resourceFlagsEmptyAsset resourceFlags = 4
 	resourceFlagsEmptyApp   resourceFlags = 8
 )
+
 //
 // Resource flags interpertation:
 //
@@ -1099,10 +1100,10 @@ func (rd *resourcesData) IsEmptyAsset() bool {
 		rd.UnitName == "" &&
 		rd.AssetName == "" &&
 		rd.URL == "" &&
-		rd.MetadataHash == [32]byte{} ||
-		rd.Manager.IsZero() ||
-		rd.Reserve.IsZero() ||
-		rd.Freeze.IsZero() ||
+		rd.MetadataHash == [32]byte{} &&
+		rd.Manager.IsZero() &&
+		rd.Reserve.IsZero() &&
+		rd.Freeze.IsZero() &&
 		rd.Clawback.IsZero()
 }
 
@@ -1127,8 +1128,6 @@ func (rd *resourcesData) ClearAssetParams() {
 	rd.Freeze = basics.Address{}
 	rd.Clawback = basics.Address{}
 	rd.ResourceFlags -= rd.ResourceFlags & resourceFlagsOwnership
-	if rd.ResourceFlags &
-
 
 	if !haveHoldings {
 		rd.ResourceFlags |= resourceFlagsNotHolding
@@ -1265,6 +1264,60 @@ func (rd *resourcesData) GetAppParams() basics.AppParams {
 	}
 }
 
+func accountDataResources(
+	ctx context.Context,
+	accountData *basics.AccountData, rowid int64,
+	cb func(ctx context.Context, rowid int64, cidx basics.CreatableIndex, ctype basics.CreatableType, rd *resourcesData) error,
+) error {
+	// does this account have any assets ?
+	if len(accountData.Assets) > 0 || len(accountData.AssetParams) > 0 {
+		for aidx, holding := range accountData.Assets {
+			var rd resourcesData
+			rd.SetAssetHolding(holding)
+			if ap, has := accountData.AssetParams[aidx]; has {
+				rd.SetAssetParams(ap, true)
+				delete(accountData.AssetParams, aidx)
+			}
+			err := cb(ctx, rowid, basics.CreatableIndex(aidx), basics.AssetCreatable, &rd)
+			if err != nil {
+				return err
+			}
+		}
+		for aidx, aparams := range accountData.AssetParams {
+			var rd resourcesData
+			rd.SetAssetParams(aparams, false)
+			err := cb(ctx, rowid, basics.CreatableIndex(aidx), basics.AssetCreatable, &rd)
+			if err != nil {
+				return err
+			}
+		}
+	}
+	// does this account have any applications ?
+	if len(accountData.AppLocalStates) > 0 || len(accountData.AppParams) > 0 {
+		for aidx, localState := range accountData.AppLocalStates {
+			var rd resourcesData
+			rd.SetAppLocalState(localState)
+			if ap, has := accountData.AppParams[aidx]; has {
+				rd.SetAppParams(ap, true)
+				delete(accountData.AppParams, aidx)
+			}
+			err := cb(ctx, rowid, basics.CreatableIndex(aidx), basics.AssetCreatable, &rd)
+			if err != nil {
+				return err
+			}
+		}
+		for aidx, aparams := range accountData.AppParams {
+			var rd resourcesData
+			rd.SetAppParams(aparams, false)
+			err := cb(ctx, rowid, basics.CreatableIndex(aidx), basics.AssetCreatable, &rd)
+			if err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
 // performResourceTableMigration migrate the database to use the resources table.
 func performResourceTableMigration(ctx context.Context, tx *sql.Tx, log func(processed, total uint64)) (err error) {
 	idxnameBalances := fmt.Sprintf("onlineaccountbals_idx_%d", time.Now().UnixNano())
@@ -1320,7 +1373,7 @@ func performResourceTableMigration(ctx context.Context, tx *sql.Tx, log func(pro
 	defer rows.Close()
 
 	var insertRes sql.Result
-	var rowID int64
+	var rowid int64
 	var rowsAffected int64
 	var processedAccounts uint64
 	var totalBaseAccounts uint64
@@ -1364,55 +1417,19 @@ func performResourceTableMigration(ctx context.Context, tx *sql.Tx, log func(pro
 		if rowsAffected != 1 {
 			return fmt.Errorf("number of affected rows is not 1 - %d", rowsAffected)
 		}
-		rowID, err = insertRes.LastInsertId()
+		rowid, err = insertRes.LastInsertId()
 		if err != nil {
 			return err
 		}
-		// does this account have any assets ?
-		if len(accountData.Assets) > 0 || len(accountData.AssetParams) > 0 {
-			for aidx, holding := range accountData.Assets {
-				var rd resourcesData
-				rd.SetAssetHolding(holding)
-				if ap, has := accountData.AssetParams[aidx]; has {
-					rd.SetAssetParams(ap, true)
-					delete(accountData.AssetParams, aidx)
-				}
-				_, err = insertResources.ExecContext(ctx, rowID, aidx, basics.AssetCreatable, protocol.Encode(&rd))
-				if err != nil {
-					return err
-				}
-			}
-			for aidx, aparams := range accountData.AssetParams {
-				var rd resourcesData
-				rd.SetAssetParams(aparams, false)
-				_, err = insertResources.ExecContext(ctx, rowID, aidx, basics.AssetCreatable, protocol.Encode(&rd))
-				if err != nil {
-					return err
-				}
-			}
+
+		cb := func(ctx context.Context, rowID int64, cidx basics.CreatableIndex, ctype basics.CreatableType, rd *resourcesData) error {
+			encodedData := protocol.Encode(rd)
+			_, err = insertResources.ExecContext(ctx, rowID, cidx, ctype, encodedData)
+			return err
 		}
-		// does this account have any applications ?
-		if len(accountData.AppLocalStates) > 0 || len(accountData.AppParams) > 0 {
-			for aidx, localState := range accountData.AppLocalStates {
-				var rd resourcesData
-				rd.SetAppLocalState(localState)
-				if ap, has := accountData.AppParams[aidx]; has {
-					rd.SetAppParams(ap, true)
-					delete(accountData.AppParams, aidx)
-				}
-				_, err = insertResources.ExecContext(ctx, rowID, aidx, basics.AppCreatable, protocol.Encode(&rd))
-				if err != nil {
-					return err
-				}
-			}
-			for aidx, aparams := range accountData.AppParams {
-				var rd resourcesData
-				rd.SetAppParams(aparams, false)
-				_, err = insertResources.ExecContext(ctx, rowID, aidx, basics.AppCreatable, protocol.Encode(&rd))
-				if err != nil {
-					return err
-				}
-			}
+		err = accountDataResources(ctx, &accountData, rowid, cb)
+		if err != nil {
+			return err
 		}
 		processedAccounts++
 		log(processedAccounts, totalBaseAccounts)

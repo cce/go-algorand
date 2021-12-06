@@ -956,3 +956,236 @@ func TestCompactAccountDeltas(t *testing.T) {
 	a.Equal(addr2, address)
 	a.Equal(sample2, data)
 }
+
+// TestResourceDataConversions checks account data is correctly converted to and from resourceData
+func TestResourceDataConversions(t *testing.T) {
+	a := require.New(t)
+
+	// assets
+	// non-empty asset params and holding
+	aidx1 := basics.AssetIndex(1)
+	asp1 := ledgertesting.RandomAssetParams(true)
+	ash1 := ledgertesting.RandomAssetHolding(true)
+
+	// non-empty asset params and empty holding
+	aidx2 := basics.AssetIndex(2)
+	asp2 := ledgertesting.RandomAssetParams(true)
+	ash2 := basics.AssetHolding{}
+
+	// empty asset params and non-empty holding
+	aidx3 := basics.AssetIndex(3)
+	asp3 := basics.AssetParams{}
+	ash3 := ledgertesting.RandomAssetHolding(true)
+
+	// non-empty asset params and no holdings
+	aidx4 := basics.AssetIndex(4)
+	asp4 := ledgertesting.RandomAssetParams(true)
+
+	// no asset params and non-empty holding
+	aidx5 := basics.AssetIndex(5)
+	ash5 := ledgertesting.RandomAssetHolding(true)
+
+	// all empty
+	aidx6 := basics.AssetIndex(6)
+
+	// apps
+	// non-empty app params and local state
+	aidx11 := basics.AppIndex(11)
+	app11 := ledgertesting.RandomAppParams()
+	apl11 := ledgertesting.RandomAppLocalState()
+
+	// non-empty app params and empty local state
+	aidx12 := basics.AppIndex(12)
+	app12 := ledgertesting.RandomAppParams()
+	apl12 := basics.AppLocalState{}
+
+	// empty app params and non-empty local state
+	aidx13 := basics.AppIndex(13)
+	app13 := basics.AppParams{}
+	apl13 := ledgertesting.RandomAppLocalState()
+
+	// non-empty app params and no local state
+	aidx14 := basics.AppIndex(14)
+	app14 := ledgertesting.RandomAppParams()
+
+	// no app params and non-empty local state
+	aidx15 := basics.AppIndex(15)
+	apl15 := ledgertesting.RandomAppLocalState()
+
+	// all empty
+	aidx16 := basics.AppIndex(16)
+
+	ad := basics.AccountData{
+		AssetParams: map[basics.AssetIndex]basics.AssetParams{
+			aidx1: asp1,
+			aidx2: asp2,
+			aidx3: asp3,
+			aidx4: asp4,
+			aidx6: {},
+		},
+		Assets: map[basics.AssetIndex]basics.AssetHolding{
+			aidx1: ash1,
+			aidx2: ash2,
+			aidx3: ash3,
+			aidx5: ash5,
+			aidx6: {},
+		},
+		AppParams: map[basics.AppIndex]basics.AppParams{
+			aidx11: app11,
+			aidx12: app12,
+			aidx13: app13,
+			aidx14: app14,
+			aidx16: {},
+		},
+		AppLocalStates: map[basics.AppIndex]basics.AppLocalState{
+			aidx11: apl11,
+			aidx12: apl12,
+			aidx13: apl13,
+			aidx15: apl15,
+			aidx16: {},
+		},
+	}
+
+	type resourcesRow struct {
+		aidx  basics.CreatableIndex
+		rtype basics.CreatableType
+		resourcesData
+	}
+	const expectedNumRows = 12
+	rows := make([]resourcesRow, expectedNumRows)
+
+	cb := func(ctx context.Context, rowid int64, cidx basics.CreatableIndex, ctype basics.CreatableType, resData *resourcesData) error {
+		rows = append(rows, resourcesRow{aidx: cidx, rtype: ctype, resourcesData: *resData})
+		return nil
+	}
+	err := accountDataResources(context.Background(), &ad, 0, cb)
+	a.NoError(err)
+	a.Equal(expectedNumRows, len(rows))
+
+	sort.Slice(rows, func(i, j int) bool {
+		return rows[i].aidx < rows[j].aidx
+	})
+
+	// asset checks
+	r := rows[0]
+	a.Equal(basics.CreatableIndex(aidx1), r.aidx)
+	a.Equal(basics.AssetCreatable, r.rtype)
+	a.True(r.IsAsset())
+	a.True(r.IsHolding())
+	a.True(r.IsOwning())
+	a.False(r.IsEmptyAsset())
+	a.Equal(asp1, r.GetAssetParams())
+	a.Equal(ash1, r.GetAssetHolding())
+
+	r = rows[1]
+	a.Equal(basics.CreatableIndex(aidx2), r.aidx)
+	a.Equal(basics.AssetCreatable, r.rtype)
+	a.True(r.IsAsset())
+	a.True(r.IsHolding())
+	a.True(r.IsOwning())
+	a.False(r.IsEmptyAsset())
+	a.Equal(asp2, r.GetAssetParams())
+	a.Equal(ash2, r.GetAssetHolding())
+
+	r = rows[2]
+	a.Equal(basics.CreatableIndex(aidx3), r.aidx)
+	a.Equal(basics.AssetCreatable, r.rtype)
+	a.True(r.IsAsset())
+	a.True(r.IsHolding())
+	a.True(r.IsOwning())
+	a.False(r.IsEmptyAsset())
+	a.Equal(asp3, r.GetAssetParams())
+	a.Equal(ash3, r.GetAssetHolding())
+
+	r = rows[3]
+	a.Equal(basics.CreatableIndex(aidx4), r.aidx)
+	a.Equal(basics.AssetCreatable, r.rtype)
+	a.True(r.IsAsset())
+	a.False(r.IsHolding())
+	a.True(r.IsOwning())
+	a.False(r.IsEmptyAsset())
+	a.Equal(asp4, r.GetAssetParams())
+	a.Equal(basics.AssetHolding{}, r.GetAssetHolding())
+
+	r = rows[4]
+	a.Equal(basics.CreatableIndex(aidx5), r.aidx)
+	a.Equal(basics.AssetCreatable, r.rtype)
+	a.True(r.IsAsset())
+	a.True(r.IsHolding())
+	a.False(r.IsOwning())
+	a.False(r.IsEmptyAsset())
+	a.Equal(basics.AssetParams{}, r.GetAssetParams())
+	a.Equal(ash5, r.GetAssetHolding())
+
+	r = rows[5]
+	a.Equal(basics.CreatableIndex(aidx6), r.aidx)
+	a.Equal(basics.AssetCreatable, r.rtype)
+	a.True(r.IsAsset())
+	a.True(r.IsHolding())
+	a.True(r.IsOwning())
+	a.True(r.IsEmptyAsset())
+	a.Equal(basics.AssetParams{}, r.GetAssetParams())
+	a.Equal(basics.AssetHolding{}, r.GetAssetHolding())
+
+	start := 6
+	// apps checks
+	r = rows[start]
+	a.Equal(basics.CreatableIndex(aidx11), r.aidx)
+	a.Equal(basics.AppCreatable, r.rtype)
+	a.True(r.IsApp())
+	a.True(r.IsHolding())
+	a.True(r.IsOwning())
+	a.False(r.IsEmptyApp())
+	a.Equal(app11, r.GetAppParams())
+	a.Equal(apl11, r.GetAppLocalState())
+
+	r = rows[start+1]
+	a.Equal(basics.CreatableIndex(aidx12), r.aidx)
+	a.Equal(basics.AppCreatable, r.rtype)
+	a.True(r.IsApp())
+	a.True(r.IsHolding())
+	a.True(r.IsOwning())
+	a.False(r.IsEmptyApp())
+	a.Equal(app12, r.GetAppParams())
+	a.Equal(apl12, r.GetAppLocalState())
+
+	r = rows[start+2]
+	a.Equal(basics.CreatableIndex(aidx13), r.aidx)
+	a.Equal(basics.AppCreatable, r.rtype)
+	a.True(r.IsApp())
+	a.True(r.IsHolding())
+	a.True(r.IsOwning())
+	a.False(r.IsEmptyApp())
+	a.Equal(app13, r.GetAppParams())
+	a.Equal(apl13, r.GetAppLocalState())
+
+	r = rows[start+3]
+	a.Equal(basics.CreatableIndex(aidx14), r.aidx)
+	a.Equal(basics.AppCreatable, r.rtype)
+	a.True(r.IsApp())
+	a.False(r.IsHolding())
+	a.True(r.IsOwning())
+	a.False(r.IsEmptyApp())
+	a.Equal(app14, r.GetAppParams())
+	a.Equal(basics.AppLocalState{}, r.GetAppLocalState())
+
+	r = rows[start+4]
+	a.Equal(basics.CreatableIndex(aidx15), r.aidx)
+	a.Equal(basics.AppCreatable, r.rtype)
+	a.True(r.IsApp())
+	a.True(r.IsHolding())
+	a.False(r.IsOwning())
+	a.False(r.IsEmptyApp())
+	a.Equal(basics.AppParams{}, r.GetAppParams())
+	a.Equal(apl15, r.GetAppLocalState())
+
+	r = rows[start+5]
+	a.Equal(basics.CreatableIndex(aidx16), r.aidx)
+	a.Equal(basics.AppCreatable, r.rtype)
+	a.True(r.IsApp())
+	a.True(r.IsHolding())
+	a.True(r.IsOwning())
+	a.True(r.IsEmptyApp())
+	a.Equal(basics.AppParams{}, r.GetAppParams())
+	a.Equal(basics.AppLocalState{}, r.GetAppLocalState())
+}
