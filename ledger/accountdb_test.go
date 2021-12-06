@@ -1046,8 +1046,21 @@ func TestResourceDataConversions(t *testing.T) {
 		},
 	}
 
-	rows := accountDataResources(&ad)
-	a.Equal(12, len(rows))
+	type resourcesRow struct {
+		aidx  basics.CreatableIndex
+		rtype basics.CreatableType
+		resourcesData
+	}
+	const expectedNumRows = 12
+	rows := make([]resourcesRow, expectedNumRows)
+
+	cb := func(ctx context.Context, rowid int64, cidx basics.CreatableIndex, ctype basics.CreatableType, resData *resourcesData) error {
+		rows = append(rows, resourcesRow{aidx: cidx, rtype: ctype, resourcesData: *resData})
+		return nil
+	}
+	err := accountDataResources(context.Background(), &ad, 0, cb)
+	a.NoError(err)
+	a.Equal(expectedNumRows, len(rows))
 
 	sort.Slice(rows, func(i, j int) bool {
 		return rows[i].aidx < rows[j].aidx
