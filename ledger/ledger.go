@@ -469,6 +469,8 @@ func (l *Ledger) Lookup(rnd basics.Round, addr basics.Address) (basics.AccountDa
 	if err != nil {
 		return basics.AccountData{}, err
 	}
+	// todo :
+	// implement this properly so that we can take the ledgercore.AccountData, add the resources, and rebuild teh basics.AccountData.
 
 	return data, nil
 }
@@ -503,13 +505,13 @@ func (l *Ledger) LookupAgreement(rnd basics.Round, addr basics.Address) (basics.
 
 // LookupWithoutRewards is like Lookup but does not apply pending rewards up
 // to the requested round rnd.
-func (l *Ledger) LookupWithoutRewards(rnd basics.Round, addr basics.Address) (basics.AccountData, basics.Round, error) {
+func (l *Ledger) LookupWithoutRewards(rnd basics.Round, addr basics.Address) (ledgercore.AccountData, basics.Round, error) {
 	l.trackerMu.RLock()
 	defer l.trackerMu.RUnlock()
 
 	data, validThrough, err := l.accts.LookupWithoutRewards(rnd, addr)
 	if err != nil {
-		return basics.AccountData{}, basics.Round(0), err
+		return ledgercore.AccountData{}, basics.Round(0), err
 	}
 
 	return data, validThrough, nil

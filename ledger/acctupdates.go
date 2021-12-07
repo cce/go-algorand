@@ -263,7 +263,7 @@ func (au *accountUpdates) close() {
 // LookupWithRewards returns the account data for a given address at a given round.
 // Note that the function doesn't update the account with the rewards,
 // even while it does return the AccountData which represent the "rewarded" account data.
-func (au *accountUpdates) LookupWithRewards(rnd basics.Round, addr basics.Address) (data basics.AccountData, err error) {
+func (au *accountUpdates) LookupWithRewards(rnd basics.Round, addr basics.Address) (data ledgercore.AccountData, err error) {
 	return au.lookupWithRewards(rnd, addr)
 }
 
@@ -277,7 +277,7 @@ func (au *accountUpdates) LookupResource(rnd basics.Round, addr basics.Address, 
 }
 
 // LookupWithoutRewards returns the account data for a given address at a given round.
-func (au *accountUpdates) LookupWithoutRewards(rnd basics.Round, addr basics.Address) (data basics.AccountData, validThrough basics.Round, err error) {
+func (au *accountUpdates) LookupWithoutRewards(rnd basics.Round, addr basics.Address) (data ledgercore.AccountData, validThrough basics.Round, err error) {
 	return au.lookupWithoutRewards(rnd, addr, true /* take lock*/)
 }
 
@@ -682,7 +682,7 @@ func (aul *accountUpdatesLedgerEvaluator) CheckDup(config.ConsensusParams, basic
 }
 
 // lookupWithoutRewards returns the account balance for a given address at a given round, without the reward
-func (aul *accountUpdatesLedgerEvaluator) LookupWithoutRewards(rnd basics.Round, addr basics.Address) (basics.AccountData, basics.Round, error) {
+func (aul *accountUpdatesLedgerEvaluator) LookupWithoutRewards(rnd basics.Round, addr basics.Address) (ledgercore.AccountData, basics.Round, error) {
 	return aul.au.lookupWithoutRewards(rnd, addr, false /*don't sync*/)
 }
 
@@ -850,7 +850,7 @@ func (au *accountUpdates) newBlockImpl(blk bookkeeping.Block, delta ledgercore.S
 // lookupWithRewards returns the account data for a given address at a given round.
 // The rewards are added to the AccountData before returning. Note that the function doesn't update the account with the rewards,
 // even while it does return the AccountData which represent the "rewarded" account data.
-func (au *accountUpdates) lookupWithRewards(rnd basics.Round, addr basics.Address) (data basics.AccountData, err error) {
+func (au *accountUpdates) lookupWithRewards(rnd basics.Round, addr basics.Address) (data ledgercore.AccountData, err error) {
 	au.accountsMu.RLock()
 	needUnlock := true
 	defer func() {
@@ -911,7 +911,7 @@ func (au *accountUpdates) lookupWithRewards(rnd basics.Round, addr basics.Addres
 			// we don't technically need this, since it's already in the baseAccounts, however, writing this over
 			// would ensure that we promote this field.
 			au.baseAccounts.writePending(macct)
-			return macct.accountData, nil
+			return macct.accountData.GetLedgerCoreAccountData(), nil
 		}
 
 		au.accountsMu.RUnlock()
@@ -925,12 +925,12 @@ func (au *accountUpdates) lookupWithRewards(rnd basics.Round, addr basics.Addres
 		persistedData, err = au.accountsq.lookup(addr)
 		if persistedData.round == currentDbRound {
 			au.baseAccounts.writePending(persistedData)
-			return persistedData.accountData, err
+			return persistedData.accountData.GetLedgerCoreAccountData(), err
 		}
 
 		if persistedData.round < currentDbRound {
 			au.log.Errorf("accountUpdates.lookupWithRewards: database round %d is behind in-memory round %d", persistedData.round, currentDbRound)
-			return basics.AccountData{}, &StaleDatabaseRoundError{databaseRound: persistedData.round, memoryRound: currentDbRound}
+			return ledgercore.AccountData{}, &StaleDatabaseRoundError{databaseRound: persistedData.round, memoryRound: currentDbRound}
 		}
 		au.accountsMu.RLock()
 		needUnlock = true
@@ -1112,7 +1112,7 @@ func (au *accountUpdates) lookupResource(rnd basics.Round, addr basics.Address, 
 }
 
 // lookupWithoutRewards returns the account data for a given address at a given round.
-func (au *accountUpdates) lookupWithoutRewards(rnd basics.Round, addr basics.Address, synchronized bool) (data basics.AccountData, validThrough basics.Round, err error) {
+func (au *accountUpdates) lookupWithoutRewards(rnd basics.Round, addr basics.Address, synchronized bool) (data ledgercore.AccountData, validThrough basics.Round, err error) {
 	needUnlock := false
 	if synchronized {
 		au.accountsMu.RLock()
@@ -1167,7 +1167,7 @@ func (au *accountUpdates) lookupWithoutRewards(rnd basics.Round, addr basics.Add
 			// we don't technically need this, since it's already in the baseAccounts, however, writing this over
 			// would ensure that we promote this field.
 			au.baseAccounts.writePending(macct)
-			return macct.accountData, rnd, nil
+			return macct.accountData.GetCoreAccountData(), rnd, nil
 		}
 
 		if synchronized {
@@ -1182,12 +1182,12 @@ func (au *accountUpdates) lookupWithoutRewards(rnd basics.Round, addr basics.Add
 		persistedData, err = au.accountsq.lookup(addr)
 		if persistedData.round == currentDbRound {
 			au.baseAccounts.writePending(persistedData)
-			return persistedData.accountData, rnd, err
+			return persistedData.accountData.GetCoreAccountData(), rnd, err
 		}
 		if synchronized {
 			if persistedData.round < currentDbRound {
 				au.log.Errorf("accountUpdates.lookupWithoutRewards: database round %d is behind in-memory round %d", persistedData.round, currentDbRound)
-				return basics.AccountData{}, basics.Round(0), &StaleDatabaseRoundError{databaseRound: persistedData.round, memoryRound: currentDbRound}
+				return ledgercore.AccountData{}, basics.Round(0), &StaleDatabaseRoundError{databaseRound: persistedData.round, memoryRound: currentDbRound}
 			}
 			au.accountsMu.RLock()
 			needUnlock = true
@@ -1197,7 +1197,7 @@ func (au *accountUpdates) lookupWithoutRewards(rnd basics.Round, addr basics.Add
 		} else {
 			// in non-sync mode, we don't wait since we already assume that we're synchronized.
 			au.log.Errorf("accountUpdates.lookupWithoutRewards: database round %d mismatching in-memory round %d", persistedData.round, currentDbRound)
-			return basics.AccountData{}, basics.Round(0), &MismatchingDatabaseRoundError{databaseRound: persistedData.round, memoryRound: currentDbRound}
+			return ledgercore.AccountData{}, basics.Round(0), &MismatchingDatabaseRoundError{databaseRound: persistedData.round, memoryRound: currentDbRound}
 		}
 	}
 }

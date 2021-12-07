@@ -318,7 +318,7 @@ func makeCompactResourceDeltas(accountDeltas []ledgercore.NewAccountDeltas, base
 					nAcctDeltas: 1,
 				}
 				if assetParams != nil {
-					newEntry.newResource.SetAssetParams(*assetParams, newEntry.newResource.IsHolding())
+					newEntry.newResource.SetAssetParams(*assetParams, false)
 				} else {
 					newEntry.newResource.ClearAssetParams()
 				}
@@ -365,7 +365,38 @@ func makeCompactResourceDeltas(accountDeltas []ledgercore.NewAccountDeltas, base
 			}
 		}
 
-		// todo : application params
+		// application params
+		for acctApp, appParams := range roundDelta.GetAllAppParams() {
+			if prev, idx := outResourcesDeltas.get(acctApp.Address, basics.CreatableIndex(acctApp.App)); idx != -1 {
+				// update existing entry with new data.
+				updEntry := resourcesDeltas{
+					oldResource: prev.oldResource,
+					nAcctDeltas: prev.nAcctDeltas + 1,
+				}
+				if appParams != nil {
+					updEntry.newResource.SetAppParams(*appParams, updEntry.newResource.IsHolding())
+				} else {
+					updEntry.newResource.ClearAppParams()
+				}
+				outResourcesDeltas.update(idx, updEntry)
+			} else {
+				// it's a new entry.
+				newEntry := resourcesDeltas{
+					nAcctDeltas: 1,
+				}
+				if appParams != nil {
+					newEntry.newResource.SetAppParams(*appParams, false)
+				} else {
+					newEntry.newResource.ClearAppParams()
+				}
+				if baseResourceData, has := baseResources.read(acctApp.Address, basics.CreatableIndex(acctApp.App)); has {
+					newEntry.oldResource = baseResourceData
+					outResourcesDeltas.insert(acctApp.Address, basics.CreatableIndex(acctApp.App), newEntry) // insert instead of upsert economizes one map lookup
+				} else {
+					outResourcesDeltas.insertMissing(acctApp.Address, basics.CreatableIndex(acctApp.App), newEntry)
+				}
+			}
+		}
 	}
 	return
 }
@@ -951,6 +982,34 @@ func (ba *baseAccountData) SetAccountData(ad *basics.AccountData) {
 	ba.TotalAppLocalStates = uint32(len(ad.AppLocalStates))
 }
 
+func (ba *baseAccountData) GetLedgerCoreAccountData() ledgercore.AccountData {
+	return ledgercore.AccountData{
+		AccountBaseData: ledgercore.AccountBaseData{
+			Status:             ba.Status,
+			MicroAlgos:         ba.MicroAlgos,
+			RewardsBase:        ba.RewardsBase,
+			RewardedMicroAlgos: ba.RewardedMicroAlgos,
+			AuthAddr:           ba.AuthAddr,
+			TotalAppSchema: basics.StateSchema{
+				NumUint:      ba.TotalAppSchemaNumUint,
+				NumByteSlice: ba.TotalAppSchemaNumByteSlice,
+			},
+			TotalExtraAppPages:  ba.TotalExtraAppPages,
+			TotalAppParams:      ba.TotalAppParams,
+			TotalAppLocalStates: ba.TotalAppLocalStates,
+			TotalAssetParams:    ba.TotalAssetParams,
+			TotalAssets:         ba.TotalAssets,
+		},
+		VotingData: ledgercore.VotingData{
+			VoteID:          ba.VoteID,
+			SelectionID:     ba.SelectionID,
+			VoteFirstValid:  ba.VoteFirstValid,
+			VoteLastValid:   ba.VoteLastValid,
+			VoteKeyDilution: ba.VoteKeyDilution,
+		},
+	}
+}
+
 func (ba *baseAccountData) GetAccountData() basics.AccountData {
 	return basics.AccountData{
 		Status:             ba.Status,
@@ -1115,7 +1174,6 @@ func (rd *resourcesData) IsAsset() bool {
 }
 
 func (rd *resourcesData) ClearAssetParams() {
-	wasEmpty := rd.ResourceFlags & resourceFlagsEmptyApp
 	rd.Total = 0
 	rd.Decimals = 0
 	rd.DefaultFrozen = false
@@ -1127,13 +1185,10 @@ func (rd *resourcesData) ClearAssetParams() {
 	rd.Reserve = basics.Address{}
 	rd.Freeze = basics.Address{}
 	rd.Clawback = basics.Address{}
+	hadHolding := (rd.ResourceFlags & resourceFlagsNotHolding) == resourceFlagsHolding
 	rd.ResourceFlags -= rd.ResourceFlags & resourceFlagsOwnership
-
-	if !haveHoldings {
-		rd.ResourceFlags |= resourceFlagsNotHolding
-	}
 	rd.ResourceFlags &= ^resourceFlagsEmptyAsset
-	if rd.IsEmptyAsset() {
+	if rd.IsEmptyAsset() && hadHolding {
 		rd.ResourceFlags |= resourceFlagsEmptyAsset
 	}
 }
@@ -1223,6 +1278,23 @@ func (rd *resourcesData) GetAppLocalState() basics.AppLocalState {
 			NumByteSlice: rd.SchemaNumByteSlice,
 		},
 		KeyValue: rd.KeyValue,
+	}
+}
+
+func (rd *resourcesData) ClearAppParams() {
+	rd.ApprovalProgram = nil
+	rd.ClearStateProgram = nil
+	rd.GlobalState = nil
+	rd.LocalStateSchemaNumUint = 0
+	rd.LocalStateSchemaNumByteSlice = 0
+	rd.GlobalStateSchemaNumUint = 0
+	rd.GlobalStateSchemaNumByteSlice = 0
+	rd.ExtraProgramPages = 0
+	hadHolding := (rd.ResourceFlags & resourceFlagsNotHolding) == resourceFlagsHolding
+	rd.ResourceFlags -= rd.ResourceFlags & resourceFlagsOwnership
+	rd.ResourceFlags &= ^resourceFlagsEmptyApp
+	if rd.IsEmptyApp() && hadHolding {
+		rd.ResourceFlags |= resourceFlagsEmptyAsset
 	}
 }
 

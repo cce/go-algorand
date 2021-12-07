@@ -25,7 +25,7 @@ import (
 // It doesn't have any synchronization primitive on it's own and require to be
 // syncronized by the caller.
 type lruResources struct {
-	// resourcesList contain the list of persistedAccountData, where the front ones are the most "fresh"
+	// resourcesList contain the list of persistedResourceData, where the front ones are the most "fresh"
 	// and the ones on the back are the oldest.
 	resourcesList *persistedResourcesDataList
 	// resources provides fast access to the various elements in the list by using the account address
@@ -42,8 +42,8 @@ type lruResources struct {
 // init initializes the lruResources for use.
 // thread locking semantics : write lock
 func (m *lruResources) init(log logging.Logger, pendingWrites int, pendingWritesWarnThreshold int) {
-	m.resourcesList = newPersistedAccountList().allocateFreeNodes(pendingWrites)
-	m.resources = make(map[basics.Address]*persistedAccountDataListNode, pendingWrites)
+	m.resourcesList = newPersistedResourcesList().allocateFreeNodes(pendingWrites)
+	m.resources = make(map[basics.Address]*persistedResourcesDataListNode, pendingWrites)
 	m.pendingResources = make(chan persistedResourcesData, pendingWrites)
 	m.log = log
 	m.pendingWritesWarnThreshold = pendingWritesWarnThreshold
@@ -55,7 +55,7 @@ func (m *lruResources) read(addr basics.Address, aidx basics.CreatableIndex) (da
 	if el := m.resources[addr]; el != nil {
 		return *el.Value, true
 	}
-	return persistedAccountData{}, false
+	return persistedResourcesData{}, false
 }
 
 // flushPendingWrites flushes the pending writes to the main lruResources cache.
@@ -67,8 +67,8 @@ func (m *lruResources) flushPendingWrites() {
 	}
 	for ; pendingEntriesCount > 0; pendingEntriesCount-- {
 		select {
-		case pendingAccountData := <-m.pendingResources:
-			m.write(pendingAccountData)
+		case pendingResourceData := <-m.pendingResources:
+			m.write(pendingResourceData)
 		default:
 			return
 		}
@@ -79,7 +79,7 @@ func (m *lruResources) flushPendingWrites() {
 // writePending write a single persistedAccountData entry to the pendingResources buffer.
 // the function doesn't block, and in case of a buffer overflow the entry would not be added.
 // thread locking semantics : no lock is required.
-func (m *lruResources) writePending(acct persistedAccountData) {
+func (m *lruResources) writePending(acct persistedResourcesData) {
 	select {
 	case m.pendingResources <- acct:
 	default:
@@ -91,7 +91,7 @@ func (m *lruResources) writePending(acct persistedAccountData) {
 // version of what's already on the cache or not. In all cases, the entry is going
 // to be promoted to the front of the list.
 // thread locking semantics : write lock
-func (m *lruResources) write(acctData persistedAccountData) {
+func (m *lruResources) write(resData persistedResourcesData) {
 	if el := m.resources[acctData.addr]; el != nil {
 		// already exists; is it a newer ?
 		if el.Value.before(&acctData) {
