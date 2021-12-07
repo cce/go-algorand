@@ -177,6 +177,9 @@ type accountUpdates struct {
 	// baseAccounts stores the most recently used accounts, at exactly dbRound
 	baseAccounts lruAccounts
 
+	// baseResources stores the most recently used resources, at exactly dbRound
+	baseResources lruResources
+
 	// logAccountUpdatesMetrics is a flag for enable/disable metrics logging
 	logAccountUpdatesMetrics bool
 
@@ -272,7 +275,7 @@ func (au *accountUpdates) LookupOnlineAccountData(rnd basics.Round, addr basics.
 	return au.lookupOnlineAccountData(rnd, addr)
 }
 
-func (au *accountUpdates) LookupResource(rnd basics.Round, addr basics.Address, aidx basics.CreatableIndex, ctype basics.CreatableType) (ledgercore.AccountResource, error) {
+func (au *accountUpdates) LookupResource(rnd basics.Round, addr basics.Address, aidx basics.CreatableIndex, ctype basics.CreatableType) (ledgercore.AccountResource, basics.Round, error) {
 	return au.lookupResource(rnd, addr, aidx, ctype, true /* take lock */)
 }
 
@@ -686,7 +689,7 @@ func (aul *accountUpdatesLedgerEvaluator) LookupWithoutRewards(rnd basics.Round,
 	return aul.au.lookupWithoutRewards(rnd, addr, false /*don't sync*/)
 }
 
-func (aul *accountUpdatesLedgerEvaluator) LookupResource(rnd basics.Round, addr basics.Address, aidx basics.CreatableIndex, ctype basics.CreatableType) (ledgercore.AccountResource, error) {
+func (aul *accountUpdatesLedgerEvaluator) LookupResource(rnd basics.Round, addr basics.Address, aidx basics.CreatableIndex, ctype basics.CreatableType) (ledgercore.AccountResource, basics.Round, error) {
 	return aul.au.lookupResource(rnd, addr, aidx, ctype, false /* don't sync */)
 }
 
@@ -1021,7 +1024,7 @@ func (au *accountUpdates) lookupOnlineAccountData(rnd basics.Round, addr basics.
 	}
 }
 
-func (au *accountUpdates) lookupResource(rnd basics.Round, addr basics.Address, aidx basics.CreatableIndex, ctype basics.CreatableType, synchronized bool) (data ledgercore.AccountResource, err error) {
+func (au *accountUpdates) lookupResource(rnd basics.Round, addr basics.Address, aidx basics.CreatableIndex, ctype basics.CreatableType, synchronized bool) (data ledgercore.AccountResource, validThrough basics.Round, err error) {
 	needUnlock := false
 	if synchronized {
 		au.accountsMu.RLock()
@@ -1033,7 +1036,7 @@ func (au *accountUpdates) lookupResource(rnd basics.Round, addr basics.Address, 
 		}
 	}()
 	var offset uint64
-	var persistedData persistedAccountData
+	var persistedData persistedResourcesData
 	for {
 		currentDbRound := au.cachedDBRound
 		currentDeltaLen := len(au.deltas)
@@ -1043,12 +1046,12 @@ func (au *accountUpdates) lookupResource(rnd basics.Round, addr basics.Address, 
 		}
 
 		// check if we've had this address modified in the past rounds. ( i.e. if it's in the deltas )
-		macct, indeltas := au.accounts[addr]
+		macct, indeltas := au.resources[accountCreatable{address: addr, index: aidx}]
 		if indeltas {
 			// Check if this is the most recent round, in which case, we can
 			// use a cache of the most recent account state.
 			if offset == uint64(len(au.deltas)) {
-				return macct.data, rnd, nil
+				return macct.resource, rnd, nil
 			}
 			// the account appears in the deltas, but we don't know if it appears in the
 			// delta range of [0..offset], so we'll need to check :
@@ -1056,7 +1059,7 @@ func (au *accountUpdates) lookupResource(rnd basics.Round, addr basics.Address, 
 			// priority if present.
 			for offset > 0 {
 				offset--
-				d, ok := au.deltas[offset].GetData(addr)
+				d, ok := au.deltas[offset].GetResource(addr, aidx, ctype)
 				if ok {
 					// the returned validThrough here is not optimal, but it still correct. We could get a more accurate value by scanning
 					// the deltas forward, but this would be time consuming loop, which might not pay off.
@@ -1071,12 +1074,12 @@ func (au *accountUpdates) lookupResource(rnd basics.Round, addr basics.Address, 
 			rnd = currentDbRound + basics.Round(currentDeltaLen)
 		}
 
-		// check the baseAccounts -
-		if macct, has := au.baseAccounts.read(addr); has {
-			// we don't technically need this, since it's already in the baseAccounts, however, writing this over
+		// check the baseResources -
+		if macct, has := au.baseResources.read(addr, aidx); has {
+			// we don't technically need this, since it's already in the baseResources, however, writing this over
 			// would ensure that we promote this field.
-			au.baseAccounts.writePending(macct)
-			return macct.accountData, rnd, nil
+			au.baseResources.writePending(macct)
+			return macct.data.GetAccountResource(ctype), rnd, nil
 		}
 
 		if synchronized {

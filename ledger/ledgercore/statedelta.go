@@ -334,6 +334,24 @@ func (ad NewAccountDeltas) Clone() NewAccountDeltas {
 	return clone
 }
 
+// GetResource returns the resources associated with a given address, index and resource type.
+func (ad NewAccountDeltas) GetResource(addr basics.Address, aidx basics.CreatableIndex, ctype basics.CreatableType) (data AccountResource, has bool) {
+	data.CreatableIndex = aidx
+	data.CreatableType = ctype
+	if ctype == basics.AssetCreatable {
+		var hasHolding, hasParams bool
+		data.AssetHolding, hasHolding = ad.GetAssetHolding(addr, basics.AssetIndex(aidx))
+		data.AssetParam, hasParams = ad.GetAssetParams(addr, basics.AssetIndex(aidx))
+		has = hasHolding || hasParams
+		return
+	}
+	var hasLocalState, hasParams bool
+	data.AppLocalState, hasLocalState = ad.GetAppLocalState(addr, basics.AppIndex(aidx))
+	data.AppParams, hasParams = ad.GetAppParams(addr, basics.AppIndex(aidx))
+	has = hasLocalState || hasParams
+	return
+}
+
 // MergeInMatchingAccounts adds data from other for matching addresses.
 // It assumes ad is newer than other
 func (ad NewAccountDeltas) MergeInMatchingAccounts(other NewAccountDeltas) {
