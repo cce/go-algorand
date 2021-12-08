@@ -21,6 +21,13 @@ import (
 	"github.com/algorand/go-algorand/logging"
 )
 
+//msgp:ignore cachedResourceData
+type cachedResourceData struct {
+	persistedResourcesData
+
+	address basics.Address
+}
+
 // lruResources provides a storage class for the most recently used resources data.
 // It doesn't have any synchronization primitive on it's own and require to be
 // syncronized by the caller.
@@ -28,13 +35,17 @@ type lruResources struct {
 	// resourcesList contain the list of persistedResourceData, where the front ones are the most "fresh"
 	// and the ones on the back are the oldest.
 	resourcesList *persistedResourcesDataList
+
 	// resources provides fast access to the various elements in the list by using the account address
 	resources map[accountCreatable]*persistedResourcesDataListNode
+
 	// pendingResources are used as a way to avoid taking a write-lock. When the caller needs to "materialize" these,
 	// it would call flushPendingWrites and these would be merged into the resources/resourcesList
-	pendingResources chan persistedResourcesData
+	pendingResources chan cachedResourceData
+
 	// log interface; used for logging the threshold event.
 	log logging.Logger
+
 	// pendingWritesWarnThreshold is the threshold beyond we would write a warning for exceeding the number of pendingResources entries
 	pendingWritesWarnThreshold int
 }
@@ -44,7 +55,7 @@ type lruResources struct {
 func (m *lruResources) init(log logging.Logger, pendingWrites int, pendingWritesWarnThreshold int) {
 	m.resourcesList = newPersistedResourcesList().allocateFreeNodes(pendingWrites)
 	m.resources = make(map[accountCreatable]*persistedResourcesDataListNode, pendingWrites)
-	m.pendingResources = make(chan persistedResourcesData, pendingWrites)
+	m.pendingResources = make(chan cachedResourceData, pendingWrites)
 	m.log = log
 	m.pendingWritesWarnThreshold = pendingWritesWarnThreshold
 }
@@ -53,7 +64,7 @@ func (m *lruResources) init(log logging.Logger, pendingWrites int, pendingWrites
 // thread locking semantics : read lock
 func (m *lruResources) read(addr basics.Address, aidx basics.CreatableIndex) (data persistedResourcesData, has bool) {
 	if el := m.resources[accountCreatable{address: addr, index: aidx}]; el != nil {
-		return *el.Value, true
+		return el.Value.persistedResourcesData, true
 	}
 	return persistedResourcesData{}, false
 }
@@ -68,7 +79,7 @@ func (m *lruResources) flushPendingWrites() {
 	for ; pendingEntriesCount > 0; pendingEntriesCount-- {
 		select {
 		case pendingResourceData := <-m.pendingResources:
-			m.write(pendingResourceData)
+			m.write(pendingResourceData.persistedResourcesData, pendingResourceData.address)
 		default:
 			return
 		}
@@ -79,9 +90,9 @@ func (m *lruResources) flushPendingWrites() {
 // writePending write a single persistedAccountData entry to the pendingResources buffer.
 // the function doesn't block, and in case of a buffer overflow the entry would not be added.
 // thread locking semantics : no lock is required.
-func (m *lruResources) writePending(acct persistedResourcesData) {
+func (m *lruResources) writePending(acct persistedResourcesData, addr basics.Address) {
 	select {
-	case m.pendingResources <- acct:
+	case m.pendingResources <- cachedResourceData{persistedResourcesData: acct, address: addr}:
 	default:
 	}
 }
@@ -91,17 +102,17 @@ func (m *lruResources) writePending(acct persistedResourcesData) {
 // version of what's already on the cache or not. In all cases, the entry is going
 // to be promoted to the front of the list.
 // thread locking semantics : write lock
-func (m *lruResources) write(resData persistedResourcesData) {
-	if el := m.resources[acctData.addr]; el != nil {
+func (m *lruResources) write(resData persistedResourcesData, addr basics.Address) {
+	if el := m.resources[accountCreatable{address: addr, index: resData.aidx}]; el != nil {
 		// already exists; is it a newer ?
-		if el.Value.before(&acctData) {
+		if el.Value.before(&resData) {
 			// we update with a newer version.
-			el.Value = &acctData
+			el.Value = &cachedResourceData{persistedResourcesData: resData, address: addr}
 		}
 		m.resourcesList.moveToFront(el)
 	} else {
 		// new entry.
-		m.resources[acctData.addr] = m.resourcesList.pushFront(&acctData)
+		m.resources[accountCreatable{address: addr, index: resData.aidx}] = m.resourcesList.pushFront(&cachedResourceData{persistedResourcesData: resData, address: addr})
 	}
 }
 
@@ -114,7 +125,7 @@ func (m *lruResources) prune(newSize int) (removed int) {
 			break
 		}
 		back := m.resourcesList.back()
-		delete(m.resources, back.Value.addr)
+		delete(m.resources, accountCreatable{address: back.Value.address, index: back.Value.aidx})
 		m.resourcesList.remove(back)
 		removed++
 	}

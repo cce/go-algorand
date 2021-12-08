@@ -31,7 +31,7 @@ type persistedResourcesDataListNode struct {
 	// element (l.Front()).
 	next, prev *persistedResourcesDataListNode
 
-	Value *persistedResourcesData
+	Value *cachedResourceData
 }
 
 func newPersistedResourcesList() *persistedResourcesDataList {
@@ -98,7 +98,7 @@ func (l *persistedResourcesDataList) remove(e *persistedResourcesDataListNode) {
 }
 
 // pushFront inserts a new element e with value v at the front of list l and returns e.
-func (l *persistedResourcesDataList) pushFront(v *persistedResourcesData) *persistedResourcesDataListNode {
+func (l *persistedResourcesDataList) pushFront(v *cachedResourceData) *persistedResourcesDataListNode {
 	newNode := l.getNewNode()
 	newNode.Value = v
 	return l.insertValue(newNode, &l.root)

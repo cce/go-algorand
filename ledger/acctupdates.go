@@ -1078,7 +1078,7 @@ func (au *accountUpdates) lookupResource(rnd basics.Round, addr basics.Address, 
 		if macct, has := au.baseResources.read(addr, aidx); has {
 			// we don't technically need this, since it's already in the baseResources, however, writing this over
 			// would ensure that we promote this field.
-			au.baseResources.writePending(macct)
+			au.baseResources.writePending(macct, addr)
 			return macct.AccountResource(), rnd, nil
 		}
 
@@ -1093,7 +1093,7 @@ func (au *accountUpdates) lookupResource(rnd basics.Round, addr basics.Address, 
 		// against the database.
 		persistedData, err = au.accountsq.lookupResources(addr, aidx, ctype)
 		if persistedData.round == currentDbRound {
-			au.baseResources.writePending(persistedData)
+			au.baseResources.writePending(persistedData, addr)
 			return persistedData.AccountResource(), rnd, err
 		}
 		if synchronized {
