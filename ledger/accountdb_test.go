@@ -59,8 +59,8 @@ func checkAccounts(t *testing.T, tx *sql.Tx, rnd basics.Round, accts map[basics.
 
 	for addr, data := range accts {
 		pad, err := aq.lookup(addr)
-		d := pad.accountData
 		require.NoError(t, err)
+		d := pad.accountData
 		require.Equal(t, d, data)
 
 		switch d.Status {
@@ -592,6 +592,7 @@ func BenchmarkWritingRandomBalancesDisk(b *testing.B) {
 
 		// read all the accounts to obtain the addrs.
 		rows, err := tx.Query("SELECT rowid, address FROM accountbase")
+		require.NoError(b, err)
 		defer rows.Close()
 		for rows.Next() {
 			var addrbuf []byte
@@ -634,7 +635,7 @@ func BenchmarkWritingRandomBalancesDisk(b *testing.B) {
 			}
 
 		}
-		b.ReportMetric(float64(int(time.Now().Sub(startTime))/b.N), "ns/acct_update")
+		b.ReportMetric(float64(int(time.Since(startTime))/b.N), "ns/acct_update")
 	})
 
 	b.Run("ByRowID", func(b *testing.B) {
@@ -660,7 +661,7 @@ func BenchmarkWritingRandomBalancesDisk(b *testing.B) {
 				}
 			}
 		}
-		b.ReportMetric(float64(int(time.Now().Sub(startTime))/b.N), "ns/acct_update")
+		b.ReportMetric(float64(int(time.Since(startTime))/b.N), "ns/acct_update")
 
 	})
 
@@ -833,11 +834,12 @@ func benchmarkWriteCatchpointStagingBalancesSub(b *testing.B, ascendingOrder boo
 			}
 			balances.Balances[i] = randomAccount
 		}
-		balanceLoopDuration := time.Now().Sub(balancesLoopStart)
+		balanceLoopDuration := time.Since(balancesLoopStart)
 		last64KAccountCreationTime += balanceLoopDuration
 		accountsGenerationDuration += balanceLoopDuration
 
 		normalizedAccountBalances, err := prepareNormalizedBalances(balances.Balances, proto)
+		require.NoError(b, err)
 		b.StartTimer()
 		err = l.trackerDBs.Wdb.Atomic(func(ctx context.Context, tx *sql.Tx) (err error) {
 			err = writeCatchpointStagingBalances(ctx, tx, normalizedAccountBalances)
@@ -848,13 +850,13 @@ func benchmarkWriteCatchpointStagingBalancesSub(b *testing.B, ascendingOrder boo
 		accountsLoaded += chunkSize
 	}
 	if !last64KStart.IsZero() {
-		last64KDuration := time.Now().Sub(last64KStart) - last64KAccountCreationTime
+		last64KDuration := time.Since(last64KStart) - last64KAccountCreationTime
 		fmt.Printf("%-82s%-7d (last 64k) %-6d ns/account       %d accounts/sec\n", b.Name(), last64KSize, (last64KDuration / time.Duration(last64KSize)).Nanoseconds(), int(float64(last64KSize)/float64(last64KDuration.Seconds())))
 	}
 	stats, err := l.trackerDBs.Wdb.Vacuum(context.Background())
 	require.NoError(b, err)
 	fmt.Printf("%-82sdb fragmentation   %.1f%%\n", b.Name(), float32(stats.PagesBefore-stats.PagesAfter)*100/float32(stats.PagesBefore))
-	b.ReportMetric(float64(b.N)/float64((time.Now().Sub(accountsWritingStarted)-accountsGenerationDuration).Seconds()), "accounts/sec")
+	b.ReportMetric(float64(b.N)/float64((time.Since(accountsWritingStarted)-accountsGenerationDuration).Seconds()), "accounts/sec")
 }
 
 func BenchmarkWriteCatchpointStagingBalances(b *testing.B) {
@@ -942,6 +944,7 @@ func TestCompactAccountDeltas(t *testing.T) {
 	a.Equal(addr1, address)
 	a.Equal(accountDelta{old: old2}, data)
 
+	// apply old on empty delta object, expect no changes
 	ad.updateOld(0, old2)
 	a.Equal(2, ad.len())
 	address, data = ad.getByIdx(0)

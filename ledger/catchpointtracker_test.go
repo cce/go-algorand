@@ -112,6 +112,7 @@ func TestGetCatchpointStream(t *testing.T) {
 
 	// File on disk, and database has the record
 	reader, err := ct.GetCatchpointStream(basics.Round(1))
+	require.NoError(t, err)
 	n, err = reader.Read(dataRead)
 	require.NoError(t, err)
 	require.Equal(t, 3, n)
@@ -123,13 +124,16 @@ func TestGetCatchpointStream(t *testing.T) {
 
 	// File deleted, but record in the database
 	err = os.Remove(filepath.Join(temporaryDirectroy, CatchpointDirName, "2.catchpoint"))
+	require.NoError(t, err)
 	reader, err = ct.GetCatchpointStream(basics.Round(2))
 	require.Equal(t, ledgercore.ErrNoEntry{}, err)
 	require.Nil(t, reader)
 
 	// File on disk, but database lost the record
 	err = ct.accountsq.storeCatchpoint(context.Background(), basics.Round(3), "", "", 0)
+	require.NoError(t, err)
 	reader, err = ct.GetCatchpointStream(basics.Round(3))
+	require.NoError(t, err)
 	n, err = reader.Read(dataRead)
 	require.NoError(t, err)
 	require.Equal(t, 3, n)
@@ -437,7 +441,6 @@ func TestReproducibleCatchpointLabels(t *testing.T) {
 		var totals map[basics.Address]ledgercore.AccountData
 		base := accts[i-1]
 		updates, totals, lastCreatableID = ledgertesting.RandomDeltasBalancedFull(1, base, rewardLevel, lastCreatableID)
-		newAccts := updates.ToBasicsAccountDataMap()
 		prevTotals, err := au.Totals(basics.Round(i - 1))
 		require.NoError(t, err)
 
@@ -445,6 +448,7 @@ func TestReproducibleCatchpointLabels(t *testing.T) {
 		newPool.MicroAlgos.Raw -= prevTotals.RewardUnits() * rewardLevelDelta
 		updates.Upsert(testPoolAddr, newPool)
 		totals[testPoolAddr] = newPool
+		newAccts := applyPartialDeltas(base, updates)
 
 		newTotals := ledgertesting.CalculateNewRoundAccountTotals(t, updates, rewardLevel, protoParams, base, prevTotals)
 
@@ -483,7 +487,8 @@ func TestReproducibleCatchpointLabels(t *testing.T) {
 		au.close()
 		ml2 := ledgerHistory[startingRound]
 
-		ct := newCatchpointTracker(t, ml2, cfg, ".")
+		ct2 := newCatchpointTracker(t, ml2, cfg, ".")
+		defer ct2.close()
 		for i := startingRound + 1; i <= basics.Round(testCatchpointLabelsCount*cfg.CatchpointInterval); i++ {
 			blk := bookkeeping.Block{
 				BlockHeader: bookkeeping.BlockHeader{
@@ -499,7 +504,7 @@ func TestReproducibleCatchpointLabels(t *testing.T) {
 			// if this is a catchpoint round, check the label.
 			if uint64(i)%cfg.CatchpointInterval == 0 {
 				ml2.trackers.waitAccountsWriting()
-				require.Equal(t, catchpointLabels[i], ct.GetLastCatchpointLabel())
+				require.Equal(t, catchpointLabels[i], ct2.GetLastCatchpointLabel())
 			}
 		}
 	}

@@ -1144,7 +1144,7 @@ func accountsAll(tx *sql.Tx) (bals map[basics.Address]basics.AccountData, err er
 
 		var addr basics.Address
 		if len(addrbuf) != len(addr) {
-			err = fmt.Errorf("Account DB address length mismatch: %d != %d", len(addrbuf), len(addr))
+			err = fmt.Errorf("account DB address length mismatch: %d != %d", len(addrbuf), len(addr))
 			return
 		}
 
