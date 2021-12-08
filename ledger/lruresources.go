@@ -29,7 +29,7 @@ type lruResources struct {
 	// and the ones on the back are the oldest.
 	resourcesList *persistedResourcesDataList
 	// resources provides fast access to the various elements in the list by using the account address
-	resources map[basics.Address]*persistedResourcesDataListNode
+	resources map[accountCreatable]*persistedResourcesDataListNode
 	// pendingResources are used as a way to avoid taking a write-lock. When the caller needs to "materialize" these,
 	// it would call flushPendingWrites and these would be merged into the resources/resourcesList
 	pendingResources chan persistedResourcesData
@@ -43,7 +43,7 @@ type lruResources struct {
 // thread locking semantics : write lock
 func (m *lruResources) init(log logging.Logger, pendingWrites int, pendingWritesWarnThreshold int) {
 	m.resourcesList = newPersistedResourcesList().allocateFreeNodes(pendingWrites)
-	m.resources = make(map[basics.Address]*persistedResourcesDataListNode, pendingWrites)
+	m.resources = make(map[accountCreatable]*persistedResourcesDataListNode, pendingWrites)
 	m.pendingResources = make(chan persistedResourcesData, pendingWrites)
 	m.log = log
 	m.pendingWritesWarnThreshold = pendingWritesWarnThreshold
@@ -52,7 +52,7 @@ func (m *lruResources) init(log logging.Logger, pendingWrites int, pendingWrites
 // read the persistedResourcesData object that the lruResources has for the given address.
 // thread locking semantics : read lock
 func (m *lruResources) read(addr basics.Address, aidx basics.CreatableIndex) (data persistedResourcesData, has bool) {
-	if el := m.resources[addr]; el != nil {
+	if el := m.resources[accountCreatable{address: addr, index: aidx}]; el != nil {
 		return *el.Value, true
 	}
 	return persistedResourcesData{}, false

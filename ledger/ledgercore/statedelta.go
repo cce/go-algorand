@@ -334,22 +334,35 @@ func (ad NewAccountDeltas) Clone() NewAccountDeltas {
 	return clone
 }
 
-// GetResource returns the resources associated with a given address, index and resource type.
-func (ad NewAccountDeltas) GetResource(addr basics.Address, aidx basics.CreatableIndex, ctype basics.CreatableType) (data AccountResource, has bool) {
-	data.CreatableIndex = aidx
-	data.CreatableType = ctype
-	if ctype == basics.AssetCreatable {
-		var hasHolding, hasParams bool
-		data.AssetHolding, hasHolding = ad.GetAssetHolding(addr, basics.AssetIndex(aidx))
-		data.AssetParam, hasParams = ad.GetAssetParams(addr, basics.AssetIndex(aidx))
-		has = hasHolding || hasParams
-		return
+// GetResource looks up a pair of app or asset resources, given its index and type.
+func (ad NewAccountDeltas) GetResource(addr basics.Address, aidx basics.CreatableIndex, ctype basics.CreatableType) (ret AccountResource, ok bool) {
+	ret.CreatableIndex = aidx
+	ret.CreatableType = ctype
+	switch ctype {
+	case basics.AssetCreatable:
+		aa := AccountAsset{addr, basics.AssetIndex(aidx)}
+		params, okParams := ad.assetParams[aa]
+		if okParams {
+			ret.AssetParam = params
+		}
+		holding, okHolding := ad.assets[aa]
+		if okHolding {
+			ret.AssetHolding = holding
+		}
+		return ret, okHolding || okParams
+	case basics.AppCreatable:
+		aa := AccountApp{addr, basics.AppIndex(aidx)}
+		params, okParams := ad.appParams[aa]
+		if okParams {
+			ret.AppParams = params
+		}
+		localState, okLocalState := ad.appLocalStates[aa]
+		if okLocalState {
+			ret.AppLocalState = localState
+		}
+		return ret, okLocalState || okParams
 	}
-	var hasLocalState, hasParams bool
-	data.AppLocalState, hasLocalState = ad.GetAppLocalState(addr, basics.AppIndex(aidx))
-	data.AppParams, hasParams = ad.GetAppParams(addr, basics.AppIndex(aidx))
-	has = hasLocalState || hasParams
-	return
+	return ret, false
 }
 
 // MergeInMatchingAccounts adds data from other for matching addresses.

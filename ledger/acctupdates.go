@@ -1059,11 +1059,11 @@ func (au *accountUpdates) lookupResource(rnd basics.Round, addr basics.Address, 
 			// priority if present.
 			for offset > 0 {
 				offset--
-				d, ok := au.deltas[offset].GetResource(addr, aidx, ctype)
+				r, ok := au.deltas[offset].GetResource(addr, aidx, ctype)
 				if ok {
 					// the returned validThrough here is not optimal, but it still correct. We could get a more accurate value by scanning
 					// the deltas forward, but this would be time consuming loop, which might not pay off.
-					return d, rnd, nil
+					return r, rnd, nil
 				}
 			}
 		} else {
@@ -1079,7 +1079,7 @@ func (au *accountUpdates) lookupResource(rnd basics.Round, addr basics.Address, 
 			// we don't technically need this, since it's already in the baseResources, however, writing this over
 			// would ensure that we promote this field.
 			au.baseResources.writePending(macct)
-			return macct.data.GetAccountResource(ctype), rnd, nil
+			return macct.AccountResource(), rnd, nil
 		}
 
 		if synchronized {
@@ -1091,15 +1091,15 @@ func (au *accountUpdates) lookupResource(rnd basics.Round, addr basics.Address, 
 		// present in the on-disk DB.  As an optimization, we avoid creating
 		// a separate transaction here, and directly use a prepared SQL query
 		// against the database.
-		persistedData, err = au.accountsq.lookup(addr)
+		persistedData, err = au.accountsq.lookupResources(addr, aidx, ctype)
 		if persistedData.round == currentDbRound {
-			au.baseAccounts.writePending(persistedData)
-			return persistedData.accountData, rnd, err
+			au.baseResources.writePending(persistedData)
+			return persistedData.AccountResource(), rnd, err
 		}
 		if synchronized {
 			if persistedData.round < currentDbRound {
 				au.log.Errorf("accountUpdates.lookupResource: database round %d is behind in-memory round %d", persistedData.round, currentDbRound)
-				return basics.AccountData{}, basics.Round(0), &StaleDatabaseRoundError{databaseRound: persistedData.round, memoryRound: currentDbRound}
+				return ledgercore.AccountResource{}, basics.Round(0), &StaleDatabaseRoundError{databaseRound: persistedData.round, memoryRound: currentDbRound}
 			}
 			au.accountsMu.RLock()
 			needUnlock = true
@@ -1109,7 +1109,7 @@ func (au *accountUpdates) lookupResource(rnd basics.Round, addr basics.Address, 
 		} else {
 			// in non-sync mode, we don't wait since we already assume that we're synchronized.
 			au.log.Errorf("accountUpdates.lookupResource: database round %d mismatching in-memory round %d", persistedData.round, currentDbRound)
-			return basics.AccountData{}, basics.Round(0), &MismatchingDatabaseRoundError{databaseRound: persistedData.round, memoryRound: currentDbRound}
+			return ledgercore.AccountResource{}, basics.Round(0), &MismatchingDatabaseRoundError{databaseRound: persistedData.round, memoryRound: currentDbRound}
 		}
 	}
 }

@@ -39,6 +39,7 @@ import (
 type accountsDbQueries struct {
 	listCreatablesStmt          *sql.Stmt
 	lookupStmt                  *sql.Stmt
+	lookupResourcesStmt         *sql.Stmt
 	lookupCreatorStmt           *sql.Stmt
 	deleteStoredCatchpoint      *sql.Stmt
 	insertStoredCatchpoint      *sql.Stmt
@@ -162,6 +163,34 @@ type persistedResourcesData struct {
 	// the round number that is associated with the resourcesData. This field is the corresponding one to the round field
 	// in persistedAccountData, and serves the same purpose.
 	round basics.Round
+}
+
+func (prd *persistedResourcesData) AccountResource() ledgercore.AccountResource {
+	ret := ledgercore.AccountResource{
+		CreatableIndex: prd.aidx,
+		CreatableType:  prd.rtype,
+	}
+	if prd.data.IsAsset() {
+		if prd.data.IsHolding() {
+			holding := prd.data.GetAssetHolding()
+			ret.AssetHolding = &holding
+		}
+		if prd.data.IsOwning() {
+			assetParams := prd.data.GetAssetParams()
+			ret.AssetParam = &assetParams
+		}
+	}
+	if prd.data.IsApp() {
+		if prd.data.IsHolding() {
+			localState := prd.data.GetAppLocalState()
+			ret.AppLocalState = &localState
+		}
+		if prd.data.IsOwning() {
+			appParams := prd.data.GetAppParams()
+			ret.AppParams = &appParams
+		}
+	}
+	return ret
 }
 
 type resourcesDeltas struct {
@@ -1633,6 +1662,11 @@ func accountsInitDbQueries(r db.Queryable, w db.Queryable) (*accountsDbQueries, 
 		return nil, err
 	}
 
+	qs.lookupResourcesStmt, err = r.Prepare("SELECT accountbase.rowid, rnd, resources.data FROM acctrounds LEFT JOIN accountbase ON accountbase.address = ? LEFT JOIN resources ON accountbase.rowid = resources.addrid AND resources.aidx = ? AND resources.rtype = ? WHERE id='acctbase'")
+	if err != nil {
+		return nil, err
+	}
+
 	qs.lookupCreatorStmt, err = r.Prepare("SELECT rnd, creator FROM acctrounds LEFT JOIN assetcreators ON asset = ? AND ctype = ? WHERE id='acctbase'")
 	if err != nil {
 		return nil, err
@@ -1733,6 +1767,32 @@ func (qs *accountsDbQueries) lookupCreator(cidx basics.CreatableIndex, ctype bas
 			copy(addr[:], buf)
 		}
 		return nil
+	})
+	return
+}
+
+func (qs *accountsDbQueries) lookupResources(addr basics.Address, aidx basics.CreatableIndex, ctype basics.CreatableType) (data persistedResourcesData, err error) {
+	err = db.Retry(func() error {
+		var buf []byte
+		var rowid sql.NullInt64
+		err := qs.lookupResourcesStmt.QueryRow(addr[:], aidx, ctype).Scan(&rowid, &data.round, &buf)
+		if err == nil {
+			data.aidx = aidx
+			data.rtype = ctype
+			if len(buf) > 0 && rowid.Valid {
+				data.addrid = rowid.Int64
+				return protocol.Decode(buf, &data.data)
+			}
+			// we don't have that account, just return the database round.
+			return nil
+		}
+
+		// this should never happen; it indicates that we don't have a current round in the acctrounds table.
+		if err == sql.ErrNoRows {
+			// Return the zero value of data
+			return fmt.Errorf("unable to query resource data for address %v aidx %v ctype %v : %w", addr, aidx, ctype, err)
+		}
+		return err
 	})
 	return
 }
@@ -1874,6 +1934,7 @@ func (qs *accountsDbQueries) close() {
 	preparedQueries := []**sql.Stmt{
 		&qs.listCreatablesStmt,
 		&qs.lookupStmt,
+		&qs.lookupResourcesStmt,
 		&qs.lookupCreatorStmt,
 		&qs.deleteStoredCatchpoint,
 		&qs.insertStoredCatchpoint,
@@ -2671,4 +2732,10 @@ func (iterator *catchpointPendingHashesIterator) Close() {
 // happened before the other.
 func (pac *persistedAccountData) before(other *persistedAccountData) bool {
 	return pac.round < other.round
+}
+
+// before compares the round numbers of two persistedResourcesData and determines if the current persistedResourcesData
+// happened before the other.
+func (prd *persistedResourcesData) before(other *persistedResourcesData) bool {
+	return prd.round < other.round
 }
