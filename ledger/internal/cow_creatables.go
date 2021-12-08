@@ -74,6 +74,7 @@ func (cs *roundCowState) GetAssetParams(addr basics.Address, aidx basics.AssetIn
 }
 
 func (cs *roundCowState) PutAppParams(addr basics.Address, aidx basics.AppIndex, params basics.AppParams) error {
+	// TODO: remove after the schema switch
 	if _, ok := cs.mods.NewAccts.GetData(addr); !ok {
 		return fmt.Errorf("PutAppParams: %s not found in deltas for %d", addr.String(), aidx)
 	}
@@ -83,6 +84,7 @@ func (cs *roundCowState) PutAppParams(addr basics.Address, aidx basics.AppIndex,
 }
 
 func (cs *roundCowState) PutAppLocalState(addr basics.Address, aidx basics.AppIndex, state basics.AppLocalState) error {
+	// TODO: remove after the schema switch
 	if _, ok := cs.mods.NewAccts.GetData(addr); !ok {
 		return fmt.Errorf("PutAppLocalState: %s not found in deltas for %d", addr.String(), aidx)
 	}
@@ -92,6 +94,7 @@ func (cs *roundCowState) PutAppLocalState(addr basics.Address, aidx basics.AppIn
 }
 
 func (cs *roundCowState) PutAssetHolding(addr basics.Address, aidx basics.AssetIndex, data basics.AssetHolding) error {
+	// TODO: remove after the schema switch
 	if _, ok := cs.mods.NewAccts.GetData(addr); !ok {
 		return fmt.Errorf("PutAssetHolding: %s not found in deltas for %d", addr.String(), aidx)
 	}
@@ -101,6 +104,7 @@ func (cs *roundCowState) PutAssetHolding(addr basics.Address, aidx basics.AssetI
 }
 
 func (cs *roundCowState) PutAssetParams(addr basics.Address, aidx basics.AssetIndex, data basics.AssetParams) error {
+	// TODO: remove after the schema switch
 	if _, ok := cs.mods.NewAccts.GetData(addr); !ok {
 		return fmt.Errorf("PutAssetParams: %s not found in deltas for %d", addr.String(), aidx)
 	}
