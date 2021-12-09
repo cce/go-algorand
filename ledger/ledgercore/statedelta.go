@@ -116,7 +116,7 @@ type StateDelta struct {
 // 	acctsCache map[basics.Address]int
 // }
 
-type newBalanceRecord struct {
+type NewBalanceRecord struct {
 	Addr basics.Address
 
 	AccountData
@@ -126,7 +126,7 @@ type newBalanceRecord struct {
 type NewAccountDeltas struct {
 	// Actual data. If an account is deleted, `accts` contains a balance record
 	// with empty `AccountData`.
-	accts []newBalanceRecord
+	accts []NewBalanceRecord
 	// cache for addr to deltas index resolution
 	acctsCache map[basics.Address]int
 
@@ -146,7 +146,7 @@ func MakeStateDelta(hdr *bookkeeping.BlockHeader, prevTimestamp int64, hint int,
 		// 	acctsCache: make(map[basics.Address]int, hint*2),
 		// },
 		NewAccts: NewAccountDeltas{
-			accts:      make([]newBalanceRecord, 0, hint*2),
+			accts:      make([]NewBalanceRecord, 0, hint*2),
 			acctsCache: make(map[basics.Address]int, hint*2),
 
 			appParams:      make(map[AccountApp]*basics.AppParams),
@@ -278,7 +278,7 @@ func (ad *NewAccountDeltas) MergeAccounts(other NewAccountDeltas) {
 // Clone copies all map in NewAccountDeltas but does not reallocates inner arrays like addresses or metadata inside asset params
 func (ad NewAccountDeltas) Clone() NewAccountDeltas {
 	clone := NewAccountDeltas{
-		accts:      make([]newBalanceRecord, len(ad.accts)),
+		accts:      make([]NewBalanceRecord, len(ad.accts)),
 		acctsCache: make(map[basics.Address]int, len(ad.acctsCache)),
 
 		appParams:      make(map[AccountApp]*basics.AppParams, len(ad.appParams)),
@@ -445,12 +445,12 @@ func (ad *NewAccountDeltas) GetByIdx(i int) (basics.Address, AccountData) {
 
 func (ad *NewAccountDeltas) Upsert(addr basics.Address, data AccountData) {
 	if idx, exist := ad.acctsCache[addr]; exist { // nil map lookup is OK
-		ad.accts[idx] = newBalanceRecord{Addr: addr, AccountData: data}
+		ad.accts[idx] = NewBalanceRecord{Addr: addr, AccountData: data}
 		return
 	}
 
 	last := len(ad.accts)
-	ad.accts = append(ad.accts, newBalanceRecord{Addr: addr, AccountData: data})
+	ad.accts = append(ad.accts, NewBalanceRecord{Addr: addr, AccountData: data})
 
 	if ad.acctsCache == nil {
 		ad.acctsCache = make(map[basics.Address]int)

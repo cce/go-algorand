@@ -1528,20 +1528,8 @@ transactionGroupLoop:
 			}
 
 			for _, br := range txgroup.balances {
-				// TODO: create cache of params as well
-				base.accounts[br.Addr] = ledgercore.ToAccountData(br.AccountData)
-				for aidx, val := range br.AccountData.AppParams {
-					base.appParams[ledgercore.AccountApp{Address: br.Addr, App: aidx}] = cachedAppParams{val, true}
-				}
-				for aidx, val := range br.AccountData.AssetParams {
-					base.assetParams[ledgercore.AccountAsset{Address: br.Addr, Asset: aidx}] = cachedAssetParams{val, true}
-				}
-				for aidx, val := range br.AccountData.AppLocalStates {
-					base.appLocalStates[ledgercore.AccountApp{Address: br.Addr, App: aidx}] = cachedAppLocalState{val, true}
-				}
-				for aidx, val := range br.AccountData.Assets {
-					base.assets[ledgercore.AccountAsset{Address: br.Addr, Asset: aidx}] = cachedAssetHolding{val, true}
-				}
+				base.accounts[br.Addr] = br.AccountData
+				// TODO: pull needed resources into cache?
 			}
 			err = eval.TransactionGroup(txgroup.group)
 			if err != nil {
@@ -1587,7 +1575,7 @@ type loadedTransactionGroup struct {
 	// group is the transaction group
 	group []transactions.SignedTxnWithAD
 	// balances is a list of all the balances that the transaction group refer to and are needed.
-	balances []basics.BalanceRecord
+	balances []ledgercore.NewBalanceRecord
 	// err indicates whether any of the balances in this structure have failed to load. In case of an error, at least
 	// one of the entries in the balances would be uninitialized.
 	err error
@@ -1606,7 +1594,7 @@ func loadAccounts(ctx context.Context, l LedgerForEvaluator, rnd basics.Round, g
 		// groupTask helps to organize the account loading for each transaction group.
 		type groupTask struct {
 			// balances contains the loaded balances each transaction group have
-			balances []basics.BalanceRecord
+			balances []ledgercore.NewBalanceRecord
 			// balancesCount is the number of balances that nees to be loaded per transaction group
 			balancesCount int
 			// done is a waiting channel for all the account data for the transaction group to be loaded
@@ -1688,7 +1676,7 @@ func loadAccounts(ctx context.Context, l LedgerForEvaluator, rnd basics.Round, g
 		// updata all the groups task :
 		// allocate the correct number of balances, as well as
 		// enough space on the "done" channel.
-		allBalances := make([]basics.BalanceRecord, totalBalances)
+		allBalances := make([]ledgercore.NewBalanceRecord, totalBalances)
 		usedBalances := 0
 		for _, gr := range groupsReady {
 			gr.balances = allBalances[usedBalances : usedBalances+gr.balancesCount]
@@ -1709,7 +1697,7 @@ func loadAccounts(ctx context.Context, l LedgerForEvaluator, rnd basics.Round, g
 						}
 						// lookup the account data directly from the ledger.
 						acctData, _, err := l.LookupWithoutRewards(rnd, task.address)
-						br := basics.BalanceRecord{
+						br := ledgercore.NewBalanceRecord{
 							Addr:        task.address,
 							AccountData: acctData,
 						}

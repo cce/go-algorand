@@ -469,10 +469,10 @@ func (l *Ledger) Lookup(rnd basics.Round, addr basics.Address) (basics.AccountDa
 	if err != nil {
 		return basics.AccountData{}, err
 	}
-	// todo :
-	// implement this properly so that we can take the ledgercore.AccountData, add the resources, and rebuild teh basics.AccountData.
-
-	return data, nil
+	// TODO:
+	// implement this properly so that we can take the ledgercore.AccountData, add the resources, and rebuild the basics.AccountData.
+	_ = data
+	return basics.AccountData{}, nil
 }
 
 // LookupResource loads a resource that matches the request parameters from the accounts update
