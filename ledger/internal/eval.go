@@ -41,7 +41,8 @@ import (
 type LedgerForCowBase interface {
 	BlockHdr(basics.Round) (bookkeeping.BlockHeader, error)
 	CheckDup(config.ConsensusParams, basics.Round, basics.Round, basics.Round, transactions.Txid, ledgercore.Txlease) error
-	LookupWithoutRewards(basics.Round, basics.Address) (basics.AccountData, basics.Round, error)
+	LookupWithoutRewards(basics.Round, basics.Address) (ledgercore.AccountData, basics.Round, error)
+	LookupResource(basics.Round, basics.Address, basics.CreatableIndex, basics.CreatableType) (ledgercore.AccountResource, basics.Round, error)
 	GetCreatorForRound(basics.Round, basics.CreatableIndex, basics.CreatableType) (basics.Address, bool, error)
 }
 
@@ -172,74 +173,73 @@ func (x *roundCowBase) lookup(addr basics.Address) (ledgercore.AccountData, erro
 		return accountData, nil
 	}
 
-	accountData, _, err := x.l.LookupWithoutRewards(x.rnd, addr)
+	ad, _, err := x.l.LookupWithoutRewards(x.rnd, addr)
 	if err != nil {
 		return ledgercore.AccountData{}, err
 	}
 
-	ad := ledgercore.ToAccountData(accountData)
 	x.accounts[addr] = ad
 	return ad, err
 }
 
 func (x *roundCowBase) lookupAppParams(addr basics.Address, aidx basics.AppIndex) (basics.AppParams, bool, error) {
-	if result, ok := x.appParams[ledgercore.AccountApp{Address: addr, App: aidx}]; ok {
+	aa := ledgercore.AccountApp{Address: addr, App: aidx}
+	if result, ok := x.appParams[aa]; ok {
 		return result.value, result.exists, nil
 	}
 
-	accountData, _, err := x.l.LookupWithoutRewards(x.rnd, addr)
-	if err != nil {
+	resourceData, _, err := x.l.LookupResource(x.rnd, addr, basics.CreatableIndex(aidx), basics.AppCreatable)
+	if err != nil || resourceData.AppParams == nil {
 		return basics.AppParams{}, false, err
 	}
 
-	params, ok := accountData.AppParams[aidx]
-	x.appParams[ledgercore.AccountApp{Address: addr, App: aidx}] = cachedAppParams{params, ok}
-	return params, ok, nil
+	x.appParams[aa] = cachedAppParams{value: *resourceData.AppParams, exists: true}
+	return *resourceData.AppParams, true, nil
 }
 
 func (x *roundCowBase) lookupAssetParams(addr basics.Address, aidx basics.AssetIndex) (basics.AssetParams, bool, error) {
-	if result, ok := x.assetParams[ledgercore.AccountAsset{Address: addr, Asset: aidx}]; ok {
+	aa := ledgercore.AccountAsset{Address: addr, Asset: aidx}
+	if result, ok := x.assetParams[aa]; ok {
 		return result.value, result.exists, nil
 	}
 
-	accountData, _, err := x.l.LookupWithoutRewards(x.rnd, addr)
-	if err != nil {
+	resourceData, _, err := x.l.LookupResource(x.rnd, addr, basics.CreatableIndex(aidx), basics.AssetCreatable)
+	if err != nil || resourceData.AssetParam == nil {
 		return basics.AssetParams{}, false, err
 	}
 
-	params, ok := accountData.AssetParams[aidx]
-	x.assetParams[ledgercore.AccountAsset{Address: addr, Asset: aidx}] = cachedAssetParams{params, ok}
-	return params, ok, nil
+	x.assetParams[aa] = cachedAssetParams{value: *resourceData.AssetParam, exists: true}
+	return *resourceData.AssetParam, true, nil
 }
 
 func (x *roundCowBase) lookupAppLocalState(addr basics.Address, aidx basics.AppIndex) (basics.AppLocalState, bool, error) {
-	if result, ok := x.appLocalStates[ledgercore.AccountApp{Address: addr, App: aidx}]; ok {
+	aa := ledgercore.AccountApp{Address: addr, App: aidx}
+	if result, ok := x.appLocalStates[aa]; ok {
 		return result.value, result.exists, nil
 	}
 
-	accountData, _, err := x.l.LookupWithoutRewards(x.rnd, addr)
-	if err != nil {
+	resourceData, _, err := x.l.LookupResource(x.rnd, addr, basics.CreatableIndex(aidx), basics.AppCreatable)
+	if err != nil || resourceData.AppLocalState == nil {
 		return basics.AppLocalState{}, false, err
 	}
 
-	ls, ok := accountData.AppLocalStates[aidx]
-	x.appLocalStates[ledgercore.AccountApp{Address: addr, App: aidx}] = cachedAppLocalState{ls, ok}
-	return ls, ok, nil
+	x.appLocalStates[aa] = cachedAppLocalState{value: *resourceData.AppLocalState, exists: true}
+	return *resourceData.AppLocalState, true, nil
 }
 
 func (x *roundCowBase) lookupAssetHolding(addr basics.Address, aidx basics.AssetIndex) (basics.AssetHolding, bool, error) {
-	if result, ok := x.assets[ledgercore.AccountAsset{Address: addr, Asset: aidx}]; ok {
+	aa := ledgercore.AccountAsset{Address: addr, Asset: aidx}
+	if result, ok := x.assets[aa]; ok {
 		return result.value, result.exists, nil
 	}
 
-	accountData, _, err := x.l.LookupWithoutRewards(x.rnd, addr)
-	if err != nil {
+	resourceData, _, err := x.l.LookupResource(x.rnd, addr, basics.CreatableIndex(aidx), basics.AssetCreatable)
+	if err != nil || resourceData.AssetHolding == nil {
 		return basics.AssetHolding{}, false, err
 	}
 
-	holding, ok := accountData.Assets[aidx]
-	x.assets[ledgercore.AccountAsset{Address: addr, Asset: aidx}] = cachedAssetHolding{holding, ok}
-	return holding, ok, nil
+	x.assets[aa] = cachedAssetHolding{value: *resourceData.AssetHolding, exists: true}
+	return *resourceData.AssetHolding, true, nil
 }
 
 func (x *roundCowBase) checkDup(firstValid, lastValid basics.Round, txid transactions.Txid, txl ledgercore.Txlease) error {
