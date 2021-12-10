@@ -216,7 +216,7 @@ func (ad NewAccountDeltas) GetAppLocalState(addr basics.Address, aidx basics.App
 	// return *ls, true
 }
 
-// GetAppLocalState returns the holding for a given address and asset index, or false if it does not exist.
+// GetAssetHolding returns the holding for a given address and asset index, or false if it does not exist.
 func (ad NewAccountDeltas) GetAssetHolding(addr basics.Address, aidx basics.AssetIndex) (*basics.AssetHolding, bool) {
 	holding, ok := ad.assets[AccountAsset{addr, aidx}]
 	return holding, ok

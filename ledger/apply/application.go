@@ -100,7 +100,7 @@ func createApplication(ac *transactions.ApplicationCallTxnFields, balances Balan
 	totalExtraPages := record.TotalExtraAppPages
 	totalExtraPages = basics.AddSaturate32(totalExtraPages, ac.ExtraProgramPages)
 	record.TotalExtraAppPages = totalExtraPages
-	record.TotalAppParams += 1
+	record.TotalAppParams++
 
 	// Write back to the creator's balance record
 	err = balances.Put(creator, record)
@@ -241,7 +241,7 @@ func optInApplication(balances Balances, sender basics.Address, appIdx basics.Ap
 	totalSchema := record.TotalAppSchema
 	totalSchema = totalSchema.AddSchema(params.LocalStateSchema)
 	record.TotalAppSchema = totalSchema
-	record.TotalAppLocalStates += 1
+	record.TotalAppLocalStates++
 
 	// Write opted-in user back to cow
 	err = balances.Put(sender, record)

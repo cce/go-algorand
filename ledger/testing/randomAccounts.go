@@ -101,7 +101,7 @@ func RandomAssetHolding(freeze bool) basics.AssetHolding {
 	return ah
 }
 
-// RandomAssetHolding creates a random non-empty app local state
+// RandomAppLocalState creates a random non-empty app local state
 func RandomAppLocalState() basics.AppLocalState {
 	ap := basics.AppLocalState{
 		Schema: basics.StateSchema{
