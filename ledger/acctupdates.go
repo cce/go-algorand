@@ -689,8 +689,9 @@ func (aul *accountUpdatesLedgerEvaluator) LookupWithoutRewards(rnd basics.Round,
 	return aul.au.lookupWithoutRewards(rnd, addr, false /*don't sync*/)
 }
 
-func (aul *accountUpdatesLedgerEvaluator) LookupResource(rnd basics.Round, addr basics.Address, aidx basics.CreatableIndex, ctype basics.CreatableType) (ledgercore.AccountResource, basics.Round, error) {
-	return aul.au.lookupResource(rnd, addr, aidx, ctype, false /* don't sync */)
+func (aul *accountUpdatesLedgerEvaluator) LookupResource(rnd basics.Round, addr basics.Address, aidx basics.CreatableIndex, ctype basics.CreatableType) (ledgercore.AccountResource, error) {
+	r, _, err := aul.au.lookupResource(rnd, addr, aidx, ctype, false /* don't sync */)
+	return r, err
 }
 
 // GetCreatorForRound returns the asset/app creator for a given asset/app index at a given round

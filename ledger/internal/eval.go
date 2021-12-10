@@ -42,7 +42,7 @@ type LedgerForCowBase interface {
 	BlockHdr(basics.Round) (bookkeeping.BlockHeader, error)
 	CheckDup(config.ConsensusParams, basics.Round, basics.Round, basics.Round, transactions.Txid, ledgercore.Txlease) error
 	LookupWithoutRewards(basics.Round, basics.Address) (ledgercore.AccountData, basics.Round, error)
-	LookupResource(basics.Round, basics.Address, basics.CreatableIndex, basics.CreatableType) (ledgercore.AccountResource, basics.Round, error)
+	LookupResource(basics.Round, basics.Address, basics.CreatableIndex, basics.CreatableType) (ledgercore.AccountResource, error)
 	GetCreatorForRound(basics.Round, basics.CreatableIndex, basics.CreatableType) (basics.Address, bool, error)
 }
 
@@ -188,7 +188,7 @@ func (x *roundCowBase) lookupAppParams(addr basics.Address, aidx basics.AppIndex
 		return result.value, result.exists, nil
 	}
 
-	resourceData, _, err := x.l.LookupResource(x.rnd, addr, basics.CreatableIndex(aidx), basics.AppCreatable)
+	resourceData, err := x.l.LookupResource(x.rnd, addr, basics.CreatableIndex(aidx), basics.AppCreatable)
 	if err != nil || resourceData.AppParams == nil {
 		return basics.AppParams{}, false, err
 	}
@@ -203,7 +203,7 @@ func (x *roundCowBase) lookupAssetParams(addr basics.Address, aidx basics.AssetI
 		return result.value, result.exists, nil
 	}
 
-	resourceData, _, err := x.l.LookupResource(x.rnd, addr, basics.CreatableIndex(aidx), basics.AssetCreatable)
+	resourceData, err := x.l.LookupResource(x.rnd, addr, basics.CreatableIndex(aidx), basics.AssetCreatable)
 	if err != nil || resourceData.AssetParam == nil {
 		return basics.AssetParams{}, false, err
 	}
@@ -218,7 +218,7 @@ func (x *roundCowBase) lookupAppLocalState(addr basics.Address, aidx basics.AppI
 		return result.value, result.exists, nil
 	}
 
-	resourceData, _, err := x.l.LookupResource(x.rnd, addr, basics.CreatableIndex(aidx), basics.AppCreatable)
+	resourceData, err := x.l.LookupResource(x.rnd, addr, basics.CreatableIndex(aidx), basics.AppCreatable)
 	if err != nil || resourceData.AppLocalState == nil {
 		return basics.AppLocalState{}, false, err
 	}
@@ -233,7 +233,7 @@ func (x *roundCowBase) lookupAssetHolding(addr basics.Address, aidx basics.Asset
 		return result.value, result.exists, nil
 	}
 
-	resourceData, _, err := x.l.LookupResource(x.rnd, addr, basics.CreatableIndex(aidx), basics.AssetCreatable)
+	resourceData, err := x.l.LookupResource(x.rnd, addr, basics.CreatableIndex(aidx), basics.AssetCreatable)
 	if err != nil || resourceData.AssetHolding == nil {
 		return basics.AssetHolding{}, false, err
 	}
