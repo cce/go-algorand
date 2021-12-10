@@ -30,25 +30,3 @@ type AccountResource struct {
 	AppLocalState *basics.AppLocalState
 	AppParams     *basics.AppParams
 }
-
-// ToAccountResource returns ledgercore.AccountResource for a creatable in basics.AccountData
-func ToAccountResource(ad basics.AccountData, aidx basics.CreatableIndex, ctype basics.CreatableType) AccountResource {
-	ret := AccountResource{CreatableIndex: aidx, CreatableType: ctype}
-	switch ctype {
-	case basics.AppCreatable:
-		if a, ok := ad.AppLocalStates[basics.AppIndex(aidx)]; ok {
-			ret.AppLocalState = &a
-		}
-		if a, ok := ad.AppParams[basics.AppIndex(aidx)]; ok {
-			ret.AppParams = &a
-		}
-	case basics.AssetCreatable:
-		if a, ok := ad.Assets[basics.AssetIndex(aidx)]; ok {
-			ret.AssetHolding = &a
-		}
-		if a, ok := ad.AssetParams[basics.AssetIndex(aidx)]; ok {
-			ret.AssetParam = &a
-		}
-	}
-	return ret
-}
