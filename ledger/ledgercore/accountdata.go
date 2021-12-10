@@ -33,6 +33,7 @@ type AccountData struct {
 	VotingData
 }
 
+// AccountBaseData describes the minimal account data needed for processing transactions.
 type AccountBaseData struct {
 	Status             basics.Status
 	MicroAlgos         basics.MicroAlgos
@@ -48,6 +49,7 @@ type AccountBaseData struct {
 	TotalAssets         uint32
 }
 
+// VotingData describes the voting-related account data used by agreement and state proofs.
 type VotingData struct {
 	VoteID      crypto.OneTimeSignatureVerifier
 	SelectionID crypto.VRFVerifier
@@ -105,6 +107,8 @@ func AssignAccountData(a *basics.AccountData, acct AccountData) {
 	a.TotalExtraAppPages = acct.TotalExtraAppPages
 }
 
+// WithUpdatedRewards returns an updated number of algos in an AccountData
+// to reflect rewards up to some rewards level.
 func (ad AccountData) WithUpdatedRewards(proto config.ConsensusParams, rewardsLevel uint64) AccountData {
 	u := basics.AccountData{
 		Status:             ad.Status,
@@ -169,6 +173,7 @@ func (ad AccountData) IsZero() bool {
 	return reflect.DeepEqual(ad, AccountData{})
 }
 
+// Money returns the amount of MicroAlgos associated with the user's account
 func (ad AccountData) Money(proto config.ConsensusParams, rewardsLevel uint64) (money basics.MicroAlgos, rewards basics.MicroAlgos) {
 	e := ad.WithUpdatedRewards(proto, rewardsLevel)
 	return e.MicroAlgos, e.RewardedMicroAlgos

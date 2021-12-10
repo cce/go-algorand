@@ -1094,7 +1094,7 @@ const (
 )
 
 //
-// Resource flags interpertation:
+// Resource flags interpretation:
 //
 // resourceFlagsHolding - the resource contains the holding of asset/app.
 // resourceFlagsNotHolding - the resource is completly empty. This state should not be persisted.

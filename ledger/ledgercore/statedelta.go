@@ -116,6 +116,7 @@ type StateDelta struct {
 // 	acctsCache map[basics.Address]int
 // }
 
+// NewBalanceRecord stores a balance record using the smaller ledgercore.AccountData type
 type NewBalanceRecord struct {
 	Addr basics.Address
 
@@ -185,6 +186,7 @@ func (ad NewAccountDeltas) GetData(addr basics.Address) (AccountData, bool) {
 	return ad.accts[idx].AccountData, true
 }
 
+// GetAppParams returns the params for a given address and app index, or false if it does not exist.
 func (ad NewAccountDeltas) GetAppParams(addr basics.Address, aidx basics.AppIndex) (*basics.AppParams, bool) {
 	params, ok := ad.appParams[AccountApp{addr, aidx}]
 	return params, ok
@@ -194,6 +196,7 @@ func (ad NewAccountDeltas) GetAppParams(addr basics.Address, aidx basics.AppInde
 	// return *params, true
 }
 
+// GetAssetParams returns the asset params for a given address and asset index, or false if it does not exist.
 func (ad NewAccountDeltas) GetAssetParams(addr basics.Address, aidx basics.AssetIndex) (*basics.AssetParams, bool) {
 	params, ok := ad.assetParams[AccountAsset{addr, aidx}]
 	return params, ok
@@ -203,6 +206,7 @@ func (ad NewAccountDeltas) GetAssetParams(addr basics.Address, aidx basics.Asset
 	// return *params, true
 }
 
+// GetAppLocalState returns the local state for a given address and app index, or false if it does not exist.
 func (ad NewAccountDeltas) GetAppLocalState(addr basics.Address, aidx basics.AppIndex) (*basics.AppLocalState, bool) {
 	ls, ok := ad.appLocalStates[AccountApp{addr, aidx}]
 	return ls, ok
@@ -212,6 +216,7 @@ func (ad NewAccountDeltas) GetAppLocalState(addr basics.Address, aidx basics.App
 	// return *ls, true
 }
 
+// GetAppLocalState returns the holding for a given address and asset index, or false if it does not exist.
 func (ad NewAccountDeltas) GetAssetHolding(addr basics.Address, aidx basics.AssetIndex) (*basics.AssetHolding, bool) {
 	holding, ok := ad.assets[AccountAsset{addr, aidx}]
 	return holding, ok
@@ -443,6 +448,7 @@ func (ad *NewAccountDeltas) GetByIdx(i int) (basics.Address, AccountData) {
 	return ad.accts[i].Addr, ad.accts[i].AccountData
 }
 
+// Upsert updates or inserts the account data for a given address.
 func (ad *NewAccountDeltas) Upsert(addr basics.Address, data AccountData) {
 	if idx, exist := ad.acctsCache[addr]; exist { // nil map lookup is OK
 		ad.accts[idx] = NewBalanceRecord{Addr: addr, AccountData: data}
@@ -458,18 +464,22 @@ func (ad *NewAccountDeltas) Upsert(addr basics.Address, data AccountData) {
 	ad.acctsCache[addr] = last
 }
 
+// UpsertAppParams updates or inserts the app params for a given address.
 func (ad *NewAccountDeltas) UpsertAppParams(addr basics.Address, aidx basics.AppIndex, params *basics.AppParams) {
 	ad.appParams[AccountApp{addr, aidx}] = params
 }
 
+// UpsertAssetParams updates or inserts the asset params for a given address.
 func (ad *NewAccountDeltas) UpsertAssetParams(addr basics.Address, aidx basics.AssetIndex, params *basics.AssetParams) {
 	ad.assetParams[AccountAsset{addr, aidx}] = params
 }
 
+// UpsertAppLocalState updates or inserts the app local state for a given address.
 func (ad *NewAccountDeltas) UpsertAppLocalState(addr basics.Address, aidx basics.AppIndex, ls *basics.AppLocalState) {
 	ad.appLocalStates[AccountApp{addr, aidx}] = ls
 }
 
+// UpsertAssetHolding updates or inserts the asset holding for a given address.
 func (ad *NewAccountDeltas) UpsertAssetHolding(addr basics.Address, aidx basics.AssetIndex, holding *basics.AssetHolding) {
 	ad.assets[AccountAsset{addr, aidx}] = holding
 }
@@ -533,6 +543,7 @@ func (sd *StateDelta) OptimizeAllocatedMemory(proto config.ConsensusParams) {
 	*/
 }
 
+// GetBasicsAccountData returns the basics.AccountData for a given address.
 func (ad NewAccountDeltas) GetBasicsAccountData(addr basics.Address) (basics.AccountData, bool) {
 	result := basics.AccountData{}
 	idx, ok := ad.acctsCache[addr]
@@ -584,6 +595,7 @@ func (ad NewAccountDeltas) GetBasicsAccountData(addr basics.Address) (basics.Acc
 	return result, true
 }
 
+// ToBasicsAccountDataMap converts these deltas into a map
 func (ad NewAccountDeltas) ToBasicsAccountDataMap() map[basics.Address]basics.AccountData {
 	result := make(map[basics.Address]basics.AccountData, ad.Len())
 	for addr, idx := range ad.acctsCache {
