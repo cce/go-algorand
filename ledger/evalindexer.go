@@ -111,9 +111,26 @@ func (l indexerLedgerConnector) LookupWithoutRewards(round basics.Round, address
 	return ledgercore.ToAccountData(*accountData), round, nil
 }
 
-func (l indexerLedgerConnector) LookupResource(rnd basics.Round, addr basics.Address, aidx basics.CreatableIndex, ctype basics.CreatableType) (ledgercore.AccountResource, basics.Round, error) {
-	// TODO
-	return ledgercore.AccountResource{}, basics.Round(0), nil
+func (l indexerLedgerConnector) LookupResource(round basics.Round, address basics.Address, aidx basics.CreatableIndex, ctype basics.CreatableType) (ledgercore.AccountResource, basics.Round, error) {
+	// check to see if the account data in the cache.
+	if pad, has := l.roundResources.Accounts[address]; has {
+		if pad == nil {
+			return ledgercore.AccountResource{}, round, nil
+		}
+		return ledgercore.ToAccountResource(*pad, aidx, ctype), round, nil
+	}
+
+	accountDataMap, err :=
+		l.il.LookupWithoutRewards(map[basics.Address]struct{}{address: {}})
+	if err != nil {
+		return ledgercore.AccountResource{}, basics.Round(0), err
+	}
+
+	accountData := accountDataMap[address]
+	if accountData == nil {
+		return ledgercore.AccountResource{}, round, nil
+	}
+	return ledgercore.ToAccountResource(*accountData, aidx, ctype), round, nil
 }
 
 // GetCreatorForRound is part of LedgerForEvaluator interface.
