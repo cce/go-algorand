@@ -463,29 +463,50 @@ func (u AccountData) MinBalance(proto *config.ConsensusParams) (res MicroAlgos) 
 
 	// First, base MinBalance
 	min = proto.MinBalance
+	if proto.LogMinBalance {
+		fmt.Println("base MinBalance", min)
+	}
 
 	// MinBalance for each Asset
 	assetCost := MulSaturate(proto.MinBalance, uint64(len(u.Assets)))
+	if proto.LogMinBalance {
+		fmt.Println("assetCost", assetCost, "len Assets", uint64(len(u.Assets)))
+	}
 	min = AddSaturate(min, assetCost)
 
 	// Base MinBalance for each created application
 	appCreationCost := MulSaturate(proto.AppFlatParamsMinBalance, uint64(len(u.AppParams)))
+	if proto.LogMinBalance {
+		fmt.Println("appCreationCost", appCreationCost, "len AppParams", uint64(len(u.AppParams)))
+	}
 	min = AddSaturate(min, appCreationCost)
 
 	// Base MinBalance for each opted in application
 	appOptInCost := MulSaturate(proto.AppFlatOptInMinBalance, uint64(len(u.AppLocalStates)))
+	if proto.LogMinBalance {
+		fmt.Println("appOptInCost", appOptInCost, "len AppLocalStates", uint64(len(u.AppLocalStates)))
+	}
 	min = AddSaturate(min, appOptInCost)
 
 	// MinBalance for state usage measured by LocalStateSchemas and
 	// GlobalStateSchemas
 	schemaCost := u.TotalAppSchema.MinBalance(proto)
+	if proto.LogMinBalance {
+		fmt.Println("schemaCost", schemaCost)
+	}
 	min = AddSaturate(min, schemaCost.Raw)
 
 	// MinBalance for each extra app program page
 	extraAppProgramLenCost := MulSaturate(proto.AppFlatParamsMinBalance, uint64(u.TotalExtraAppPages))
+	if proto.LogMinBalance {
+		fmt.Println("extraAppProgramLenCost", schemaCost, "len TotalExtraAppPages", uint64(u.TotalExtraAppPages))
+	}
 	min = AddSaturate(min, extraAppProgramLenCost)
 
 	res.Raw = min
+	if proto.LogMinBalance {
+		fmt.Println("MinBalance returning", min)
+	}
 	return res
 }
 

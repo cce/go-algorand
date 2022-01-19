@@ -394,6 +394,8 @@ type ConsensusParams struct {
 	// MaxProposedExpiredOnlineAccounts is the maximum number of online accounts, which need
 	// to be taken offline, that would be proposed to be taken offline.
 	MaxProposedExpiredOnlineAccounts int
+
+	LogMinBalance bool
 }
 
 // PaysetCommitType enumerates possible ways for the block header to commit to

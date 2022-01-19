@@ -157,12 +157,21 @@ func (sm StateSchema) NumEntries() (tot uint64) {
 func (sm StateSchema) MinBalance(proto *config.ConsensusParams) (res MicroAlgos) {
 	// Flat cost for each key/value pair
 	flatCost := MulSaturate(proto.SchemaMinBalancePerEntry, sm.NumEntries())
+	if proto.LogMinBalance {
+		fmt.Println("StateSchema.MinBalance flatCost", flatCost, "NumEntries", sm.NumEntries())
+	}
 
 	// Cost for uints
 	uintCost := MulSaturate(proto.SchemaUintMinBalance, sm.NumUint)
+	if proto.LogMinBalance {
+		fmt.Println("StateSchema.MinBalance uintCost", uintCost, "NumUint", sm.NumUint)
+	}
 
 	// Cost for byte slices
 	bytesCost := MulSaturate(proto.SchemaBytesMinBalance, sm.NumByteSlice)
+	if proto.LogMinBalance {
+		fmt.Println("StateSchema.MinBalance bytesCost", bytesCost, "NumByteSlice", sm.NumByteSlice)
+	}
 
 	// Sum the separate costs
 	var min uint64

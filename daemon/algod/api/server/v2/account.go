@@ -19,6 +19,7 @@ package v2
 import (
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"math"
 	"sort"
 
@@ -110,7 +111,10 @@ func AccountDataToAccount(
 		return generated.Account{}, errors.New("overflow on pending reward calculation")
 	}
 
-	minBalance := record.MinBalance(consensus)
+	fmt.Println("=== calling MinBalance on", address)
+	myConsensus := *consensus
+	myConsensus.LogMinBalance = true
+	minBalance := record.MinBalance(&myConsensus)
 
 	return generated.Account{
 		SigType:                     nil,
