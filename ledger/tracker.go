@@ -456,6 +456,7 @@ func (tr *trackerRegistry) commitRound(dcc *deferredCommitContext) {
 	dcc.newBase = newBase
 	dcc.flushTime = time.Now()
 
+	tr.log.Warnf("starting prepareCommit for dcc offset %d, oldBase %d, newBase %d", dcc.offset, dcc.oldBase, dcc.newBase)
 	for _, lt := range tr.trackers {
 		err := lt.prepareCommit(dcc)
 		if err != nil {
@@ -468,6 +469,7 @@ func (tr *trackerRegistry) commitRound(dcc *deferredCommitContext) {
 
 	start := time.Now()
 	ledgerCommitroundCount.Inc(nil)
+	tr.log.Warnf("starting commitRound for dcc offset %d, oldBase %d, newBase %d", dcc.offset, dcc.oldBase, dcc.newBase)
 	err := tr.dbs.Wdb.Atomic(func(ctx context.Context, tx *sql.Tx) (err error) {
 		for _, lt := range tr.trackers {
 			err0 := lt.commitRound(ctx, tx, dcc)
@@ -476,6 +478,7 @@ func (tr *trackerRegistry) commitRound(dcc *deferredCommitContext) {
 			}
 		}
 
+		tr.log.Warnf("updateAccountsRound %d", dbRound+basics.Round(offset))
 		err = updateAccountsRound(tx, dbRound+basics.Round(offset))
 		if err != nil {
 			return err
