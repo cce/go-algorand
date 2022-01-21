@@ -577,9 +577,9 @@ func (au *accountUpdates) produceCommittingTask(committedRound basics.Round, dbR
 		newBase = au.voters.lowestRound(newBase)
 	}
 
-	offset = uint64(newBase - dbRound)
+	//offset = uint64(newBase - dbRound)
 
-	offset = au.consecutiveVersion(offset)
+	offset = 1 //au.consecutiveVersion(offset)
 
 	// calculate the number of pending deltas
 	dcr.pendingDeltas = au.deltasAccum[offset] - au.deltasAccum[0]
