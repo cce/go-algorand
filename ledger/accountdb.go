@@ -2403,6 +2403,10 @@ func accountsNewRound(
 					return
 				}
 				_, err = insertResourceStmt.Exec(addrid, aidx, rtype, protocol.Encode(&data.newResource))
+				if err != nil {
+					err = fmt.Errorf("insertResourceStmt.Exec addrid %d aidx %d rtype %d data.newResource %+v: %w",
+						addrid, aidx, rtype, data.newResource, err)
+				}
 				if err == nil {
 					// set the returned persisted account states so that we could store that as the baseResources in commitRound
 					entry = persistedResourcesData{addrid, aidx, rtype, data.newResource, lastUpdateRound}
@@ -2413,6 +2417,9 @@ func accountsNewRound(
 			if data.newResource.IsEmpty() {
 				// new value is zero, which means we need to delete the current value.
 				result, err = deleteResourceStmt.Exec(addrid, aidx)
+				if err != nil {
+					err = fmt.Errorf("deleteResourceStmt.Exec addrid %d aidx %d: %w", addrid, aidx, err)
+				}
 				if err == nil {
 					// we deleted the entry successfully.
 					entry = persistedResourcesData{addrid, aidx, 0, makeResourcesData(data.newResource.UpdateRound), lastUpdateRound}
@@ -2433,6 +2440,9 @@ func accountsNewRound(
 				}
 
 				result, err = updateResourceStmt.Exec(protocol.Encode(&data.newResource), addrid, aidx)
+				if err != nil {
+					err = fmt.Errorf("updateResourceStmt.Exec addrid %d aidx %d data.newResource %+v: %w", addrid, aidx, data.newResource, err)
+				}
 				if err == nil {
 					// rowid doesn't change on update.
 					entry = persistedResourcesData{addrid, aidx, rtype, data.newResource, lastUpdateRound}
