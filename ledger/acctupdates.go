@@ -45,7 +45,7 @@ import (
 
 const (
 	// balancesFlushInterval defines how frequently we want to flush our balances to disk.
-	balancesFlushInterval = 10 * time.Millisecond
+	balancesFlushInterval = 1 * time.Microsecond
 	// pendingDeltasFlushThreshold is the deltas count threshold above we flush the pending balances regardless of the flush interval.
 	pendingDeltasFlushThreshold = 128
 )
