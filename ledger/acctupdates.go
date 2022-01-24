@@ -861,6 +861,7 @@ func (au *accountUpdates) newBlockImpl(blk bookkeeping.Block, delta ledgercore.S
 // Note that the function doesn't update the account with the rewards,
 // even while it does return the AccountData which represent the "rewarded" account data.
 func (au *accountUpdates) lookupLatest(addr basics.Address) (data basics.AccountData, rnd basics.Round, err error) {
+	defer func() { ledgercore.DBlog("accountUpdates.lookupLatest", addr, "data", data, "rnd", rnd, "err", err) }()
 	au.accountsMu.RLock()
 	needUnlock := true
 	defer func() {
@@ -1079,6 +1080,7 @@ func (au *accountUpdates) lookupLatest(addr basics.Address) (data basics.Account
 
 // lookupWithRewards returns the online account data for a given address at a given round.
 func (au *accountUpdates) lookupOnlineAccountData(rnd basics.Round, addr basics.Address) (data basics.OnlineAccountData, err error) {
+	defer func() { ledgercore.DBlog("accountUpdates.lookupOnlineAccountData", addr, "rnd", "data", data, "err", err) }()
 	au.accountsMu.RLock()
 	needUnlock := true
 	defer func() {
@@ -1164,6 +1166,9 @@ func (au *accountUpdates) lookupOnlineAccountData(rnd basics.Round, addr basics.
 }
 
 func (au *accountUpdates) lookupResource(rnd basics.Round, addr basics.Address, aidx basics.CreatableIndex, ctype basics.CreatableType, synchronized bool) (data ledgercore.AccountResource, validThrough basics.Round, err error) {
+	defer func() {
+		ledgercore.DBlog("accountUpdates.lookupResource", addr, "rnd", rnd, "aidx", aidx, "ctype", ctype, "synchronized", synchronized, "data", data, "validThrough", validThrough, "err", err)
+	}()
 	needUnlock := false
 	if synchronized {
 		au.accountsMu.RLock()
@@ -1260,6 +1265,9 @@ func (au *accountUpdates) lookupResource(rnd basics.Round, addr basics.Address, 
 
 // lookupWithoutRewards returns the account data for a given address at a given round.
 func (au *accountUpdates) lookupWithoutRewards(rnd basics.Round, addr basics.Address, synchronized bool) (data ledgercore.AccountData, validThrough basics.Round, err error) {
+	defer func() {
+		ledgercore.DBlog("accountUpdates.lookupWithoutRewards", addr, "rnd", rnd, "synchronized", synchronized, "data", data, "validThrough", validThrough, "err", err)
+	}()
 	needUnlock := false
 	if synchronized {
 		au.accountsMu.RLock()

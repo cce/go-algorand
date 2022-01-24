@@ -201,7 +201,8 @@ func MakeNewAccountDeltas(hint int) NewAccountDeltas {
 }
 
 // GetData lookups AccountData by address
-func (ad NewAccountDeltas) GetData(addr basics.Address) (AccountData, bool) {
+func (ad NewAccountDeltas) GetData(addr basics.Address) (retData AccountData, retOk bool) {
+	defer func() { DBlog("NewAccountDeltas.GetData", addr, "retData", retData, "retOk", retOk) }()
 	idx, ok := ad.acctsCache[addr]
 	if !ok {
 		return AccountData{}, false
@@ -210,7 +211,8 @@ func (ad NewAccountDeltas) GetData(addr basics.Address) (AccountData, bool) {
 }
 
 // GetAppParams returns app params delta value
-func (ad NewAccountDeltas) GetAppParams(addr basics.Address, aidx basics.AppIndex) (AppParamsDelta, bool) {
+func (ad NewAccountDeltas) GetAppParams(addr basics.Address, aidx basics.AppIndex) (retData AppParamsDelta, retOk bool) {
+	defer func() { DBlog("NewAccountDeltas.GetAppParams", addr, "aidx", aidx, "retData", retData, "retOk", retOk) }()
 	if idx, ok := ad.appResourcesCache[AccountApp{addr, aidx}]; ok {
 		result := ad.appResources[idx].Params
 		return result, result.Deleted || result.Params != nil
@@ -219,7 +221,10 @@ func (ad NewAccountDeltas) GetAppParams(addr basics.Address, aidx basics.AppInde
 }
 
 // GetAssetParams returns asset params delta value
-func (ad NewAccountDeltas) GetAssetParams(addr basics.Address, aidx basics.AssetIndex) (AssetParamsDelta, bool) {
+func (ad NewAccountDeltas) GetAssetParams(addr basics.Address, aidx basics.AssetIndex) (retData AssetParamsDelta, retOk bool) {
+	defer func() {
+		DBlog("NewAccountDeltas.GetAssetParams", addr, "aidx", aidx, "retData", retData, "retOk", retOk)
+	}()
 	if idx, ok := ad.assetResourcesCache[AccountAsset{addr, aidx}]; ok {
 		result := ad.assetResources[idx].Params
 		return result, result.Deleted || result.Params != nil
@@ -228,7 +233,10 @@ func (ad NewAccountDeltas) GetAssetParams(addr basics.Address, aidx basics.Asset
 }
 
 // GetAppLocalState returns app local state delta value
-func (ad NewAccountDeltas) GetAppLocalState(addr basics.Address, aidx basics.AppIndex) (AppLocalStateDelta, bool) {
+func (ad NewAccountDeltas) GetAppLocalState(addr basics.Address, aidx basics.AppIndex) (retData AppLocalStateDelta, retOk bool) {
+	defer func() {
+		DBlog("NewAccountDeltas.GetAppLocalState", addr, "aidx", aidx, "retData", retData, "retOk", retOk)
+	}()
 	if idx, ok := ad.appResourcesCache[AccountApp{addr, aidx}]; ok {
 		result := ad.appResources[idx].State
 		return result, result.Deleted || result.LocalState != nil
@@ -237,7 +245,10 @@ func (ad NewAccountDeltas) GetAppLocalState(addr basics.Address, aidx basics.App
 }
 
 // GetAssetHolding returns asset holding delta value
-func (ad NewAccountDeltas) GetAssetHolding(addr basics.Address, aidx basics.AssetIndex) (AssetHoldingDelta, bool) {
+func (ad NewAccountDeltas) GetAssetHolding(addr basics.Address, aidx basics.AssetIndex) (retData AssetHoldingDelta, retOk bool) {
+	defer func() {
+		DBlog("NewAccountDeltas.GetAssetHolding", addr, "aidx", aidx, "retData", retData, "retOk", retOk)
+	}()
 	if idx, ok := ad.assetResourcesCache[AccountAsset{addr, aidx}]; ok {
 		result := ad.assetResources[idx].Holding
 		return result, result.Deleted || result.Holding != nil
@@ -304,6 +315,7 @@ func (ad *NewAccountDeltas) MergeAccounts(other NewAccountDeltas) {
 
 // GetResource looks up a pair of app or asset resources, given its index and type.
 func (ad NewAccountDeltas) GetResource(addr basics.Address, aidx basics.CreatableIndex, ctype basics.CreatableType) (ret AccountResource, ok bool) {
+	defer func() { DBlog("NewAccountDeltas.GetResource", addr, "aidx", aidx, "ctype", ctype, "ret", ret, "ok", ok) }()
 	ret.CreatableIndex = aidx
 	ret.CreatableType = ctype
 	switch ctype {
@@ -340,6 +352,7 @@ func (ad *NewAccountDeltas) GetByIdx(i int) (basics.Address, AccountData) {
 
 // Upsert adds ledgercore.AccountData into deltas
 func (ad *NewAccountDeltas) Upsert(addr basics.Address, data AccountData) {
+	defer func() { DBlog("NewAccountDeltas.Upsert", addr, "data", data) }()
 	if idx, exist := ad.acctsCache[addr]; exist { // nil map lookup is OK
 		ad.accts[idx] = NewBalanceRecord{Addr: addr, AccountData: data}
 		return
@@ -356,6 +369,9 @@ func (ad *NewAccountDeltas) Upsert(addr basics.Address, data AccountData) {
 
 // UpsertAppResource adds AppParams and AppLocalState delta
 func (ad *NewAccountDeltas) UpsertAppResource(addr basics.Address, aidx basics.AppIndex, params AppParamsDelta, state AppLocalStateDelta) {
+	defer func() {
+		DBlog("NewAccountDeltas.UpsertAppResource", addr, "aidx", aidx, "params", params, "state", state)
+	}()
 	key := AccountApp{addr, aidx}
 	value := AppResourceRecord{aidx, addr, params, state}
 	if idx, exist := ad.appResourcesCache[key]; exist {
@@ -374,6 +390,9 @@ func (ad *NewAccountDeltas) UpsertAppResource(addr basics.Address, aidx basics.A
 
 // UpsertAssetResource adds AssetParams and AssetHolding delta
 func (ad *NewAccountDeltas) UpsertAssetResource(addr basics.Address, aidx basics.AssetIndex, params AssetParamsDelta, holding AssetHoldingDelta) {
+	defer func() {
+		DBlog("NewAccountDeltas.UpsertAssetResource", addr, "aidx", aidx, "params", params, "holding", holding)
+	}()
 	key := AccountAsset{addr, aidx}
 	value := AssetResourceRecord{aidx, addr, params, holding}
 	if idx, exist := ad.assetResourcesCache[key]; exist {

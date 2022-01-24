@@ -59,6 +59,7 @@ func (cs *roundCowState) CountAssetParams(addr basics.Address) (int, error) {
 }
 
 func (cs *roundCowState) GetAppParams(addr basics.Address, aidx basics.AppIndex) (ret basics.AppParams, ok bool, err error) {
+	defer func() { ledgercore.DBlog("roundCowState.GetAppParams", addr, "aidx", aidx, "ret", ret, "ok", ok, "err", err) }()
 	var d ledgercore.AppParamsDelta
 	d, ok, err = cs.lookupAppParams(addr, aidx, false)
 	if err != nil || !ok {
@@ -77,6 +78,7 @@ func (cs *roundCowState) GetAppParams(addr basics.Address, aidx basics.AppIndex)
 }
 
 func (cs *roundCowState) GetAppLocalState(addr basics.Address, aidx basics.AppIndex) (ret basics.AppLocalState, ok bool, err error) {
+	defer func() { ledgercore.DBlog("roundCowState.GetAppLocalState", addr, "aidx", aidx, "ret", ret, "ok", ok, "err", err) }()
 	var d ledgercore.AppLocalStateDelta
 	d, ok, err = cs.lookupAppLocalState(addr, aidx, false)
 	if err != nil || !ok {
@@ -95,6 +97,7 @@ func (cs *roundCowState) GetAppLocalState(addr basics.Address, aidx basics.AppIn
 }
 
 func (cs *roundCowState) GetAssetHolding(addr basics.Address, aidx basics.AssetIndex) (ret basics.AssetHolding, ok bool, err error) {
+	defer func() { ledgercore.DBlog("roundCowState.GetAssetHolding", addr, "aidx", aidx, "ret", ret, "ok", ok, "err", err) }()
 	var d ledgercore.AssetHoldingDelta
 	d, ok, err = cs.lookupAssetHolding(addr, aidx, false)
 	if err != nil || !ok {
@@ -113,6 +116,7 @@ func (cs *roundCowState) GetAssetHolding(addr basics.Address, aidx basics.AssetI
 }
 
 func (cs *roundCowState) GetAssetParams(addr basics.Address, aidx basics.AssetIndex) (ret basics.AssetParams, ok bool, err error) {
+	defer func() { ledgercore.DBlog("roundCowState.GetAssetParams", addr, "aidx", aidx, "ret", ret, "ok", ok, "err", err) }()
 	var d ledgercore.AssetParamsDelta
 	d, ok, err = cs.lookupAssetParams(addr, aidx, false)
 	if err != nil || !ok {
@@ -130,7 +134,8 @@ func (cs *roundCowState) GetAssetParams(addr basics.Address, aidx basics.AssetIn
 	return
 }
 
-func (cs *roundCowState) PutAppParams(addr basics.Address, aidx basics.AppIndex, params basics.AppParams) error {
+func (cs *roundCowState) PutAppParams(addr basics.Address, aidx basics.AppIndex, params basics.AppParams) (retErr error) {
+	defer func() { ledgercore.DBlog("roundCowState.PutAppParams", addr, "aidx", aidx, "params", params, "err", retErr) }()
 	return cs.putAppParams(addr, aidx, ledgercore.AppParamsDelta{Params: &params})
 }
 
@@ -143,7 +148,8 @@ func (cs *roundCowState) putAppParams(addr basics.Address, aidx basics.AppIndex,
 	return nil
 }
 
-func (cs *roundCowState) PutAppLocalState(addr basics.Address, aidx basics.AppIndex, state basics.AppLocalState) error {
+func (cs *roundCowState) PutAppLocalState(addr basics.Address, aidx basics.AppIndex, state basics.AppLocalState) (retErr error) {
+	defer func() { ledgercore.DBlog("roundCowState.PutAppLocalState", addr, "aidx", aidx, "state", state, "err", retErr) }()
 	return cs.putAppLocalState(addr, aidx, ledgercore.AppLocalStateDelta{LocalState: &state})
 }
 
@@ -156,7 +162,8 @@ func (cs *roundCowState) putAppLocalState(addr basics.Address, aidx basics.AppIn
 	return nil
 }
 
-func (cs *roundCowState) PutAssetHolding(addr basics.Address, aidx basics.AssetIndex, data basics.AssetHolding) error {
+func (cs *roundCowState) PutAssetHolding(addr basics.Address, aidx basics.AssetIndex, data basics.AssetHolding) (retErr error) {
+	defer func() { ledgercore.DBlog("roundCowState.PutAssetHolding", addr, "aidx", aidx, "holding", data, "err", retErr) }()
 	return cs.putAssetHolding(addr, aidx, ledgercore.AssetHoldingDelta{Holding: &data})
 }
 
@@ -169,7 +176,8 @@ func (cs *roundCowState) putAssetHolding(addr basics.Address, aidx basics.AssetI
 	return nil
 }
 
-func (cs *roundCowState) PutAssetParams(addr basics.Address, aidx basics.AssetIndex, data basics.AssetParams) error {
+func (cs *roundCowState) PutAssetParams(addr basics.Address, aidx basics.AssetIndex, data basics.AssetParams) (retErr error) {
+	defer func() { ledgercore.DBlog("roundCowState.PutAssetParams", addr, "aidx", aidx, "params", data, "err", retErr) }()
 	return cs.putAssetParams(addr, aidx, ledgercore.AssetParamsDelta{Params: &data})
 }
 
@@ -182,7 +190,8 @@ func (cs *roundCowState) putAssetParams(addr basics.Address, aidx basics.AssetIn
 	return nil
 }
 
-func (cs *roundCowState) DeleteAppParams(addr basics.Address, aidx basics.AppIndex) error {
+func (cs *roundCowState) DeleteAppParams(addr basics.Address, aidx basics.AppIndex) (retErr error) {
+	defer func() { ledgercore.DBlog("roundCowState.DeleteAppParams", addr, "aidx", aidx, "err", retErr) }()
 	if _, ok := cs.mods.NewAccts.GetData(addr); !ok {
 		return fmt.Errorf("DeleteAppParams: %s not found in deltas for %d", addr.String(), aidx)
 	}
@@ -190,7 +199,8 @@ func (cs *roundCowState) DeleteAppParams(addr basics.Address, aidx basics.AppInd
 	return cs.putAppParams(addr, aidx, ledgercore.AppParamsDelta{Deleted: true})
 }
 
-func (cs *roundCowState) DeleteAppLocalState(addr basics.Address, aidx basics.AppIndex) error {
+func (cs *roundCowState) DeleteAppLocalState(addr basics.Address, aidx basics.AppIndex) (retErr error) {
+	defer func() { ledgercore.DBlog("roundCowState.DeleteAppLocalState", addr, "aidx", aidx, "err", retErr) }()
 	if _, ok := cs.mods.NewAccts.GetData(addr); !ok {
 		return fmt.Errorf("DeleteAppLocalState: %s not found in deltas for %d", addr.String(), aidx)
 	}
@@ -198,7 +208,8 @@ func (cs *roundCowState) DeleteAppLocalState(addr basics.Address, aidx basics.Ap
 	return cs.putAppLocalState(addr, aidx, ledgercore.AppLocalStateDelta{Deleted: true})
 }
 
-func (cs *roundCowState) DeleteAssetHolding(addr basics.Address, aidx basics.AssetIndex) error {
+func (cs *roundCowState) DeleteAssetHolding(addr basics.Address, aidx basics.AssetIndex) (retErr error) {
+	defer func() { ledgercore.DBlog("roundCowState.DeleteAssetHolding", addr, "aidx", aidx, "err", retErr) }()
 	if _, ok := cs.mods.NewAccts.GetData(addr); !ok {
 		return fmt.Errorf("DeleteAssetHolding: %s not found in deltas for %d", addr.String(), aidx)
 	}
@@ -206,7 +217,8 @@ func (cs *roundCowState) DeleteAssetHolding(addr basics.Address, aidx basics.Ass
 	return cs.putAssetHolding(addr, aidx, ledgercore.AssetHoldingDelta{Deleted: true})
 }
 
-func (cs *roundCowState) DeleteAssetParams(addr basics.Address, aidx basics.AssetIndex) error {
+func (cs *roundCowState) DeleteAssetParams(addr basics.Address, aidx basics.AssetIndex) (retErr error) {
+	defer func() { ledgercore.DBlog("roundCowState.DeleteAssetParams", addr, "aidx", aidx, "err", retErr) }()
 	if _, ok := cs.mods.NewAccts.GetData(addr); !ok {
 		return fmt.Errorf("DeleteAssetParams: %s not found in deltas for %d", addr.String(), aidx)
 	}
@@ -215,6 +227,7 @@ func (cs *roundCowState) DeleteAssetParams(addr basics.Address, aidx basics.Asse
 }
 
 func (cs *roundCowState) HasAppLocalState(addr basics.Address, aidx basics.AppIndex) (ok bool, err error) {
+	defer func() { ledgercore.DBlog("roundCowState.HasAppLocalState", addr, "aidx", aidx, "ok", ok, "err", err) }()
 	d, ok, err := cs.lookupAppLocalState(addr, aidx, false)
 	if err != nil {
 		return false, err
@@ -226,6 +239,7 @@ func (cs *roundCowState) HasAppLocalState(addr basics.Address, aidx basics.AppIn
 }
 
 func (cs *roundCowState) HasAssetParams(addr basics.Address, aidx basics.AssetIndex) (ok bool, err error) {
+	defer func() { ledgercore.DBlog("roundCowState.HasAssetParams", addr, "aidx", aidx, "ok", ok, "err", err) }()
 	d, ok, err := cs.lookupAssetParams(addr, aidx, false)
 	if err != nil {
 		return false, err

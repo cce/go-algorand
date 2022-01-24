@@ -145,6 +145,7 @@ func (cb *roundCowState) getCreatableIndex(groupIdx int) basics.CreatableIndex {
 }
 
 func (cb *roundCowState) getCreator(cidx basics.CreatableIndex, ctype basics.CreatableType) (creator basics.Address, ok bool, err error) {
+	defer func() { ledgercore.DBlog("roundCowState.getCreator", creator, "cidx", cidx, "ctype", ctype, "ok", ok, "err", err) }()
 	delta, ok := cb.mods.Creatables[cidx]
 	if ok {
 		if delta.Created && delta.Ctype == ctype {
@@ -156,6 +157,7 @@ func (cb *roundCowState) getCreator(cidx basics.CreatableIndex, ctype basics.Cre
 }
 
 func (cb *roundCowState) lookup(addr basics.Address) (data ledgercore.AccountData, err error) {
+	defer func() { ledgercore.DBlog("roundCowState.lookup", addr, "data", data, "err", err) }()
 	d, ok := cb.mods.NewAccts.GetData(addr)
 	if ok {
 		return d, nil
@@ -164,7 +166,10 @@ func (cb *roundCowState) lookup(addr basics.Address) (data ledgercore.AccountDat
 	return cb.lookupParent.lookup(addr)
 }
 
-func (cb *roundCowState) lookupAppParams(addr basics.Address, aidx basics.AppIndex, fromCache bool) (ledgercore.AppParamsDelta, bool, error) {
+func (cb *roundCowState) lookupAppParams(addr basics.Address, aidx basics.AppIndex, fromCache bool) (retData ledgercore.AppParamsDelta, retOk bool, retErr error) {
+	defer func() {
+		ledgercore.DBlog("roundCowState.lookupAppParams", addr, "aidx", aidx, "fromCache", fromCache, "retData", retData, "retOk", retOk, "retErr", retErr)
+	}()
 	params, ok := cb.mods.NewAccts.GetAppParams(addr, aidx)
 	if ok {
 		return params, ok, nil
@@ -173,7 +178,10 @@ func (cb *roundCowState) lookupAppParams(addr basics.Address, aidx basics.AppInd
 	return cb.lookupParent.lookupAppParams(addr, aidx, fromCache)
 }
 
-func (cb *roundCowState) lookupAssetParams(addr basics.Address, aidx basics.AssetIndex, fromCache bool) (ledgercore.AssetParamsDelta, bool, error) {
+func (cb *roundCowState) lookupAssetParams(addr basics.Address, aidx basics.AssetIndex, fromCache bool) (retData ledgercore.AssetParamsDelta, retOk bool, retErr error) {
+	defer func() {
+		ledgercore.DBlog("roundCowState.lookupAssetParams", addr, "aidx", aidx, "fromCache", fromCache, "retData", retData, "retOk", retOk, "retErr", retErr)
+	}()
 	params, ok := cb.mods.NewAccts.GetAssetParams(addr, aidx)
 	if ok {
 		return params, ok, nil
@@ -182,7 +190,10 @@ func (cb *roundCowState) lookupAssetParams(addr basics.Address, aidx basics.Asse
 	return cb.lookupParent.lookupAssetParams(addr, aidx, fromCache)
 }
 
-func (cb *roundCowState) lookupAppLocalState(addr basics.Address, aidx basics.AppIndex, fromCache bool) (ledgercore.AppLocalStateDelta, bool, error) {
+func (cb *roundCowState) lookupAppLocalState(addr basics.Address, aidx basics.AppIndex, fromCache bool) (retData ledgercore.AppLocalStateDelta, retOk bool, retErr error) {
+	defer func() {
+		ledgercore.DBlog("roundCowState.lookupAppLocalState", addr, "aidx", aidx, "fromCache", fromCache, "retData", retData, "retOk", retOk, "retErr", retErr)
+	}()
 	state, ok := cb.mods.NewAccts.GetAppLocalState(addr, aidx)
 	if ok {
 		return state, ok, nil
@@ -191,7 +202,10 @@ func (cb *roundCowState) lookupAppLocalState(addr basics.Address, aidx basics.Ap
 	return cb.lookupParent.lookupAppLocalState(addr, aidx, fromCache)
 }
 
-func (cb *roundCowState) lookupAssetHolding(addr basics.Address, aidx basics.AssetIndex, fromCache bool) (ledgercore.AssetHoldingDelta, bool, error) {
+func (cb *roundCowState) lookupAssetHolding(addr basics.Address, aidx basics.AssetIndex, fromCache bool) (retData ledgercore.AssetHoldingDelta, retOk bool, retErr error) {
+	defer func() {
+		ledgercore.DBlog("roundCowState.lookupAssetHolding", addr, "aidx", aidx, "fromCache", fromCache, "retData", retData, "retOk", retOk, "retErr", retErr)
+	}()
 	holding, ok := cb.mods.NewAccts.GetAssetHolding(addr, aidx)
 	if ok {
 		return holding, ok, nil

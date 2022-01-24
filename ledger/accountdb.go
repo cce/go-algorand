@@ -1926,6 +1926,9 @@ func (qs *accountsDbQueries) listCreatables(maxIdx basics.CreatableIndex, maxRes
 }
 
 func (qs *accountsDbQueries) lookupCreator(cidx basics.CreatableIndex, ctype basics.CreatableType) (addr basics.Address, ok bool, dbRound basics.Round, err error) {
+	defer func() {
+		ledgercore.DBlog("accountsDbQueries.lookupCreator", addr, "cidx", cidx, "ctype", ctype, "ok", ok, "dbRound", dbRound, "err", err)
+	}()
 	err = db.Retry(func() error {
 		var buf []byte
 		err := qs.lookupCreatorStmt.QueryRow(cidx, ctype).Scan(&dbRound, &buf)
@@ -1950,6 +1953,9 @@ func (qs *accountsDbQueries) lookupCreator(cidx basics.CreatableIndex, ctype bas
 }
 
 func (qs *accountsDbQueries) lookupResources(addr basics.Address, aidx basics.CreatableIndex, ctype basics.CreatableType) (data persistedResourcesData, err error) {
+	defer func() {
+		ledgercore.DBlog("accountsDbQueries.lookupResources", addr, "aidx", aidx, "ctype", ctype, "data", data, "err", err)
+	}()
 	err = db.Retry(func() error {
 		var buf []byte
 		var rowid sql.NullInt64
@@ -1976,6 +1982,7 @@ func (qs *accountsDbQueries) lookupResources(addr basics.Address, aidx basics.Cr
 }
 
 func (qs *accountsDbQueries) lookupAllResources(addr basics.Address) (data []persistedResourcesData, rnd basics.Round, err error) {
+	defer func() { ledgercore.DBlog("accountsDbQueries.lookupAllResources", addr, "data", data, "rnd", rnd, "err", err) }()
 	err = db.Retry(func() error {
 		// Query for all resources
 		rows, err := qs.lookupAllResourcesStmt.Query(addr[:])
@@ -2025,6 +2032,7 @@ func (qs *accountsDbQueries) lookupAllResources(addr basics.Address) (data []per
 // account data, if such was found. If no matching account data could be found for the given address, an empty account data would
 // be retrieved.
 func (qs *accountsDbQueries) lookup(addr basics.Address) (data persistedAccountData, err error) {
+	defer func() { ledgercore.DBlog("accountsDbQueries.lookup", addr, "data", data, "err", err) }()
 	err = db.Retry(func() error {
 		var buf []byte
 		var rowid sql.NullInt64
@@ -2301,6 +2309,7 @@ func accountsNewRound(
 				// create a new entry.
 				normBalance := data.newAcct.NormalizedOnlineBalance(proto)
 				result, err = insertStmt.Exec(data.address[:], normBalance, protocol.Encode(&data.newAcct))
+				ledgercore.DBlog("accountsNewRound insertStmt", data.address, "normBalance", normBalance, "newAcct", data.newAcct, "oldAcct", data.oldAcct, "result", result, "err", err)
 				if err == nil {
 					var rowid int64
 					rowid, err = result.LastInsertId()
@@ -2314,6 +2323,7 @@ func accountsNewRound(
 			if data.newAcct.IsEmpty() {
 				// new value is zero, which means we need to delete the current value.
 				result, err = deleteByRowIDStmt.Exec(data.oldAcct.rowid)
+				ledgercore.DBlog("accountsNewRound deleteByRowID", data.address, "oldAcct", data.oldAcct, "result", result, "err", err)
 				if err == nil {
 					// we deleted the entry successfully.
 					updatedAccounts[updatedAccountIdx].rowid = 0
@@ -2326,6 +2336,7 @@ func accountsNewRound(
 			} else {
 				normBalance := data.newAcct.NormalizedOnlineBalance(proto)
 				result, err = updateStmt.Exec(normBalance, protocol.Encode(&data.newAcct), data.oldAcct.rowid)
+				ledgercore.DBlog("accountsNewRound updateStmt", data.address, "normBalance", normBalance, "newAcct", data.newAcct, "oldAcct", data.oldAcct, "result", result, "err", err)
 				if err == nil {
 					// rowid doesn't change on update.
 					updatedAccounts[updatedAccountIdx].rowid = data.oldAcct.rowid
@@ -2403,6 +2414,7 @@ func accountsNewRound(
 					return
 				}
 				_, err = insertResourceStmt.Exec(addrid, aidx, rtype, protocol.Encode(&data.newResource))
+				ledgercore.DBlog("accountsNewRound insertResourceStmt", data.address, "addrid", addrid, "aidx", aidx, "rtype", rtype, "newResource", data.newResource, "err", err)
 				if err != nil {
 					err = fmt.Errorf("insertResourceStmt.Exec addrid %d aidx %d rtype %d data.newResource %+v: %w",
 						addrid, aidx, rtype, data.newResource, err)
@@ -2417,6 +2429,7 @@ func accountsNewRound(
 			if data.newResource.IsEmpty() {
 				// new value is zero, which means we need to delete the current value.
 				result, err = deleteResourceStmt.Exec(addrid, aidx)
+				ledgercore.DBlog("accountsNewRound deleteResourceStmt", data.address, "addrid", addrid, "aidx", aidx, "result", result, "err", err)
 				if err != nil {
 					err = fmt.Errorf("deleteResourceStmt.Exec addrid %d aidx %d: %w", addrid, aidx, err)
 				}
@@ -2440,6 +2453,7 @@ func accountsNewRound(
 				}
 
 				result, err = updateResourceStmt.Exec(protocol.Encode(&data.newResource), addrid, aidx)
+				ledgercore.DBlog("accountsNewRound insertResourceStmt", data.address, "addrid", addrid, "aidx", aidx, "newResource", data.newResource, "result", result, "err", err)
 				if err != nil {
 					err = fmt.Errorf("updateResourceStmt.Exec addrid %d aidx %d data.newResource %+v: %w", addrid, aidx, data.newResource, err)
 				}

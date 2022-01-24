@@ -151,7 +151,10 @@ func makeRoundCowBase(l LedgerForCowBase, rnd basics.Round, txnCount uint64, com
 	}
 }
 
-func (x *roundCowBase) getCreator(cidx basics.CreatableIndex, ctype basics.CreatableType) (basics.Address, bool, error) {
+func (x *roundCowBase) getCreator(cidx basics.CreatableIndex, ctype basics.CreatableType) (retAddr basics.Address, retOk bool, retErr error) {
+	defer func() {
+		ledgercore.DBlog("roundCowBase.getCreator", retAddr, "cidx", cidx, "ctype", ctype, "retOk", retOk, "retErr", retErr)
+	}()
 	creatable := creatable{cindex: cidx, ctype: ctype}
 
 	if foundAddress, ok := x.creators[creatable]; ok {
@@ -171,7 +174,8 @@ func (x *roundCowBase) getCreator(cidx basics.CreatableIndex, ctype basics.Creat
 // lookup returns the non-rewarded account data for the provided account address. It uses the internal per-round cache
 // first, and if it cannot find it there, it would defer to the underlaying implementation.
 // note that errors in accounts data retrivals are not cached as these typically cause the transaction evaluation to fail.
-func (x *roundCowBase) lookup(addr basics.Address) (ledgercore.AccountData, error) {
+func (x *roundCowBase) lookup(addr basics.Address) (retData ledgercore.AccountData, retErr error) {
+	defer func() { ledgercore.DBlog("roundCowBase.lookup", addr, "retData", retData, "retErr", retErr) }()
 	if accountData, found := x.accounts[addr]; found {
 		return accountData, nil
 	}
@@ -186,6 +190,7 @@ func (x *roundCowBase) lookup(addr basics.Address) (ledgercore.AccountData, erro
 }
 
 func (x *roundCowBase) updateAssetResourceCache(aa ledgercore.AccountAsset, r ledgercore.AccountResource) {
+	defer func() { ledgercore.DBlog("roundCowBase.updateAssetResourceCache", aa.Address, "aidx", aa.Asset, "r", r) }()
 	// cache AssetParams and AssetHolding returned by LookupResource
 	if r.AssetParams == nil {
 		x.assetParams[aa] = cachedAssetParams{exists: false}
@@ -200,6 +205,7 @@ func (x *roundCowBase) updateAssetResourceCache(aa ledgercore.AccountAsset, r le
 }
 
 func (x *roundCowBase) updateAppResourceCache(aa ledgercore.AccountApp, r ledgercore.AccountResource) {
+	defer func() { ledgercore.DBlog("roundCowBase.updateAppResourceCache", aa.Address, "aidx", aa.App, "r", r) }()
 	// cache AppParams and AppLocalState returned by LookupResource
 	if r.AppParams == nil {
 		x.appParams[aa] = cachedAppParams{exists: false}
@@ -213,7 +219,10 @@ func (x *roundCowBase) updateAppResourceCache(aa ledgercore.AccountApp, r ledger
 	}
 }
 
-func (x *roundCowBase) lookupAppParams(addr basics.Address, aidx basics.AppIndex, fromCache bool) (ledgercore.AppParamsDelta, bool, error) {
+func (x *roundCowBase) lookupAppParams(addr basics.Address, aidx basics.AppIndex, fromCache bool) (retData ledgercore.AppParamsDelta, retOk bool, retErr error) {
+	defer func() {
+		ledgercore.DBlog("roundCowBase.lookupAppParams", addr, "aidx", aidx, "fromCache", fromCache, "retData", retData, "retOk", retOk, "retErr", retErr)
+	}()
 	aa := ledgercore.AccountApp{Address: addr, App: aidx}
 	if result, ok := x.appParams[aa]; ok {
 		if !result.exists {
@@ -239,7 +248,10 @@ func (x *roundCowBase) lookupAppParams(addr basics.Address, aidx basics.AppIndex
 	return ledgercore.AppParamsDelta{Params: resourceData.AppParams}, true, nil
 }
 
-func (x *roundCowBase) lookupAssetParams(addr basics.Address, aidx basics.AssetIndex, fromCache bool) (ledgercore.AssetParamsDelta, bool, error) {
+func (x *roundCowBase) lookupAssetParams(addr basics.Address, aidx basics.AssetIndex, fromCache bool) (retData ledgercore.AssetParamsDelta, retOk bool, retErr error) {
+	defer func() {
+		ledgercore.DBlog("roundCowBase.lookupAssetParams", addr, "aidx", aidx, "fromCache", fromCache, "retData", retData, "retOk", retOk, "retErr", retErr)
+	}()
 	aa := ledgercore.AccountAsset{Address: addr, Asset: aidx}
 	if result, ok := x.assetParams[aa]; ok {
 		if !result.exists {
@@ -265,7 +277,10 @@ func (x *roundCowBase) lookupAssetParams(addr basics.Address, aidx basics.AssetI
 	return ledgercore.AssetParamsDelta{Params: resourceData.AssetParams}, true, nil
 }
 
-func (x *roundCowBase) lookupAppLocalState(addr basics.Address, aidx basics.AppIndex, fromCache bool) (ledgercore.AppLocalStateDelta, bool, error) {
+func (x *roundCowBase) lookupAppLocalState(addr basics.Address, aidx basics.AppIndex, fromCache bool) (retData ledgercore.AppLocalStateDelta, retOk bool, retErr error) {
+	defer func() {
+		ledgercore.DBlog("roundCowBase.lookupAppLocalState", addr, "aidx", aidx, "fromCache", fromCache, "retData", retData, "retOk", retOk, "retErr", retErr)
+	}()
 	aa := ledgercore.AccountApp{Address: addr, App: aidx}
 	if result, ok := x.appLocalStates[aa]; ok {
 		if !result.exists {
@@ -291,7 +306,10 @@ func (x *roundCowBase) lookupAppLocalState(addr basics.Address, aidx basics.AppI
 	return ledgercore.AppLocalStateDelta{LocalState: resourceData.AppLocalState}, true, nil
 }
 
-func (x *roundCowBase) lookupAssetHolding(addr basics.Address, aidx basics.AssetIndex, fromCache bool) (ledgercore.AssetHoldingDelta, bool, error) {
+func (x *roundCowBase) lookupAssetHolding(addr basics.Address, aidx basics.AssetIndex, fromCache bool) (retData ledgercore.AssetHoldingDelta, retOk bool, retErr error) {
+	defer func() {
+		ledgercore.DBlog("roundCowBase.lookupAssetHolding", addr, "aidx", aidx, "fromCache", fromCache, "retData", retData, "retOk", retOk, "retErr", retErr)
+	}()
 	aa := ledgercore.AccountAsset{Address: addr, Asset: aidx}
 	if result, ok := x.assets[aa]; ok {
 		if !result.exists {
@@ -464,7 +482,10 @@ func (x *roundCowBase) getStorageLimits(addr basics.Address, aidx basics.AppInde
 }
 
 // wrappers for roundCowState to satisfy the (current) apply.Balances interface
-func (cs *roundCowState) Get(addr basics.Address, withPendingRewards bool) (ledgercore.AccountData, error) {
+func (cs *roundCowState) Get(addr basics.Address, withPendingRewards bool) (retData ledgercore.AccountData, retErr error) {
+	defer func() {
+		ledgercore.DBlog("roundCowState.Get", addr, "withPendingRewards", withPendingRewards, "retData", retData, "retErr", retErr)
+	}()
 	acct, err := cs.lookup(addr)
 	if err != nil {
 		return ledgercore.AccountData{}, err
@@ -479,19 +500,25 @@ func (cs *roundCowState) GetCreatableID(groupIdx int) basics.CreatableIndex {
 	return cs.getCreatableIndex(groupIdx)
 }
 
-func (cs *roundCowState) GetCreator(cidx basics.CreatableIndex, ctype basics.CreatableType) (basics.Address, bool, error) {
+func (cs *roundCowState) GetCreator(cidx basics.CreatableIndex, ctype basics.CreatableType) (retAddr basics.Address, retOk bool, retErr error) {
+	defer func() {
+		ledgercore.DBlog("roundCowState.GetCreator", retAddr, "cidx", cidx, "ctype", ctype, "retok", retOk, "retErr", retErr)
+	}()
 	return cs.getCreator(cidx, ctype)
 }
 
-func (cs *roundCowState) Put(addr basics.Address, acct ledgercore.AccountData) error {
+func (cs *roundCowState) Put(addr basics.Address, acct ledgercore.AccountData) (retErr error) {
+	defer func() { ledgercore.DBlog("roundCowState.Put", addr, "acct", acct, "retErr", retErr) }()
 	return cs.putAccount(addr, acct)
 }
 
-func (cs *roundCowState) CloseAccount(addr basics.Address) error {
+func (cs *roundCowState) CloseAccount(addr basics.Address) (retErr error) {
+	defer func() { ledgercore.DBlog("roundCowState.CloseAccount", addr, "retErr", retErr) }()
 	return cs.putAccount(addr, ledgercore.AccountData{})
 }
 
-func (cs *roundCowState) putAccount(addr basics.Address, acct ledgercore.AccountData) error {
+func (cs *roundCowState) putAccount(addr basics.Address, acct ledgercore.AccountData) (retErr error) {
+	defer func() { ledgercore.DBlog("roundCowState.putAccount", addr, "acct", acct, "retErr", retErr) }()
 	cs.mods.NewAccts.Upsert(addr, acct)
 	return nil
 }
