@@ -274,6 +274,8 @@ type normalizedAccountBalance struct {
 	accountHashes [][]byte
 	// normalizedBalance contains the normalized balance for the account.
 	normalizedBalance uint64
+	// encodedResources provides the encoded form of the resources
+	encodedResources map[basics.CreatableIndex][]byte
 }
 
 // prepareNormalizedBalancesV5 converts an array of encodedBalanceRecordV5 into an equal size array of normalizedAccountBalances.
@@ -304,9 +306,11 @@ func prepareNormalizedBalancesV5(bals []encodedBalanceRecordV5, proto config.Con
 		normalizedAccountBalances[i].accountHashes[0] = accountHashBuilder(balance.Address, accountDataV5, balance.AccountData)
 		if len(resources) > 0 {
 			normalizedAccountBalances[i].resources = make(map[basics.CreatableIndex]resourcesData, len(resources))
+			normalizedAccountBalances[i].encodedResources = make(map[basics.CreatableIndex][]byte, len(resources))
 		}
 		for _, resource := range resources {
 			normalizedAccountBalances[i].resources[resource.aidx] = resource.resourcesData
+			normalizedAccountBalances[i].encodedResources[resource.aidx] = protocol.Encode(&resource.resourcesData)
 		}
 		normalizedAccountBalances[i].encodedAccountData = protocol.Encode(&normalizedAccountBalances[i].accountData)
 	}
@@ -330,21 +334,25 @@ func prepareNormalizedBalancesV6(bals []encodedBalanceRecordV6, proto config.Con
 		normalizedAccountBalances[i].encodedAccountData = balance.AccountData
 		normalizedAccountBalances[i].accountHashes = make([][]byte, 1+len(balance.Resources))
 		normalizedAccountBalances[i].accountHashes[0] = accountHashBuilderV6(balance.Address, &normalizedAccountBalances[i].accountData, balance.AccountData)
-		normalizedAccountBalances[i].resources = make(map[basics.CreatableIndex]resourcesData, len(balance.Resources))
-		resIdx := 0
-		for cidx, res := range balance.Resources {
-			var resData resourcesData
-			err = protocol.Decode(res, &resData)
-			if err != nil {
-				return nil, err
+		if len(balance.Resources) > 0 {
+			normalizedAccountBalances[i].resources = make(map[basics.CreatableIndex]resourcesData, len(balance.Resources))
+			normalizedAccountBalances[i].encodedResources = make(map[basics.CreatableIndex][]byte, len(balance.Resources))
+			resIdx := 0
+			for cidx, res := range balance.Resources {
+				var resData resourcesData
+				err = protocol.Decode(res, &resData)
+				if err != nil {
+					return nil, err
+				}
+				ctype := basics.AssetCreatable
+				if resData.IsApp() {
+					ctype = basics.AppCreatable
+				}
+				normalizedAccountBalances[i].accountHashes[resIdx+1] = resourcesHashBuilderV6(balance.Address, basics.CreatableIndex(cidx), ctype, resData.UpdateRound, res)
+				normalizedAccountBalances[i].resources[basics.CreatableIndex(cidx)] = resData
+				normalizedAccountBalances[i].encodedResources[basics.CreatableIndex(cidx)] = res
+				resIdx++
 			}
-			ctype := basics.AssetCreatable
-			if resData.IsEmptyApp() {
-				ctype = basics.AppCreatable
-			}
-			normalizedAccountBalances[i].accountHashes[resIdx+1] = resourcesHashBuilderV6(balance.Address, basics.CreatableIndex(cidx), ctype, resData.UpdateRound, res)
-			normalizedAccountBalances[i].resources[basics.CreatableIndex(cidx)] = resData
-			resIdx++
 		}
 	}
 	return
@@ -748,7 +756,7 @@ func writeCatchpointStagingBalances(ctx context.Context, tx *sql.Tx, bals []norm
 			if resData.IsApp() {
 				ctype = basics.AppCreatable
 			}
-			result, err := insertRscStmt.ExecContext(ctx, rowID, aidx, ctype, protocol.Encode(&resData))
+			result, err := insertRscStmt.ExecContext(ctx, rowID, aidx, ctype, balance.encodedResources[aidx])
 			if err != nil {
 				return err
 			}
@@ -1289,7 +1297,7 @@ func (rd *resourcesData) IsEmpty() bool {
 	return !rd.IsApp() && !rd.IsAsset()
 }
 
-func (rd *resourcesData) IsEmptyApp() bool {
+func (rd *resourcesData) IsEmptyAppFields() bool {
 	return rd.SchemaNumUint == 0 &&
 		rd.SchemaNumByteSlice == 0 &&
 		len(rd.KeyValue) == 0 &&
@@ -1307,10 +1315,10 @@ func (rd *resourcesData) IsApp() bool {
 	if (rd.ResourceFlags & resourceFlagsEmptyApp) == resourceFlagsEmptyApp {
 		return true
 	}
-	return !rd.IsEmptyApp()
+	return !rd.IsEmptyAppFields()
 }
 
-func (rd *resourcesData) IsEmptyAsset() bool {
+func (rd *resourcesData) IsEmptyAssetFields() bool {
 	return rd.Amount == 0 &&
 		!rd.Frozen &&
 		rd.Total == 0 &&
@@ -1330,7 +1338,7 @@ func (rd *resourcesData) IsAsset() bool {
 	if (rd.ResourceFlags & resourceFlagsEmptyAsset) == resourceFlagsEmptyAsset {
 		return true
 	}
-	return !rd.IsEmptyAsset()
+	return !rd.IsEmptyAssetFields()
 }
 
 func (rd *resourcesData) ClearAssetParams() {
@@ -1348,7 +1356,7 @@ func (rd *resourcesData) ClearAssetParams() {
 	hadHolding := (rd.ResourceFlags & resourceFlagsNotHolding) == resourceFlagsHolding
 	rd.ResourceFlags -= rd.ResourceFlags & resourceFlagsOwnership
 	rd.ResourceFlags &= ^resourceFlagsEmptyAsset
-	if rd.IsEmptyAsset() && hadHolding {
+	if rd.IsEmptyAssetFields() && hadHolding {
 		rd.ResourceFlags |= resourceFlagsEmptyAsset
 	}
 }
@@ -1370,7 +1378,7 @@ func (rd *resourcesData) SetAssetParams(ap basics.AssetParams, haveHoldings bool
 		rd.ResourceFlags |= resourceFlagsNotHolding
 	}
 	rd.ResourceFlags &= ^resourceFlagsEmptyAsset
-	if rd.IsEmptyAsset() {
+	if rd.IsEmptyAssetFields() {
 		rd.ResourceFlags |= resourceFlagsEmptyAsset
 	}
 }
@@ -1396,12 +1404,13 @@ func (rd *resourcesData) ClearAssetHolding() {
 	rd.Amount = 0
 	rd.Frozen = false
 
-	// we might have resourceFlagsEmptyAsset only if resourcesData has empty holding
-	// since resourceFlagsHolding == 0 and resourceFlagsOwnership != 0
-	if rd.ResourceFlags == resourceFlagsEmptyAsset {
+	rd.ResourceFlags |= resourceFlagsNotHolding
+	hadParams := (rd.ResourceFlags & resourceFlagsOwnership) == resourceFlagsOwnership
+	if hadParams && rd.IsEmptyAssetFields() {
+		rd.ResourceFlags |= resourceFlagsEmptyAsset
+	} else {
 		rd.ResourceFlags &= ^resourceFlagsEmptyAsset
 	}
-	rd.ResourceFlags |= resourceFlagsNotHolding
 }
 
 func (rd *resourcesData) SetAssetHolding(ah basics.AssetHolding) {
@@ -1409,7 +1418,7 @@ func (rd *resourcesData) SetAssetHolding(ah basics.AssetHolding) {
 	rd.Frozen = ah.Frozen
 	rd.ResourceFlags &= ^(resourceFlagsNotHolding + resourceFlagsEmptyAsset)
 	// resourceFlagsHolding is set implicitly since it is zero
-	if rd.IsEmptyAsset() {
+	if rd.IsEmptyAssetFields() {
 		rd.ResourceFlags |= resourceFlagsEmptyAsset
 	}
 }
@@ -1426,12 +1435,13 @@ func (rd *resourcesData) ClearAppLocalState() {
 	rd.SchemaNumByteSlice = 0
 	rd.KeyValue = nil
 
-	// we might have resourceFlagsEmptyApp only if resourcesData has empty local state
-	// since resourceFlagsHolding == 0 and resourceFlagsOwnership != 0
-	if rd.ResourceFlags == resourceFlagsEmptyApp {
+	rd.ResourceFlags |= resourceFlagsNotHolding
+	hadParams := (rd.ResourceFlags & resourceFlagsOwnership) == resourceFlagsOwnership
+	if hadParams && rd.IsEmptyAppFields() {
+		rd.ResourceFlags |= resourceFlagsEmptyApp
+	} else {
 		rd.ResourceFlags &= ^resourceFlagsEmptyApp
 	}
-	rd.ResourceFlags |= resourceFlagsNotHolding
 }
 
 func (rd *resourcesData) SetAppLocalState(als basics.AppLocalState) {
@@ -1439,7 +1449,7 @@ func (rd *resourcesData) SetAppLocalState(als basics.AppLocalState) {
 	rd.SchemaNumByteSlice = als.Schema.NumByteSlice
 	rd.KeyValue = als.KeyValue
 	rd.ResourceFlags &= ^(resourceFlagsEmptyApp + resourceFlagsNotHolding)
-	if rd.IsEmptyApp() {
+	if rd.IsEmptyAppFields() {
 		rd.ResourceFlags |= resourceFlagsEmptyApp
 	}
 }
@@ -1466,7 +1476,7 @@ func (rd *resourcesData) ClearAppParams() {
 	hadHolding := (rd.ResourceFlags & resourceFlagsNotHolding) == resourceFlagsHolding
 	rd.ResourceFlags -= rd.ResourceFlags & resourceFlagsOwnership
 	rd.ResourceFlags &= ^resourceFlagsEmptyApp
-	if rd.IsEmptyApp() && hadHolding {
+	if rd.IsEmptyAppFields() && hadHolding {
 		rd.ResourceFlags |= resourceFlagsEmptyApp
 	}
 }
@@ -1485,7 +1495,7 @@ func (rd *resourcesData) SetAppParams(ap basics.AppParams, haveHoldings bool) {
 		rd.ResourceFlags |= resourceFlagsNotHolding
 	}
 	rd.ResourceFlags &= ^resourceFlagsEmptyApp
-	if rd.IsEmptyApp() {
+	if rd.IsEmptyAppFields() {
 		rd.ResourceFlags |= resourceFlagsEmptyApp
 	}
 }
@@ -1870,17 +1880,17 @@ func accountsInitDbQueries(r db.Queryable, w db.Queryable) (*accountsDbQueries, 
 		return nil, err
 	}
 
-	qs.deleteCatchpointState, err = r.Prepare("DELETE FROM catchpointstate WHERE id=?")
+	qs.deleteCatchpointState, err = w.Prepare("DELETE FROM catchpointstate WHERE id=?")
 	if err != nil {
 		return nil, err
 	}
 
-	qs.insertCatchpointStateUint64, err = r.Prepare("INSERT OR REPLACE INTO catchpointstate(id, intval) VALUES(?, ?)")
+	qs.insertCatchpointStateUint64, err = w.Prepare("INSERT OR REPLACE INTO catchpointstate(id, intval) VALUES(?, ?)")
 	if err != nil {
 		return nil, err
 	}
 
-	qs.insertCatchpointStateString, err = r.Prepare("INSERT OR REPLACE INTO catchpointstate(id, strval) VALUES(?, ?)")
+	qs.insertCatchpointStateString, err = w.Prepare("INSERT OR REPLACE INTO catchpointstate(id, strval) VALUES(?, ?)")
 	if err != nil {
 		return nil, err
 	}
@@ -1967,6 +1977,7 @@ func (qs *accountsDbQueries) lookupResources(addr basics.Address, aidx basics.Cr
 				data.addrid = rowid.Int64
 				return protocol.Decode(buf, &data.data)
 			}
+			data.data = makeResourcesData(0)
 			// we don't have that account, just return the database round.
 			return nil
 		}
@@ -2901,7 +2912,10 @@ func processAllResources(
 			if err != nil {
 				return pendingRow{}, err
 			}
-			if addrid != acctRowid {
+			if addrid < acctRowid {
+				err = errors.New("resource table entries mismatches accountbase table entries")
+				return pendingRow{}, err
+			} else if addrid > acctRowid {
 				err = callback(addr, 0, 0, nil, nil)
 				return pendingRow{addrid, aidx, rtype, buf}, err
 			}
@@ -3063,8 +3077,8 @@ func LoadAllFullAccounts(
 
 // accountAddressHash is used by Next to return a single account address and the associated hash.
 type accountAddressHash struct {
-	address basics.Address
-	digest  []byte
+	addrid int64
+	digest []byte
 }
 
 // Next returns an array containing the account address and hash
@@ -3088,7 +3102,7 @@ func (iterator *orderedAccountsIter) Next(ctx context.Context) (acct []accountAd
 	}
 	if iterator.step == oaiStepCreateOrderingTable {
 		// create the temporary table
-		_, err = iterator.tx.ExecContext(ctx, "CREATE TABLE accountsiteratorhashes(address blob, hash blob)")
+		_, err = iterator.tx.ExecContext(ctx, "CREATE TABLE accountsiteratorhashes(addrid INTEGER, hash blob)")
 		if err != nil {
 			return
 		}
@@ -3107,7 +3121,7 @@ func (iterator *orderedAccountsIter) Next(ctx context.Context) (acct []accountAd
 			return
 		}
 		// prepare the insert statement into the temporary table
-		iterator.insertStmt, err = iterator.tx.PrepareContext(ctx, "INSERT INTO accountsiteratorhashes(address, hash) VALUES(?, ?)")
+		iterator.insertStmt, err = iterator.tx.PrepareContext(ctx, "INSERT INTO accountsiteratorhashes(addrid, hash) VALUES(?, ?)")
 		if err != nil {
 			return
 		}
@@ -3115,13 +3129,14 @@ func (iterator *orderedAccountsIter) Next(ctx context.Context) (acct []accountAd
 		return
 	}
 	if iterator.step == oaiStepInsertAccountData {
-
+		var lastAddrID int64
 		baseCb := func(addr basics.Address, rowid int64, accountData *baseAccountData, encodedAccountData []byte) (err error) {
 			hash := accountHashBuilderV6(addr, accountData, encodedAccountData)
-			_, err = iterator.insertStmt.ExecContext(ctx, addr[:], hash)
+			_, err = iterator.insertStmt.ExecContext(ctx, rowid, hash)
 			if err != nil {
 				return
 			}
+			lastAddrID = rowid
 			return nil
 		}
 
@@ -3129,7 +3144,7 @@ func (iterator *orderedAccountsIter) Next(ctx context.Context) (acct []accountAd
 			var err error
 			if resData != nil {
 				hash := resourcesHashBuilderV6(addr, cidx, ctype, resData.UpdateRound, encodedResourceData)
-				_, err = iterator.insertStmt.ExecContext(ctx, addr[:], hash)
+				_, err = iterator.insertStmt.ExecContext(ctx, lastAddrID, hash)
 			}
 			return err
 		}
@@ -3181,7 +3196,7 @@ func (iterator *orderedAccountsIter) Next(ctx context.Context) (acct []accountAd
 	}
 	if iterator.step == oaiStepSelectFromOrderedTable {
 		// select the data from the ordered table
-		iterator.hashesRows, err = iterator.tx.QueryContext(ctx, "SELECT address, hash FROM accountsiteratorhashes ORDER BY hash")
+		iterator.hashesRows, err = iterator.tx.QueryContext(ctx, "SELECT addrid, hash FROM accountsiteratorhashes ORDER BY hash")
 
 		if err != nil {
 			iterator.Close(ctx)
@@ -3192,31 +3207,21 @@ func (iterator *orderedAccountsIter) Next(ctx context.Context) (acct []accountAd
 	}
 
 	if iterator.step == oaiStepIterateOverOrderedTable {
-		acct = make([]accountAddressHash, 0, iterator.accountCount)
-		var addr basics.Address
+		acct = make([]accountAddressHash, iterator.accountCount)
+		acctIdx := 0
 		for iterator.hashesRows.Next() {
-			var addrbuf []byte
-			var hash []byte
-			err = iterator.hashesRows.Scan(&addrbuf, &hash)
+			err = iterator.hashesRows.Scan(&(acct[acctIdx].addrid), &(acct[acctIdx].digest))
 			if err != nil {
 				iterator.Close(ctx)
 				return
 			}
-
-			if len(addrbuf) != len(addr) {
-				err = fmt.Errorf("account DB address length mismatch: %d != %d", len(addrbuf), len(addr))
-				iterator.Close(ctx)
-				return
-			}
-
-			copy(addr[:], addrbuf)
-
-			acct = append(acct, accountAddressHash{address: addr, digest: hash})
-			if len(acct) == iterator.accountCount {
+			acctIdx++
+			if acctIdx == iterator.accountCount {
 				// we're done with this iteration.
 				return
 			}
 		}
+		acct = acct[:acctIdx]
 		iterator.step = oaiStepShutdown
 		iterator.hashesRows.Close()
 		iterator.hashesRows = nil
@@ -3255,6 +3260,24 @@ func (iterator *orderedAccountsIter) Close(ctx context.Context) (err error) {
 	return
 }
 
+// createCatchpointStagingHashesIndex creates an index on catchpointpendinghashes to allow faster scanning according to the hash order
+func lookupAccountAddressFromAddressID(ctx context.Context, tx *sql.Tx, addrid int64) (address basics.Address, err error) {
+	var addrbuf []byte
+	err = tx.QueryRowContext(ctx, "SELECT address FROM accountbase WHERE rowid = ?", addrid).Scan(&addrbuf)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			err = fmt.Errorf("no matching address could be found for rowid %d: %w", addrid, err)
+		}
+		return
+	}
+	if len(addrbuf) != len(address) {
+		err = fmt.Errorf("account DB address length mismatch: %d != %d", len(addrbuf), len(address))
+		return
+	}
+	copy(address[:], addrbuf)
+	return
+}
+
 // catchpointPendingHashesIterator allows us to iterate over the hashes in the catchpointpendinghashes table in their order.
 type catchpointPendingHashesIterator struct {
 	hashCount int
@@ -3280,22 +3303,22 @@ func (iterator *catchpointPendingHashesIterator) Next(ctx context.Context) (hash
 	}
 
 	// gather up to accountCount encoded accounts.
-	hashes = make([][]byte, 0, iterator.hashCount)
+	hashes = make([][]byte, iterator.hashCount)
+	hashIdx := 0
 	for iterator.rows.Next() {
-		var hash []byte
-		err = iterator.rows.Scan(&hash)
+		err = iterator.rows.Scan(&hashes[hashIdx])
 		if err != nil {
 			iterator.Close()
 			return
 		}
 
-		hashes = append(hashes, hash)
-		if len(hashes) == iterator.hashCount {
+		hashIdx++
+		if hashIdx == iterator.hashCount {
 			// we're done with this iteration.
 			return
 		}
 	}
-
+	hashes = hashes[:hashIdx]
 	err = iterator.rows.Err()
 	if err != nil {
 		iterator.Close()
