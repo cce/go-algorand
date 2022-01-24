@@ -37,5 +37,5 @@ func DBlog(fn string, addr basics.Address, args ...interface{}) {
 		k := args[i].(string) // msut be a string
 		kvs[k] = args[i+1]
 	}
-	dbLogger.WithFields(kvs).Error(fn)
+	dbLogger.WithFields(kvs).Warn(fn)
 }
