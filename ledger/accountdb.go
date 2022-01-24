@@ -2412,7 +2412,9 @@ func accountsNewRound(
 			// as well as non-zero UpdateRound field in a new delta
 			if data.newResource.IsEmpty() {
 				// if we didn't had it before, and we don't have anything now, just skip it.
-				entry = persistedResourcesData{addrid, aidx, 0, makeResourcesData(0), lastUpdateRound}
+				// set zero addrid to mark this entry invalid for subsequent addr to addrid resolution
+				// because the base account might gone.
+				entry = persistedResourcesData{addrid: 0, aidx: aidx, rtype: 0, data: makeResourcesData(0), round: lastUpdateRound}
 			} else {
 				// create a new entry.
 				var rtype basics.CreatableType
@@ -2432,7 +2434,7 @@ func accountsNewRound(
 				}
 				if err == nil {
 					// set the returned persisted account states so that we could store that as the baseResources in commitRound
-					entry = persistedResourcesData{addrid, aidx, rtype, data.newResource, lastUpdateRound}
+					entry = persistedResourcesData{addrid: addrid, aidx: aidx, rtype: rtype, data: data.newResource, round: lastUpdateRound}
 				}
 			}
 		} else {
@@ -2446,7 +2448,9 @@ func accountsNewRound(
 				}
 				if err == nil {
 					// we deleted the entry successfully.
-					entry = persistedResourcesData{addrid, aidx, 0, makeResourcesData(0), lastUpdateRound}
+					// set zero addrid to mark this entry invalid for subsequent addr to addrid resolution
+					// because the base account might gone.
+					entry = persistedResourcesData{addrid: 0, aidx: aidx, rtype: 0, data: makeResourcesData(0), round: lastUpdateRound}
 					rowsAffected, err = result.RowsAffected()
 					if rowsAffected != 1 {
 						err = fmt.Errorf("failed to delete resources row for addr %s (%d), aidx %d", addr.String(), addrid, aidx)
@@ -2470,7 +2474,7 @@ func accountsNewRound(
 				}
 				if err == nil {
 					// rowid doesn't change on update.
-					entry = persistedResourcesData{addrid, aidx, rtype, data.newResource, lastUpdateRound}
+					entry = persistedResourcesData{addrid: addrid, aidx: aidx, rtype: rtype, data: data.newResource, round: lastUpdateRound}
 					rowsAffected, err = result.RowsAffected()
 					if rowsAffected != 1 {
 						err = fmt.Errorf("failed to update resources row for addr %s (%d), aidx %d", addr, addrid, aidx)
@@ -2892,7 +2896,7 @@ func processAllResources(
 				return pr, err
 			}
 			if pr.addrid < acctRowid {
-				err = errors.New("resource table entries mismatches accountbase table entries")
+				err = fmt.Errorf("resource table entries mismatches accountbase table entries : reached addrid %d while expecting resource for %d", pr.addrid, acctRowid)
 				return pendingRow{}, err
 			}
 			addrid = pr.addrid
@@ -2913,7 +2917,7 @@ func processAllResources(
 				return pendingRow{}, err
 			}
 			if addrid < acctRowid {
-				err = errors.New("resource table entries mismatches accountbase table entries")
+				err = fmt.Errorf("resource table entries mismatches accountbase table entries : reached addrid %d while expecting resource for %d", addrid, acctRowid)
 				return pendingRow{}, err
 			} else if addrid > acctRowid {
 				err = callback(addr, 0, 0, nil, nil)
@@ -2941,6 +2945,7 @@ func processAllBaseAccountRecords(
 	pending pendingRow, accountCount int,
 ) (int, pendingRow, error) {
 	var addr basics.Address
+	var prevAddr basics.Address
 	var err error
 	count := 0
 	for baseRows.Next() {
@@ -2971,6 +2976,7 @@ func processAllBaseAccountRecords(
 
 		pending, err = processAllResources(resRows, addr, &accountData, rowid, pending, resCb)
 		if err != nil {
+			err = fmt.Errorf("failed to gather resources for account %v, addrid %d, prev address %v : %w", addr, rowid, prevAddr, err)
 			return 0, pendingRow{}, err
 		}
 
@@ -2979,6 +2985,7 @@ func processAllBaseAccountRecords(
 			// we're done with this iteration.
 			return count, pending, nil
 		}
+		prevAddr = addr
 	}
 
 	return count, pending, nil
