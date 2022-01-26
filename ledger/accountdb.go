@@ -1609,11 +1609,11 @@ func performResourceTableMigration(ctx context.Context, tx *sql.Tx, log func(pro
 		address blob NOT NULL,
 		data blob,
 		normalizedonlinebalance INTEGER )`,
-		createNormalizedOnlineBalanceIndex(idxnameBalances, "accountbase_resources_migration"),
-		fmt.Sprintf(`CREATE UNIQUE INDEX accountbase_resources_migration_address_idx_%d ON accountbase_resources_migration(address)`, time.Now().UnixNano()),
 	}
 
 	applyNewAcctBase := []string{
+		createNormalizedOnlineBalanceIndex(idxnameBalances, "accountbase_resources_migration"),
+		fmt.Sprintf(`CREATE UNIQUE INDEX accountbase_resources_migration_address_idx_%d ON accountbase_resources_migration(address)`, time.Now().UnixNano()),
 		`ALTER TABLE accountbase RENAME TO accountbase_old`,
 		`ALTER TABLE accountbase_resources_migration RENAME TO accountbase`,
 		`DROP TABLE IF EXISTS accountbase_old`,
