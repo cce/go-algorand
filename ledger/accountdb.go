@@ -1628,13 +1628,13 @@ func performResourceTableMigration(ctx context.Context, tx *sql.Tx, log func(pro
 	var insertNewAcctBase *sql.Stmt
 	var insertResources *sql.Stmt
 	var insertNewAcctBaseNormBal *sql.Stmt
-	insertNewAcctBase, err = tx.PrepareContext(ctx, "INSERT INTO accountbase_resources_migration(address, data) VALUES(?, ?)")
+	insertNewAcctBase, err = tx.PrepareContext(ctx, "INSERT INTO accountbase_resources_migration(addrid, address, data) VALUES(?, ?, ?)")
 	if err != nil {
 		return err
 	}
 	defer insertNewAcctBase.Close()
 
-	insertNewAcctBaseNormBal, err = tx.PrepareContext(ctx, "INSERT INTO accountbase_resources_migration(address, data, normalizedonlinebalance) VALUES(?, ?, ?)")
+	insertNewAcctBaseNormBal, err = tx.PrepareContext(ctx, "INSERT INTO accountbase_resources_migration(addrid, address, data, normalizedonlinebalance) VALUES(?, ?, ?, ?)")
 	if err != nil {
 		return err
 	}
@@ -1680,11 +1680,12 @@ func performResourceTableMigration(ctx context.Context, tx *sql.Tx, log func(pro
 		var newAccountData baseAccountData
 		newAccountData.SetAccountData(&accountData)
 		encodedAcctData = protocol.Encode(&newAccountData)
+		rowID++
 
 		if normBal.Valid {
-			insertRes, err = insertNewAcctBaseNormBal.ExecContext(ctx, addrbuf, encodedAcctData, normBal.Int64)
+			insertRes, err = insertNewAcctBaseNormBal.ExecContext(ctx, rowID, addrbuf, encodedAcctData, normBal.Int64)
 		} else {
-			insertRes, err = insertNewAcctBase.ExecContext(ctx, addrbuf, encodedAcctData)
+			insertRes, err = insertNewAcctBase.ExecContext(ctx, rowID, addrbuf, encodedAcctData)
 		}
 
 		if err != nil {
@@ -1696,10 +1697,6 @@ func performResourceTableMigration(ctx context.Context, tx *sql.Tx, log func(pro
 		}
 		if rowsAffected != 1 {
 			return fmt.Errorf("number of affected rows is not 1 - %d", rowsAffected)
-		}
-		rowID, err = insertRes.LastInsertId()
-		if err != nil {
-			return err
 		}
 		insertResourceCallback := func(ctx context.Context, rowID int64, cidx basics.CreatableIndex, ctype basics.CreatableType, rd *resourcesData) error {
 			var err error
