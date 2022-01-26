@@ -2537,6 +2537,9 @@ func accountsNewRound(
 	for delRes := range pendingResourcesDeletion {
 		// new value is zero, which means we need to delete the current value.
 		result, err = deleteResourceStmt.Exec(delRes.addrid, delRes.aidx)
+		if err != nil {
+			err = fmt.Errorf("deleteResourceStmt.Exec addrid %d aidx %d: %w", delRes.addrid, delRes.aidx, err)
+		}
 		if err == nil {
 			// we deleted the entry successfully.
 			// set zero addrid to mark this entry invalid for subsequent addr to addrid resolution
