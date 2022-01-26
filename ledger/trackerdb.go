@@ -24,6 +24,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime/pprof"
 	"time"
 
 	"github.com/algorand/go-algorand/config"
@@ -397,7 +398,19 @@ func (tu *trackerDBSchemaInitializer) upgradeDatabaseSchema5(ctx context.Context
 		tu.log.Infof("upgradeDatabaseSchema5 upgraded %d out of %d accounts [ %3.1f%% ]", processed, total, float64(processed)*100.0/float64(total))
 	}
 
+	profF, err := os.Create(fmt.Sprintf("resourceMigration-%d.prof", time.Now().Unix()))
+	if err != nil {
+		return fmt.Errorf("error creating CPU profile: %v", err)
+	}
+	defer profF.Close()
+	if err := pprof.StartCPUProfile(profF); err != nil {
+		return fmt.Errorf("error starting CPU profile: %v", err)
+	}
+	t0 := time.Now()
 	err = performResourceTableMigration(ctx, tx, migrationProcessLog)
+	pprof.StopCPUProfile()
+	fmt.Println("performResourceTableMigration took", time.Since(t0))
+
 	if err != nil {
 		return fmt.Errorf("upgradeDatabaseSchema5 unable to complete data migration : %v", err)
 	}
