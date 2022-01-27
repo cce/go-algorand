@@ -1646,14 +1646,13 @@ func performResourceTableMigration(ctx context.Context, tx *sql.Tx, log func(pro
 	defer insertResources.Close()
 
 	var rows *sql.Rows
-	rows, err = tx.QueryContext(ctx, "SELECT address, data, normalizedonlinebalance FROM accountbase ORDER BY address")
+	rows, err = tx.QueryContext(ctx, "SELECT rowid, address, data, normalizedonlinebalance FROM accountbase ORDER BY address")
 	if err != nil {
 		return err
 	}
 	defer rows.Close()
 
 	var insertRes sql.Result
-	var rowID int64
 	var rowsAffected int64
 	var processedAccounts uint64
 	var totalBaseAccounts uint64
@@ -1665,8 +1664,9 @@ func performResourceTableMigration(ctx context.Context, tx *sql.Tx, log func(pro
 	for rows.Next() {
 		var addrbuf []byte
 		var encodedAcctData []byte
+		var rowID int64
 		var normBal sql.NullInt64
-		err = rows.Scan(&addrbuf, &encodedAcctData, &normBal)
+		err = rows.Scan(&rowID, &addrbuf, &encodedAcctData, &normBal)
 		if err != nil {
 			return err
 		}
@@ -1679,7 +1679,6 @@ func performResourceTableMigration(ctx context.Context, tx *sql.Tx, log func(pro
 		var newAccountData baseAccountData
 		newAccountData.SetAccountData(&accountData)
 		encodedAcctData = protocol.Encode(&newAccountData)
-		rowID++
 
 		if normBal.Valid {
 			insertRes, err = insertNewAcctBaseNormBal.ExecContext(ctx, rowID, addrbuf, encodedAcctData, normBal.Int64)
