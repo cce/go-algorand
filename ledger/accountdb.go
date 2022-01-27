@@ -111,9 +111,8 @@ var createResourcesTable = []string{
 	`CREATE TABLE IF NOT EXISTS resources (
 		addrid INTEGER NOT NULL,
 		aidx INTEGER NOT NULL,
-		rtype INTEGER NOT NULL,
 		data BLOB NOT NULL,
-		PRIMARY KEY (addrid, aidx, rtype) ) WITHOUT ROWID`,
+		PRIMARY KEY (addrid, aidx) ) WITHOUT ROWID`,
 }
 
 var accountsResetExprs = []string{
@@ -1640,7 +1639,7 @@ func performResourceTableMigration(ctx context.Context, tx *sql.Tx, log func(pro
 	}
 	defer insertNewAcctBaseNormBal.Close()
 
-	insertResources, err = tx.PrepareContext(ctx, "INSERT INTO resources(addrid, aidx, rtype, data) VALUES(?, ?, ?, ?)")
+	insertResources, err = tx.PrepareContext(ctx, "INSERT INTO resources(addrid, aidx, data) VALUES(?, ?, ?)")
 	if err != nil {
 		return err
 	}
@@ -1702,7 +1701,7 @@ func performResourceTableMigration(ctx context.Context, tx *sql.Tx, log func(pro
 			var err error
 			if rd != nil {
 				encodedData := protocol.Encode(rd)
-				_, err = insertResources.ExecContext(ctx, rowID, cidx, ctype, encodedData)
+				_, err = insertResources.ExecContext(ctx, rowID, cidx, encodedData)
 			}
 			return err
 		}
