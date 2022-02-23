@@ -1544,6 +1544,19 @@ func (rd *resourcesData) SetAppData(ap ledgercore.AppParamsDelta, al ledgercore.
 	}
 }
 
+type accountInsertMigrationTask struct {
+	normBal         sql.NullInt64
+	rowID           int64
+	addrbuf         []byte
+	encodedAcctData []byte
+}
+type resourceInsertMigrationTask struct {
+	rowID       int64
+	cidx        basics.CreatableIndex
+	ctype       basics.CreatableType
+	encodedData []byte
+}
+
 func accountDataResources(
 	ctx context.Context,
 	accountData *basics.AccountData, rowid int64,
@@ -1558,10 +1571,8 @@ func accountDataResources(
 				rd.SetAssetParams(ap, true)
 				delete(accountData.AssetParams, aidx)
 			}
-			err := cb(ctx, rowid, basics.CreatableIndex(aidx), basics.AssetCreatable, &rd)
-			if err != nil {
-				return err
-			}
+			encodedData := protocol.Encode(&rd)
+			out <- resourceInsertMigrationTask{rowid, basics.CreatableIndex(aidx), basics.AssetCreatable, encodedData}
 		}
 		for aidx, aparams := range accountData.AssetParams {
 			var rd resourcesData
@@ -1661,6 +1672,37 @@ func performResourceTableMigration(ctx context.Context, tx *sql.Tx, log func(pro
 	if err != nil {
 		return err
 	}
+
+	accountInserts := make(chan accountInsertTask)
+	resourceInserts := make(chan resourceInsertTask)
+	errors := make(chan error)
+	go func() {
+		select {
+		case it := <-accountInserts:
+			if it.normBal.Valid {
+				insertRes, err = insertNewAcctBaseNormBal.ExecContext(ctx, it.rowID, it.addrbuf, it.encodedAcctData, it.normBal.Int64)
+			} else {
+				insertRes, err = insertNewAcctBase.ExecContext(ctx, it.rowID, it.addrbuf, it.encodedAcctData)
+			}
+			if err != nil {
+				errors <- err
+				break
+			}
+			rowsAffected, err = insertRes.RowsAffected()
+			if err != nil {
+				errors <- err
+				break
+			}
+			if rowsAffected != 1 {
+				errors <- fmt.Errorf("number of affected rows is not 1 - %d", rowsAffected)
+				break
+			}
+		case it := <-resourceInserts:
+			_, err = insertResources.ExecContext(ctx, rowID, cidx, encodedData)
+
+		}
+	}()
+
 	for rows.Next() {
 		var addrbuf []byte
 		var encodedAcctData []byte
@@ -1680,28 +1722,10 @@ func performResourceTableMigration(ctx context.Context, tx *sql.Tx, log func(pro
 		newAccountData.SetAccountData(&accountData)
 		encodedAcctData = protocol.Encode(&newAccountData)
 
-		if normBal.Valid {
-			insertRes, err = insertNewAcctBaseNormBal.ExecContext(ctx, rowID, addrbuf, encodedAcctData, normBal.Int64)
-		} else {
-			insertRes, err = insertNewAcctBase.ExecContext(ctx, rowID, addrbuf, encodedAcctData)
-		}
+		inserts <- insertTask{normBal, rowID, addrbuf, encodedAcctData}
 
-		if err != nil {
-			return err
-		}
-		rowsAffected, err = insertRes.RowsAffected()
-		if err != nil {
-			return err
-		}
-		if rowsAffected != 1 {
-			return fmt.Errorf("number of affected rows is not 1 - %d", rowsAffected)
-		}
 		insertResourceCallback := func(ctx context.Context, rowID int64, cidx basics.CreatableIndex, ctype basics.CreatableType, rd *resourcesData) error {
 			var err error
-			if rd != nil {
-				encodedData := protocol.Encode(rd)
-				_, err = insertResources.ExecContext(ctx, rowID, cidx, encodedData)
-			}
 			return err
 		}
 		err = accountDataResources(ctx, &accountData, rowID, insertResourceCallback)
