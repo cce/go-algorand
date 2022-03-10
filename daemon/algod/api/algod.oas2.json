@@ -2241,6 +2241,45 @@
         }
       }
     },
+    "AccountsErrorResponse": {
+      "description": "An error response for the AccountInformation endpoint, with optional information about limits that were exceeded.",
+      "type": "object",
+      "required": [
+        "message"
+      ],
+      "properties": {
+        "data": {
+          "type": "object",
+          "required": [
+            "max-results",
+            "total-apps-opted-in",
+            "total-assets-opted-in",
+            "total-created-apps",
+            "total-created-assets"
+          ],
+          "properties": {
+            "max-results": {
+              "type": "integer"
+            },
+            "total-apps-opted-in": {
+              "type": "integer"
+            },
+            "total-assets-opted-in": {
+              "type": "integer"
+            },
+            "total-created-apps": {
+              "type": "integer"
+            },
+            "total-created-assets": {
+              "type": "integer"
+            }
+          }
+        },
+        "message": {
+          "type": "string"
+        }
+      }
+    },
     "DryrunRequest": {
       "description": "Request data type for dryrun endpoint. Given the Transactions and simulated ledger state upload, run TEAL scripts and return debugging information.",
       "type": "object",

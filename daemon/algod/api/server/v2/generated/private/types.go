@@ -124,6 +124,18 @@ type AccountStateDelta struct {
 	Delta StateDelta `json:"delta"`
 }
 
+// AccountsErrorResponse defines model for AccountsErrorResponse.
+type AccountsErrorResponse struct {
+	Data *struct {
+		MaxResults         uint64 `json:"max-results"`
+		TotalAppsOptedIn   uint64 `json:"total-apps-opted-in"`
+		TotalAssetsOptedIn uint64 `json:"total-assets-opted-in"`
+		TotalCreatedApps   uint64 `json:"total-created-apps"`
+		TotalCreatedAssets uint64 `json:"total-created-assets"`
+	} `json:"data,omitempty"`
+	Message string `json:"message"`
+}
+
 // Application defines model for Application.
 type Application struct {
 

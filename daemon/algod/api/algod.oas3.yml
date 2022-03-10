@@ -915,6 +915,45 @@
         ],
         "type": "object"
       },
+      "AccountsErrorResponse": {
+        "description": "An error response for the AccountInformation endpoint, with optional information about limits that were exceeded.",
+        "properties": {
+          "data": {
+            "properties": {
+              "max-results": {
+                "type": "integer"
+              },
+              "total-apps-opted-in": {
+                "type": "integer"
+              },
+              "total-assets-opted-in": {
+                "type": "integer"
+              },
+              "total-created-apps": {
+                "type": "integer"
+              },
+              "total-created-assets": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "max-results",
+              "total-apps-opted-in",
+              "total-assets-opted-in",
+              "total-created-apps",
+              "total-created-assets"
+            ],
+            "type": "object"
+          },
+          "message": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "message"
+        ],
+        "type": "object"
+      },
       "Application": {
         "description": "Application index and its parameters",
         "properties": {

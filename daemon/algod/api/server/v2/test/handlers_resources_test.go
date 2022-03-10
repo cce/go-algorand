@@ -209,27 +209,8 @@ func accountInformationResourceLimitsTest(t *testing.T, accountMaker func(int) b
 	require.NoError(t, err)
 	require.Equal(t, expectedCode, rec.Code)
 
-	var ret struct {
-		TotalApps          int           `json:"total-apps-opted-in"`
-		TotalAssets        int           `json:"total-assets-opted-in"`
-		TotalCreatedApps   int           `json:"total-created-apps"`
-		TotalCreatedAssets int           `json:"total-created-assets"`
-		MaxResults         int           `json:"max-results"`
-		Apps               []interface{} `json:"apps-local-state"`
-		Assets             []interface{} `json:"assets"`
-		CreatedApps        []interface{} `json:"createdApps"`
-		CreatedAssets      []interface{} `json:"createdAssets"`
-	}
-
-	var errRet struct {
-		Data struct {
-			TotalApps          int `json:"total-apps-opted-in"`
-			TotalAssets        int `json:"total-assets-opted-in"`
-			TotalCreatedApps   int `json:"total-created-apps"`
-			TotalCreatedAssets int `json:"total-created-assets"`
-			MaxResults         int `json:"max-results"`
-		} `json:"data,omitempty"`
-	}
+	var ret generatedV2.AccountResponse
+	var errRet generatedV2.AccountsErrorResponse
 
 	// check totals
 	switch rec.Code {
@@ -238,25 +219,25 @@ func accountInformationResourceLimitsTest(t *testing.T, accountMaker func(int) b
 		require.NoError(t, err)
 		require.Equal(t, maxResults, errRet.Data.MaxResults)
 		// totals should be present in both 200 and 400
-		require.Equal(t, acctSize, errRet.Data.TotalApps+errRet.Data.TotalAssets+errRet.Data.TotalCreatedApps+errRet.Data.TotalCreatedAssets, "totals incorrect: %+v", ret)
+		require.Equal(t, acctSize, errRet.Data.TotalAppsOptedIn+errRet.Data.TotalAssetsOptedIn+errRet.Data.TotalCreatedApps+errRet.Data.TotalCreatedAssets, "totals incorrect: %+v", ret)
 	case 200:
 		err = json.Unmarshal(rec.Body.Bytes(), &ret)
 		require.NoError(t, err)
 		// totals should be present in both 200 and 400
-		require.Equal(t, acctSize, ret.TotalApps+ret.TotalAssets+ret.TotalCreatedApps+ret.TotalCreatedAssets, "totals incorrect: %+v", ret)
+		require.Equal(t, acctSize, ret.TotalAppsOptedIn+ret.TotalAssetsOptedIn+ret.TotalCreatedApps+ret.TotalCreatedAssets, "totals incorrect: %+v", ret)
 
 		if exclude == "all" {
-			require.Nil(t, ret.Apps)
+			require.Nil(t, ret.AppsLocalState)
 			require.Nil(t, ret.Assets)
 			require.Nil(t, ret.CreatedApps)
 			require.Nil(t, ret.CreatedAssets)
 		} else if exclude == "none" {
-			require.Equal(t, acctSize, len(ret.Apps)+len(ret.Assets)+len(ret.CreatedApps)+len(ret.CreatedAssets))
+			require.Equal(t, acctSize, len(*ret.AppsLocalState)+len(*ret.Assets)+len(*ret.CreatedApps)+len(*ret.CreatedAssets))
 		}
 	}
 
 	// check individual assets/apps
-	for i := 0; i < ret.TotalAssets; i++ {
+	for i := uint64(0); i < ret.TotalAssetsOptedIn; i++ {
 		ctx, rec = newReq(t)
 		aidx := basics.AssetIndex(i * 4)
 		err = handlers.AccountAssetInformation(ctx, addr.String(), uint64(aidx), generatedV2.AccountAssetInformationParams{})
@@ -272,7 +253,7 @@ func accountInformationResourceLimitsTest(t *testing.T, accountMaker func(int) b
 			IsFrozen: acctData.Assets[aidx].Frozen,
 		})
 	}
-	for i := 0; i < ret.TotalCreatedAssets; i++ {
+	for i := uint64(0); i < ret.TotalCreatedAssets; i++ {
 		ctx, rec = newReq(t)
 		aidx := basics.AssetIndex(i*4 + 1)
 		err = handlers.AccountAssetInformation(ctx, addr.String(), uint64(aidx), generatedV2.AccountAssetInformationParams{})
@@ -286,7 +267,7 @@ func accountInformationResourceLimitsTest(t *testing.T, accountMaker func(int) b
 		assetParams := v2.AssetParamsToAsset(addr.String(), aidx, &ap)
 		assert.Equal(t, ret.CreatedAsset, &assetParams.Params)
 	}
-	for i := 0; i < ret.TotalApps; i++ {
+	for i := uint64(0); i < ret.TotalAppsOptedIn; i++ {
 		ctx, rec = newReq(t)
 		aidx := basics.AppIndex(i*4 + 2)
 		err = handlers.AccountApplicationInformation(ctx, addr.String(), uint64(aidx), generatedV2.AccountApplicationInformationParams{})
@@ -302,7 +283,7 @@ func accountInformationResourceLimitsTest(t *testing.T, accountMaker func(int) b
 		assert.Equal(t, ls.Schema.NumByteSlice, ret.AppLocalState.Schema.NumByteSlice)
 		assert.Equal(t, ls.Schema.NumUint, ret.AppLocalState.Schema.NumUint)
 	}
-	for i := 0; i < ret.TotalCreatedApps; i++ {
+	for i := uint64(0); i < ret.TotalCreatedApps; i++ {
 		ctx, rec = newReq(t)
 		aidx := basics.AppIndex(i*4 + 3)
 		err = handlers.AccountApplicationInformation(ctx, addr.String(), uint64(aidx), generatedV2.AccountApplicationInformationParams{})
