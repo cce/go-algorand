@@ -29,7 +29,9 @@ import (
 	"path/filepath"
 	"runtime"
 	"testing"
+	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/algorand/go-algorand/config"
@@ -40,6 +42,8 @@ import (
 	ledgertesting "github.com/algorand/go-algorand/ledger/testing"
 	"github.com/algorand/go-algorand/protocol"
 	"github.com/algorand/go-algorand/test/partitiontest"
+	"github.com/algorand/go-codec/codec"
+	"github.com/algorand/msgp/msgp"
 )
 
 func makeString(len int) string {
@@ -396,4 +400,104 @@ func TestFullCatchpointWriter(t *testing.T) {
 		require.Equal(t, acct, acctData)
 		require.Equal(t, basics.Round(0), validThrough)
 	}
+}
+
+type logWriter struct {
+	t   *testing.T
+	buf bytes.Buffer
+}
+
+// Write implements io.Writer
+func (lw *logWriter) Write(buf []byte) (n int, err error) {
+	lw.t.Logf("logWriter.Write for buf len %d", len(buf))
+	return lw.buf.Write(buf)
+}
+
+func TestCatchpointStreamingChanEncode(t *testing.T) {
+	randomEncodedBaseAccountData := func() []byte {
+		ad := ledgertesting.RandomAccountData(0)
+		var bad baseAccountData
+		bad.SetAccountData(&ad)
+		return protocol.Encode(&bad) // what's in the database and what's in encodedBalanceRecordV6.AccountData
+	}
+
+	res := make(map[uint64]msgp.Raw)
+	bigRes := make([]byte, 1024*1024)
+	crypto.RandBytes(bigRes[:])
+	res[1] = msgp.Raw(bigRes)
+	bal1 := encodedBalanceRecordV6{Address: ledgertesting.RandomAddress(), AccountData: randomEncodedBaseAccountData(), Resources: res}
+	bal2 := encodedBalanceRecordV6{Address: ledgertesting.RandomAddress(), AccountData: randomEncodedBaseAccountData(), Resources: res}
+	bal3 := encodedBalanceRecordV6{Address: ledgertesting.RandomAddress(), AccountData: randomEncodedBaseAccountData(), Resources: res}
+
+	chunk1 := catchpointFileBalancesChunkV6Chan{
+		Balances: make(chan encodedBalanceRecordV6, 1),
+	}
+	go func(ch chan<- encodedBalanceRecordV6) {
+		t.Logf("writing bal1")
+		ch <- bal1
+		t.Logf("writing bal2")
+		ch <- bal2
+		t.Logf("writing bal3")
+		ch <- bal3
+		t.Logf("closing chan")
+		close(ch)
+	}(chunk1.Balances)
+
+	time.Sleep(500 * time.Millisecond)
+	// set up streaming encoding to Writer
+	lw := &logWriter{t: t}
+	//enc := protocol.NewEncoder(lw)
+	myHandle := *protocol.CodecHandle
+	// set ChanRecvTimeout to consume until the chan is closed
+	myHandle.EncodeOptions.ChanRecvTimeout = -1
+	enc := codec.NewEncoder(lw, &myHandle)
+	err := enc.Encode(&chunk1)
+	require.NoError(t, err)
+
+}
+
+func TestCatchpointStreamingEncode(t *testing.T) {
+	randomEncodedBaseAccountData := func() []byte {
+		ad := ledgertesting.RandomAccountData(0)
+		var bad baseAccountData
+		bad.SetAccountData(&ad)
+		return protocol.Encode(&bad) // what's in the database and waht's in encodedBalanceRecordV6.AccountData
+	}
+
+	res := make(map[uint64]msgp.Raw)
+	bigRes := make([]byte, 1024*1024)
+	crypto.RandBytes(bigRes[:])
+	res[1] = msgp.Raw(bigRes)
+	bal1 := encodedBalanceRecordV6{Address: ledgertesting.RandomAddress(), AccountData: randomEncodedBaseAccountData(), Resources: res}
+	bal2 := encodedBalanceRecordV6{Address: ledgertesting.RandomAddress(), AccountData: randomEncodedBaseAccountData(), Resources: res}
+	bal3 := encodedBalanceRecordV6{Address: ledgertesting.RandomAddress(), AccountData: randomEncodedBaseAccountData(), Resources: res}
+
+	chunk1 := catchpointFileBalancesChunkV6{
+		Balances: []encodedBalanceRecordV6{bal1, bal2, bal3},
+	}
+
+	// set up streaming encoding to Writer
+	lw := &logWriter{t: t}
+	enc := protocol.NewEncoder(lw)
+	//enc := codec.NewEncoder(lw, protocol.CodecHandle)
+	err := enc.Encode(&chunk1)
+	require.NoError(t, err)
+
+	// set up encoder to []byte
+	var encbytesbuf []byte
+	encbytes := codec.NewEncoderBytes(&encbytesbuf, protocol.CodecHandle)
+	err = encbytes.Encode(&chunk1)
+	require.NoError(t, err)
+
+	// assert both are equal
+	assert.Equal(t, encbytesbuf, lw.buf.Bytes())
+	t.Logf("encbytesbuf len %d", len(encbytesbuf))
+
+	//protocol.EncodeStream(lw, &chunk1)
+	//chunk1Buf := protocol.Encode(&chunk1)
+
+	var chunkDec catchpointFileBalancesChunkV6
+	err = protocol.Decode(encbytesbuf, &chunkDec)
+	//err := protocol.Decode(chunk1Buf, &chunkDec)
+	require.NoError(t, err)
 }

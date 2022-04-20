@@ -88,13 +88,31 @@ type encodedBalanceRecordV6 struct {
 	_struct struct{} `codec:",omitempty,omitemptyarray"`
 
 	Address     basics.Address      `codec:"a,allocbound=crypto.DigestSize"`
-	AccountData msgp.Raw            `codec:"b,allocbound=basics.MaxEncodedAccountDataSize"`
-	Resources   map[uint64]msgp.Raw `codec:"c,allocbound=basics.MaxEncodedAccountDataSize"`
+	AccountData msgp.Raw            `codec:"b,allocbound=basics.MaxEncodedAccountDataSize"` // baseAccountData
+	Resources   map[uint64]msgp.Raw `codec:"c,allocbound=basics.MaxEncodedAccountDataSize"` // resourcesData
 }
 
 type catchpointFileBalancesChunkV6 struct {
 	_struct  struct{}                 `codec:",omitempty,omitemptyarray"`
 	Balances []encodedBalanceRecordV6 `codec:"bl,allocbound=BalancesPerCatchpointFileChunk"`
+}
+
+type encodedBalanceRecordV6Chan struct {
+	_struct struct{} `codec:",omitempty,omitemptyarray"`
+
+	Address     basics.Address               `codec:"a,allocbound=crypto.DigestSize"`
+	AccountData msgp.Raw                     `codec:"b,allocbound=basics.MaxEncodedAccountDataSize"` // baseAccountData
+	Resources   chan encodedResourceRecordV6 `codec:"c,allocbound=basics.MaxEncodedAccountDataSize"` // resourcesData
+}
+
+type encodedResourceRecordV6 struct {
+	ID       uint64   `codec:"i"`
+	Resource msgp.Raw `codec:"r,allocbound=basics.MaxEncodedAccountDataSize"` // resourcesData
+}
+
+type catchpointFileBalancesChunkV6Chan struct {
+	_struct  struct{}                    `codec:",omitempty,omitemptyarray"`
+	Balances chan encodedBalanceRecordV6 `codec:"bl,allocbound=BalancesPerCatchpointFileChunk"`
 }
 
 // CatchpointFileHeader is the content we would have in the "content.msgpack" file in the catchpoint tar archive.

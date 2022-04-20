@@ -59,6 +59,14 @@ import (
 //               |-----> (*) Msgsize
 //               |-----> (*) MsgIsZero
 //
+// catchpointFileBalancesChunkV6Chan
+//                 |-----> (*) MarshalMsg
+//                 |-----> (*) CanMarshalMsg
+//                 |-----> (*) UnmarshalMsg
+//                 |-----> (*) CanUnmarshalMsg
+//                 |-----> (*) Msgsize
+//                 |-----> (*) MsgIsZero
+//
 // catchpointState
 //        |-----> MarshalMsg
 //        |-----> CanMarshalMsg
@@ -1618,6 +1626,88 @@ func (z *catchpointFileBalancesChunkV6) Msgsize() (s int) {
 // MsgIsZero returns whether this is a zero value
 func (z *catchpointFileBalancesChunkV6) MsgIsZero() bool {
 	return (len((*z).Balances) == 0)
+}
+
+// MarshalMsg implements msgp.Marshaler
+func (z *catchpointFileBalancesChunkV6Chan) MarshalMsg(b []byte) (o []byte) {
+	o = msgp.Require(b, z.Msgsize())
+	// omitempty: check for empty values
+	zb0001Len := uint32(0)
+	// variable map header, size zb0001Len
+	o = append(o, 0x80|uint8(zb0001Len))
+	if zb0001Len != 0 {
+	}
+	return
+}
+
+func (_ *catchpointFileBalancesChunkV6Chan) CanMarshalMsg(z interface{}) bool {
+	_, ok := (z).(*catchpointFileBalancesChunkV6Chan)
+	return ok
+}
+
+// UnmarshalMsg implements msgp.Unmarshaler
+func (z *catchpointFileBalancesChunkV6Chan) UnmarshalMsg(bts []byte) (o []byte, err error) {
+	var field []byte
+	_ = field
+	var zb0001 int
+	var zb0002 bool
+	zb0001, zb0002, bts, err = msgp.ReadMapHeaderBytes(bts)
+	if _, ok := err.(msgp.TypeError); ok {
+		zb0001, zb0002, bts, err = msgp.ReadArrayHeaderBytes(bts)
+		if err != nil {
+			err = msgp.WrapError(err)
+			return
+		}
+		if zb0001 > 0 {
+			err = msgp.ErrTooManyArrayFields(zb0001)
+			if err != nil {
+				err = msgp.WrapError(err, "struct-from-array")
+				return
+			}
+		}
+	} else {
+		if err != nil {
+			err = msgp.WrapError(err)
+			return
+		}
+		if zb0002 {
+			(*z) = catchpointFileBalancesChunkV6Chan{}
+		}
+		for zb0001 > 0 {
+			zb0001--
+			field, bts, err = msgp.ReadMapKeyZC(bts)
+			if err != nil {
+				err = msgp.WrapError(err)
+				return
+			}
+			switch string(field) {
+			default:
+				err = msgp.ErrNoField(string(field))
+				if err != nil {
+					err = msgp.WrapError(err)
+					return
+				}
+			}
+		}
+	}
+	o = bts
+	return
+}
+
+func (_ *catchpointFileBalancesChunkV6Chan) CanUnmarshalMsg(z interface{}) bool {
+	_, ok := (z).(*catchpointFileBalancesChunkV6Chan)
+	return ok
+}
+
+// Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
+func (z *catchpointFileBalancesChunkV6Chan) Msgsize() (s int) {
+	s = 1
+	return
+}
+
+// MsgIsZero returns whether this is a zero value
+func (z *catchpointFileBalancesChunkV6Chan) MsgIsZero() bool {
+	return true
 }
 
 // MarshalMsg implements msgp.Marshaler
