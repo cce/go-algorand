@@ -3,6 +3,7 @@ module github.com/algorand/go-algorand
 go 1.16
 
 require (
+	github.com/alangpierce/go-forceexport v0.0.0-20160317203124-8f1d6941cd75 // indirect
 	github.com/algorand/falcon v0.0.0-20220130164023-c9e1d466f123
 	github.com/algorand/go-codec/codec v1.1.8
 	github.com/algorand/go-deadlock v0.2.2
@@ -31,7 +32,10 @@ require (
 	github.com/jmoiron/sqlx v1.2.0
 	github.com/karalabe/usb v0.0.2
 	github.com/labstack/echo/v4 v4.1.17
+	github.com/lucas-clemente/quic-go v0.27.0 // indirect
 	github.com/mailru/easyjson v0.7.7 // indirect
+	github.com/marten-seemann/chacha20 v0.2.0 // indirect
+	github.com/marten-seemann/qtls v0.4.1 // indirect
 	github.com/mattn/go-sqlite3 v1.10.0
 	github.com/miekg/dns v1.1.27
 	github.com/niemeyer/pretty v0.0.0-20200227124842-a10e7caefd8e // indirect

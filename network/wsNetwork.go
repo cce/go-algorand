@@ -19,10 +19,15 @@ package network
 import (
 	"container/heap"
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/base64"
+	"encoding/pem"
 	"errors"
 	"fmt"
-	"io/ioutil"
+	"math/big"
 	"net"
 	"net/http"
 	"net/textproto"
@@ -30,7 +35,6 @@ import (
 	"path"
 	"regexp"
 	"runtime"
-	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -39,12 +43,13 @@ import (
 	"github.com/algorand/go-deadlock"
 	"github.com/algorand/websocket"
 	"github.com/gorilla/mux"
+	"github.com/lucas-clemente/quic-go"
+	"github.com/lucas-clemente/quic-go/http3"
 
 	"github.com/algorand/go-algorand/config"
 	"github.com/algorand/go-algorand/crypto"
 	"github.com/algorand/go-algorand/logging"
 	"github.com/algorand/go-algorand/logging/telemetryspec"
-	"github.com/algorand/go-algorand/network/limitlistener"
 	"github.com/algorand/go-algorand/protocol"
 	tools_network "github.com/algorand/go-algorand/tools/network"
 	"github.com/algorand/go-algorand/tools/network/dnssec"
@@ -303,7 +308,7 @@ const GossipNetworkPath = "/v1/{genesisID}/gossip"
 
 // WebsocketNetwork implements GossipNode
 type WebsocketNetwork struct {
-	listener net.Listener
+	listener quic.EarlyListener
 	server   http.Server
 	router   *mux.Router
 	scheme   string // are we serving http or https ?
@@ -747,16 +752,18 @@ func (wn *WebsocketNetwork) Start() {
 	}
 
 	if wn.config.NetAddress != "" {
-		listener, err := net.Listen("tcp", wn.config.NetAddress)
+		//listener, err := net.Listen("tcp", wn.config.NetAddress)
+		listener, err := quic.ListenAddrEarly(wn.config.NetAddress, generateTLSConfig(), nil)
 		if err != nil {
 			wn.log.Errorf("network could not listen %v: %s", wn.config.NetAddress, err)
 			return
 		}
-		// wrap the original listener with a limited connection listener
-		listener = limitlistener.RejectingLimitListener(
-			listener, uint64(wn.config.IncomingConnectionsLimit), wn.log)
-		// wrap the limited connection listener with a requests tracker listener
-		wn.listener = wn.requestsTracker.Listener(listener)
+		// // wrap the original listener with a limited connection listener
+		// listener = limitlistener.RejectingLimitListener(
+		// 	listener, uint64(wn.config.IncomingConnectionsLimit), wn.log)
+		// // wrap the limited connection listener with a requests tracker listener
+		// wn.listener = wn.requestsTracker.Listener(listener)
+		wn.listener = listener
 		wn.log.Debugf("listening on %s", wn.listener.Addr().String())
 		wn.throttledOutgoingConnections = int32(wn.config.GossipFanout / 2)
 	} else {
@@ -804,10 +811,13 @@ func (wn *WebsocketNetwork) Start() {
 func (wn *WebsocketNetwork) httpdThread() {
 	defer wn.wg.Done()
 	var err error
+	http3server := http3.Server{
+		Server: &wn.server, QuicConfig: &quic.Config{},
+	}
 	if wn.config.TLSCertFile != "" && wn.config.TLSKeyFile != "" {
-		err = wn.server.ServeTLS(wn.listener, wn.config.TLSCertFile, wn.config.TLSKeyFile)
+		err = http3server.ServeListener(wn.listener) // XXX, wn.config.TLSCertFile, wn.config.TLSKeyFile)
 	} else {
-		err = wn.server.Serve(wn.listener)
+		err = http3server.ServeListener(wn.listener)
 	}
 	if err == http.ErrServerClosed {
 	} else if err != nil {
@@ -1963,55 +1973,23 @@ func (wn *WebsocketNetwork) tryConnect(addr, gossipAddr string) {
 	SetUserAgentHeader(requestHeader)
 	myInstanceName := wn.log.GetInstanceName()
 	requestHeader.Set(InstanceNameHeader, myInstanceName)
-	var websocketDialer = websocket.Dialer{
-		Proxy:             http.ProxyFromEnvironment,
-		HandshakeTimeout:  45 * time.Second,
-		EnableCompression: false,
-		NetDialContext:    wn.dialer.DialContext,
-		NetDial:           wn.dialer.Dial,
-	}
 
-	conn, response, err := websocketDialer.DialContext(wn.ctx, gossipAddr, requestHeader)
+	// var websocketDialer = websocket.Dialer{
+	// 	Proxy:             http.ProxyFromEnvironment,
+	// 	HandshakeTimeout:  45 * time.Second,
+	// 	EnableCompression: false,
+	// 	NetDialContext:    wn.dialer.DialContext,
+	// 	NetDial:           wn.dialer.Dial,
+	// }
+
+	// conn, response, err := websocketDialer.DialContext(wn.ctx, gossipAddr, requestHeader)
+	tlsConf := &tls.Config{
+		InsecureSkipVerify: true,
+		NextProtos:         []string{"quic-example"},
+	}
+	conn, err := quic.DialAddrContext(wn.ctx, gossipAddr, tlsConf, nil)
 	if err != nil {
-		if err == websocket.ErrBadHandshake {
-			// reading here from ioutil is safe only because it came from DialContext above, which alredy finsihed reading all the data from the network
-			// and placed it all in a ioutil.NopCloser reader.
-			bodyBytes, _ := ioutil.ReadAll(response.Body)
-			errString := string(bodyBytes)
-			if len(errString) > 128 {
-				errString = errString[:128]
-			}
-			errString = filterASCII(errString)
-
-			// we're guaranteed to have a valid response object.
-			switch response.StatusCode {
-			case http.StatusPreconditionFailed:
-				wn.log.Warnf("ws connect(%s) fail - bad handshake, precondition failed : '%s'", gossipAddr, errString)
-			case http.StatusLoopDetected:
-				wn.log.Infof("ws connect(%s) aborted due to connecting to self", gossipAddr)
-			case http.StatusTooManyRequests:
-				wn.log.Infof("ws connect(%s) aborted due to connecting too frequently", gossipAddr)
-				retryAfterHeader := response.Header.Get(TooManyRequestsRetryAfterHeader)
-				if retryAfter, retryParseErr := strconv.ParseUint(retryAfterHeader, 10, 32); retryParseErr == nil {
-					// we've got a retry-after header.
-					// convert it to a timestamp so that we could use it.
-					retryAfterTime := time.Now().Add(time.Duration(retryAfter) * time.Second)
-					wn.phonebook.UpdateRetryAfter(addr, retryAfterTime)
-				}
-			default:
-				wn.log.Warnf("ws connect(%s) fail - bad handshake, Status code = %d, Headers = %#v, Body = %s", gossipAddr, response.StatusCode, response.Header, errString)
-			}
-		} else {
-			wn.log.Warnf("ws connect(%s) fail: %s", gossipAddr, err)
-		}
-		return
-	}
-
-	// no need to test the response.StatusCode since we know it's going to be http.StatusSwitchingProtocols, as it's already being tested inside websocketDialer.DialContext.
-	// we need to examine the headers here to extract which protocol version we should be using.
-	responseHeaderOk, matchingVersion := wn.checkServerResponseVariables(response.Header, gossipAddr)
-	if !responseHeaderOk {
-		// The error was already logged, so no need to log again.
+		wn.log.Warnf("ws connect(%s) fail: %s", gossipAddr, err)
 		return
 	}
 
@@ -2272,4 +2250,28 @@ func (wn *WebsocketNetwork) RegisterMessageInterest(t protocol.Tag) error {
 // SubstituteGenesisID substitutes the "{genesisID}" with their network-specific genesisID.
 func (wn *WebsocketNetwork) SubstituteGenesisID(rawURL string) string {
 	return strings.Replace(rawURL, "{genesisID}", wn.GenesisID, -1)
+}
+
+// Setup a bare-bones TLS config for the server
+func generateTLSConfig() *tls.Config {
+	key, err := rsa.GenerateKey(rand.Reader, 1024)
+	if err != nil {
+		panic(err)
+	}
+	template := x509.Certificate{SerialNumber: big.NewInt(1)}
+	certDER, err := x509.CreateCertificate(rand.Reader, &template, &template, &key.PublicKey, key)
+	if err != nil {
+		panic(err)
+	}
+	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)})
+	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER})
+
+	tlsCert, err := tls.X509KeyPair(certPEM, keyPEM)
+	if err != nil {
+		panic(err)
+	}
+	return &tls.Config{
+		Certificates: []tls.Certificate{tlsCert},
+		NextProtos:   []string{"quic-echo-example"},
+	}
 }
