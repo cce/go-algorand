@@ -413,6 +413,13 @@ func (lw *logWriter) Write(buf []byte) (n int, err error) {
 	return lw.buf.Write(buf)
 }
 
+// make a 4K random msgp.Raw
+func randResource() msgp.Raw {
+	ret := make([]byte, 4*1024)
+	crypto.RandBytes(ret[:])
+	return ret
+}
+
 func TestCatchpointStreamingChanEncode(t *testing.T) {
 	randomEncodedBaseAccountData := func() []byte {
 		ad := ledgertesting.RandomAccountData(0)
@@ -425,25 +432,42 @@ func TestCatchpointStreamingChanEncode(t *testing.T) {
 	bigRes := make([]byte, 1024*1024)
 	crypto.RandBytes(bigRes[:])
 	res[1] = msgp.Raw(bigRes)
-	bal1 := encodedBalanceRecordV6{Address: ledgertesting.RandomAddress(), AccountData: randomEncodedBaseAccountData(), Resources: res}
-	bal2 := encodedBalanceRecordV6{Address: ledgertesting.RandomAddress(), AccountData: randomEncodedBaseAccountData(), Resources: res}
-	bal3 := encodedBalanceRecordV6{Address: ledgertesting.RandomAddress(), AccountData: randomEncodedBaseAccountData(), Resources: res}
 
+	bal1 := encodedBalanceRecordV6Chan{Address: ledgertesting.RandomAddress(), AccountData: randomEncodedBaseAccountData(), Resources: make(chan encodedResourceRecordV6, 1)}
+	bal2 := encodedBalanceRecordV6Chan{Address: ledgertesting.RandomAddress(), AccountData: randomEncodedBaseAccountData(), Resources: make(chan encodedResourceRecordV6, 1)}
+	res1 := encodedResourceRecordV6{ID: 1, Resource: randResource()}
+	res2 := encodedResourceRecordV6{ID: 2, Resource: randResource()}
+	res3 := encodedResourceRecordV6{ID: 3, Resource: randResource()}
+	res4 := encodedResourceRecordV6{ID: 4, Resource: randResource()}
 	chunk1 := catchpointFileBalancesChunkV6Chan{
-		Balances: make(chan encodedBalanceRecordV6, 1),
+		Balances: make(chan encodedBalanceRecordV6Chan, 1),
 	}
-	go func(ch chan<- encodedBalanceRecordV6) {
+
+	go func(balCh chan<- encodedBalanceRecordV6Chan) {
 		t.Logf("writing bal1")
-		ch <- bal1
+		balCh <- bal1
+		t.Logf("writing bal1 res1")
+		bal1.Resources <- res1
+		t.Logf("writing bal1 res2")
+		bal1.Resources <- res2
+		t.Logf("closing bal1 resources")
+		close(bal1.Resources)
+
 		t.Logf("writing bal2")
-		ch <- bal2
-		t.Logf("writing bal3")
-		ch <- bal3
+		balCh <- bal2
+		t.Logf("writing bal2 res3")
+		bal2.Resources <- res3
+		t.Logf("writing bal2 res4")
+		bal2.Resources <- res4
+		t.Logf("closing bal2 resources")
+		close(bal2.Resources)
+
 		t.Logf("closing chan")
-		close(ch)
+		close(balCh)
 	}(chunk1.Balances)
 
 	time.Sleep(500 * time.Millisecond)
+
 	// set up streaming encoding to Writer
 	lw := &logWriter{t: t}
 	//enc := protocol.NewEncoder(lw)
@@ -454,6 +478,14 @@ func TestCatchpointStreamingChanEncode(t *testing.T) {
 	err := enc.Encode(&chunk1)
 	require.NoError(t, err)
 
+	// encode same message using slices
+	sliceBuf := protocol.Encode(&catchpointFileBalancesChunkV6Slice{
+		Balances: []encodedBalanceRecordV6Slice{
+			encodedBalanceRecordV6Slice{Address: bal1.Address, AccountData: bal1.AccountData, Resources: []encodedResourceRecordV6{res1, res2}},
+			encodedBalanceRecordV6Slice{Address: bal2.Address, AccountData: bal2.AccountData, Resources: []encodedResourceRecordV6{res3, res4}},
+		},
+	})
+	assert.Equal(t, sliceBuf, lw.buf.Bytes())
 }
 
 func TestCatchpointStreamingEncode(t *testing.T) {

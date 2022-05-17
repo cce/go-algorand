@@ -80,6 +80,7 @@ func runBuildNetwork() (err error) {
 		return
 	}
 	// Make sure target directory doesn't already exist
+	fmt.Println("Checking if", networkRootDir, "exists, useGenesis:", networkUseGenesisFiles)
 	exists := util.FileExists(networkRootDir)
 	if exists {
 		if !networkIgnoreExistingDir {

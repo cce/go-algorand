@@ -79,6 +79,9 @@ type catchpointTracker struct {
 	// catchpointInterval is the configured interval at which the accountUpdates would generate catchpoint labels and catchpoint files.
 	catchpointInterval uint64
 
+	// catchpointOffset is the configured offset of how many rounds before the catchpointInterval to scan the account DB for catchpoint data.
+	catchpointOffset uint64
+
 	// catchpointFileHistoryLength defines how many catchpoint files we want to store back.
 	// 0 means don't store any, -1 mean unlimited and positive number suggest the number of most recent catchpoint files.
 	catchpointFileHistoryLength int

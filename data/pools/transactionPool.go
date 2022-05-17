@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/algorand/go-deadlock"
+	"github.com/davecgh/go-spew/spew"
 
 	"github.com/algorand/go-algorand/config"
 	"github.com/algorand/go-algorand/data/basics"
@@ -734,10 +735,12 @@ func (pool *TransactionPool) recomputeBlockEvaluator(committedTxIds map[transact
 				asmStats.InvalidCount++
 				stats.RemovedInvalidCount++
 				pool.log.Infof("Cannot re-add pending transaction to pool: %v", err)
+				spew.Dump(txgroup)
 			default:
 				asmStats.InvalidCount++
 				stats.RemovedInvalidCount++
 				pool.log.Warnf("Cannot re-add pending transaction to pool: %v", err)
+				spew.Dump(txgroup)
 			}
 		}
 	}

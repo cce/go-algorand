@@ -372,6 +372,66 @@ func BenchmarkUnmarshalcatchpointFileBalancesChunkV6Chan(b *testing.B) {
 	}
 }
 
+func TestMarshalUnmarshalcatchpointFileBalancesChunkV6Slice(t *testing.T) {
+	partitiontest.PartitionTest(t)
+	v := catchpointFileBalancesChunkV6Slice{}
+	bts := v.MarshalMsg(nil)
+	left, err := v.UnmarshalMsg(bts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(left) > 0 {
+		t.Errorf("%d bytes left over after UnmarshalMsg(): %q", len(left), left)
+	}
+
+	left, err = msgp.Skip(bts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(left) > 0 {
+		t.Errorf("%d bytes left over after Skip(): %q", len(left), left)
+	}
+}
+
+func TestRandomizedEncodingcatchpointFileBalancesChunkV6Slice(t *testing.T) {
+	protocol.RunEncodingTest(t, &catchpointFileBalancesChunkV6Slice{})
+}
+
+func BenchmarkMarshalMsgcatchpointFileBalancesChunkV6Slice(b *testing.B) {
+	v := catchpointFileBalancesChunkV6Slice{}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		v.MarshalMsg(nil)
+	}
+}
+
+func BenchmarkAppendMsgcatchpointFileBalancesChunkV6Slice(b *testing.B) {
+	v := catchpointFileBalancesChunkV6Slice{}
+	bts := make([]byte, 0, v.Msgsize())
+	bts = v.MarshalMsg(bts[0:0])
+	b.SetBytes(int64(len(bts)))
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		bts = v.MarshalMsg(bts[0:0])
+	}
+}
+
+func BenchmarkUnmarshalcatchpointFileBalancesChunkV6Slice(b *testing.B) {
+	v := catchpointFileBalancesChunkV6Slice{}
+	bts := v.MarshalMsg(nil)
+	b.ReportAllocs()
+	b.SetBytes(int64(len(bts)))
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, err := v.UnmarshalMsg(bts)
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
 func TestMarshalUnmarshalencodedBalanceRecordV5(t *testing.T) {
 	partitiontest.PartitionTest(t)
 	v := encodedBalanceRecordV5{}
@@ -480,6 +540,186 @@ func BenchmarkAppendMsgencodedBalanceRecordV6(b *testing.B) {
 
 func BenchmarkUnmarshalencodedBalanceRecordV6(b *testing.B) {
 	v := encodedBalanceRecordV6{}
+	bts := v.MarshalMsg(nil)
+	b.ReportAllocs()
+	b.SetBytes(int64(len(bts)))
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, err := v.UnmarshalMsg(bts)
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func TestMarshalUnmarshalencodedBalanceRecordV6Chan(t *testing.T) {
+	partitiontest.PartitionTest(t)
+	v := encodedBalanceRecordV6Chan{}
+	bts := v.MarshalMsg(nil)
+	left, err := v.UnmarshalMsg(bts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(left) > 0 {
+		t.Errorf("%d bytes left over after UnmarshalMsg(): %q", len(left), left)
+	}
+
+	left, err = msgp.Skip(bts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(left) > 0 {
+		t.Errorf("%d bytes left over after Skip(): %q", len(left), left)
+	}
+}
+
+func TestRandomizedEncodingencodedBalanceRecordV6Chan(t *testing.T) {
+	protocol.RunEncodingTest(t, &encodedBalanceRecordV6Chan{})
+}
+
+func BenchmarkMarshalMsgencodedBalanceRecordV6Chan(b *testing.B) {
+	v := encodedBalanceRecordV6Chan{}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		v.MarshalMsg(nil)
+	}
+}
+
+func BenchmarkAppendMsgencodedBalanceRecordV6Chan(b *testing.B) {
+	v := encodedBalanceRecordV6Chan{}
+	bts := make([]byte, 0, v.Msgsize())
+	bts = v.MarshalMsg(bts[0:0])
+	b.SetBytes(int64(len(bts)))
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		bts = v.MarshalMsg(bts[0:0])
+	}
+}
+
+func BenchmarkUnmarshalencodedBalanceRecordV6Chan(b *testing.B) {
+	v := encodedBalanceRecordV6Chan{}
+	bts := v.MarshalMsg(nil)
+	b.ReportAllocs()
+	b.SetBytes(int64(len(bts)))
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, err := v.UnmarshalMsg(bts)
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func TestMarshalUnmarshalencodedBalanceRecordV6Slice(t *testing.T) {
+	partitiontest.PartitionTest(t)
+	v := encodedBalanceRecordV6Slice{}
+	bts := v.MarshalMsg(nil)
+	left, err := v.UnmarshalMsg(bts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(left) > 0 {
+		t.Errorf("%d bytes left over after UnmarshalMsg(): %q", len(left), left)
+	}
+
+	left, err = msgp.Skip(bts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(left) > 0 {
+		t.Errorf("%d bytes left over after Skip(): %q", len(left), left)
+	}
+}
+
+func TestRandomizedEncodingencodedBalanceRecordV6Slice(t *testing.T) {
+	protocol.RunEncodingTest(t, &encodedBalanceRecordV6Slice{})
+}
+
+func BenchmarkMarshalMsgencodedBalanceRecordV6Slice(b *testing.B) {
+	v := encodedBalanceRecordV6Slice{}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		v.MarshalMsg(nil)
+	}
+}
+
+func BenchmarkAppendMsgencodedBalanceRecordV6Slice(b *testing.B) {
+	v := encodedBalanceRecordV6Slice{}
+	bts := make([]byte, 0, v.Msgsize())
+	bts = v.MarshalMsg(bts[0:0])
+	b.SetBytes(int64(len(bts)))
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		bts = v.MarshalMsg(bts[0:0])
+	}
+}
+
+func BenchmarkUnmarshalencodedBalanceRecordV6Slice(b *testing.B) {
+	v := encodedBalanceRecordV6Slice{}
+	bts := v.MarshalMsg(nil)
+	b.ReportAllocs()
+	b.SetBytes(int64(len(bts)))
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, err := v.UnmarshalMsg(bts)
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func TestMarshalUnmarshalencodedResourceRecordV6(t *testing.T) {
+	partitiontest.PartitionTest(t)
+	v := encodedResourceRecordV6{}
+	bts := v.MarshalMsg(nil)
+	left, err := v.UnmarshalMsg(bts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(left) > 0 {
+		t.Errorf("%d bytes left over after UnmarshalMsg(): %q", len(left), left)
+	}
+
+	left, err = msgp.Skip(bts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(left) > 0 {
+		t.Errorf("%d bytes left over after Skip(): %q", len(left), left)
+	}
+}
+
+func TestRandomizedEncodingencodedResourceRecordV6(t *testing.T) {
+	protocol.RunEncodingTest(t, &encodedResourceRecordV6{})
+}
+
+func BenchmarkMarshalMsgencodedResourceRecordV6(b *testing.B) {
+	v := encodedResourceRecordV6{}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		v.MarshalMsg(nil)
+	}
+}
+
+func BenchmarkAppendMsgencodedResourceRecordV6(b *testing.B) {
+	v := encodedResourceRecordV6{}
+	bts := make([]byte, 0, v.Msgsize())
+	bts = v.MarshalMsg(bts[0:0])
+	b.SetBytes(int64(len(bts)))
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		bts = v.MarshalMsg(bts[0:0])
+	}
+}
+
+func BenchmarkUnmarshalencodedResourceRecordV6(b *testing.B) {
+	v := encodedResourceRecordV6{}
 	bts := v.MarshalMsg(nil)
 	b.ReportAllocs()
 	b.SetBytes(int64(len(bts)))
