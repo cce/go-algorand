@@ -1,0 +1,5 @@
+{
+    "future": {
+      "MaxTxnBytesPerBlock": 5000000
+    }
+}
