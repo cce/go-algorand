@@ -54,7 +54,8 @@ def build_netgoal_params(template_dict):
         '-n', str(nodes_count),
         '--relay-template', relay_config,
         '--node-template', participating_node_config,
-        '--non-participating-node-template', non_participating_node_config
+        '--non-participating-node-template', non_participating_node_config,
+        '--last-part-key-round', str(50000),
     ]
 
 def build_net(template_path, netgoal_params):
