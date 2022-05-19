@@ -1,4 +1,4 @@
 {
     "TxPoolSize": 75000,
-    "ProposalAssemblyTime": 350000000
+    "ProposalAssemblyTime": 300000000
 }
