@@ -1,5 +1,6 @@
 {
     "future": {
+      "AgreementFilterTimeoutPeriod0": 3500000000,
       "MaxTxnBytesPerBlock": 5000000
     }
 }
