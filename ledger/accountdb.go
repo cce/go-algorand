@@ -46,7 +46,6 @@ import (
 type accountsDbQueries struct {
 	listCreatablesStmt          *sql.Stmt
 	lookupStmt                  *sql.Stmt
-	lookupOnlineStmt            *sql.Stmt
 	lookupResourcesStmt         *sql.Stmt
 	lookupAllResourcesStmt      *sql.Stmt
 	lookupCreatorStmt           *sql.Stmt
@@ -58,6 +57,11 @@ type accountsDbQueries struct {
 	insertCatchpointStateUint64 *sql.Stmt
 	selectCatchpointStateString *sql.Stmt
 	insertCatchpointStateString *sql.Stmt
+}
+
+type onlineAccountsDbQueries struct {
+	lookupOnlineStmt        *sql.Stmt
+	lookupOnlineHistoryStmt *sql.Stmt
 }
 
 var accountsSchema = []string{
@@ -133,7 +137,7 @@ var createResourcesTable = []string{
 var createOnlineAccountsTable = []string{
 	`CREATE TABLE IF NOT EXISTS onlineaccounts (
 		address BLOB NOT NULL,
-		updround INTEGER,
+		updround INTEGER NOT NULL,
 		normalizedonlinebalance INTEGER NOT NULL,
 		votelastvalid INTEGER NOT NULL,
 		data BLOB NOT NULL,
@@ -153,6 +157,13 @@ var createOnlineRoundParamsTable = []string{
 		data blob)`, // contains a msgp encoded OnlineRoundParamsData
 }
 
+// Table containing some metadata for a future catchpoint. The `info` column
+// contains a serialized object of type catchpointFirstStageInfo.
+const createCatchpointFirstStageInfoTable = `
+	CREATE TABLE IF NOT EXISTS catchpointfirststageinfo (
+	round integer primary key NOT NULL,
+	info blob NOT NULL)`
+
 var accountsResetExprs = []string{
 	`DROP TABLE IF EXISTS acctrounds`,
 	`DROP TABLE IF EXISTS accounttotals`,
@@ -165,6 +176,7 @@ var accountsResetExprs = []string{
 	`DROP TABLE IF EXISTS onlineaccounts`,
 	`DROP TABLE IF EXISTS txtail`,
 	`DROP TABLE IF EXISTS onlineroundparamstail`,
+	`DROP TABLE IF EXISTS catchpointfirststageinfo`,
 }
 
 // accountDBVersion is the database version that this binary would know how to support and how to upgrade to.
@@ -198,8 +210,11 @@ type persistedOnlineAccountData struct {
 	accountData baseOnlineAccountData
 	rowid       int64
 	// the round number that is associated with the baseOnlineAccountData. This field is the corresponding one to the round field
-	// in persistedAccountData, and serves the same purpose.
+	// in persistedAccountData, and serves the same purpose. This value comes from account rounds table and correspond to
+	// the last trackers db commit round.
 	round basics.Round
+	// the round number that the online account is for, i.e. account state change round.
+	updRound basics.Round
 }
 
 //msgp:ignore persistedResourcesData
@@ -1334,6 +1349,11 @@ func accountsCreateOnlineRoundParamsTable(ctx context.Context, tx *sql.Tx) (err 
 	return nil
 }
 
+func accountsCreateCatchpointFirstStageInfoTable(ctx context.Context, e db.Executable) error {
+	_, err := e.ExecContext(ctx, createCatchpointFirstStageInfoTable)
+	return err
+}
+
 type baseVotingData struct {
 	_struct struct{} `codec:",omitempty,omitemptyarray"`
 
@@ -2130,30 +2150,35 @@ func performTxTailTableMigration(ctx context.Context, tx *sql.Tx, blockDb db.Acc
 		return nil
 	}
 
+	dbRound, err := accountsRound(tx)
+	if err != nil {
+		return fmt.Errorf("latest block number cannot be retrieved : %w", err)
+	}
+
 	// load the latest MaxTxnLife rounds in the txtail and store these in the txtail.
 	// when migrating there is only MaxTxnLife blocks in the block DB
 	// since the original txTail.commmittedUpTo preserved only (rnd+1)-MaxTxnLife = 1000 blocks back
 	err = blockDb.Atomic(func(ctx context.Context, blockTx *sql.Tx) error {
-		latest, err := blockLatest(blockTx)
+		latestBlockRound, err := blockLatest(blockTx)
 		if err != nil {
 			return fmt.Errorf("latest block number cannot be retrieved : %w", err)
 		}
-		latestHdr, err := blockGetHdr(blockTx, latest)
+		latestHdr, err := blockGetHdr(blockTx, dbRound)
 		if err != nil {
-			return fmt.Errorf("latest block header %d cannot be retrieved : %w", latest, err)
+			return fmt.Errorf("latest block header %d cannot be retrieved : %w", dbRound, err)
 		}
 
 		maxTxnLife := basics.Round(config.Consensus[latestHdr.CurrentProtocol].MaxTxnLife)
-		firstRound := (latest + 1).SubSaturate(maxTxnLife)
+		firstRound := (latestBlockRound + 1).SubSaturate(maxTxnLife)
 		// we don't need to have the txtail for round 0.
 		if firstRound == basics.Round(0) {
 			firstRound++
 		}
 		tailRounds := make([][]byte, 0, maxTxnLife)
-		for rnd := firstRound; rnd <= latest; rnd++ {
+		for rnd := firstRound; rnd <= dbRound; rnd++ {
 			blk, err := blockGet(blockTx, rnd)
 			if err != nil {
-				return fmt.Errorf("block for round %d ( %d - %d ) cannot be retrieved : %w", rnd, firstRound, latest, err)
+				return fmt.Errorf("block for round %d ( %d - %d ) cannot be retrieved : %w", rnd, firstRound, dbRound, err)
 			}
 
 			tail, err := txTailRoundFromBlock(blk)
@@ -2377,8 +2402,8 @@ func accountsReset(tx *sql.Tx) error {
 }
 
 // accountsRound returns the tracker balances round number
-func accountsRound(tx *sql.Tx) (rnd basics.Round, err error) {
-	err = tx.QueryRow("SELECT rnd FROM acctrounds WHERE id='acctbase'").Scan(&rnd)
+func accountsRound(q db.Queryable) (rnd basics.Round, err error) {
+	err = q.QueryRow("SELECT rnd FROM acctrounds WHERE id='acctbase'").Scan(&rnd)
 	if err != nil {
 		return
 	}
@@ -2406,11 +2431,6 @@ func accountsInitDbQueries(r db.Queryable, w db.Queryable) (*accountsDbQueries, 
 	}
 
 	qs.lookupStmt, err = r.Prepare("SELECT accountbase.rowid, rnd, data FROM acctrounds LEFT JOIN accountbase ON address=? WHERE id='acctbase'")
-	if err != nil {
-		return nil, err
-	}
-
-	qs.lookupOnlineStmt, err = r.Prepare("SELECT onlineaccounts.rowid, rnd, data FROM acctrounds LEFT JOIN onlineaccounts ON address=? AND updround <= ? WHERE id='acctbase' ORDER BY updround DESC LIMIT 1")
 	if err != nil {
 		return nil, err
 	}
@@ -2466,6 +2486,23 @@ func accountsInitDbQueries(r db.Queryable, w db.Queryable) (*accountsDbQueries, 
 	}
 
 	qs.selectCatchpointStateString, err = r.Prepare("SELECT strval FROM catchpointstate WHERE id=?")
+	if err != nil {
+		return nil, err
+	}
+
+	return qs, nil
+}
+
+func onlineAccountsInitDbQueries(r db.Queryable, w db.Queryable) (*onlineAccountsDbQueries, error) {
+	var err error
+	qs := &onlineAccountsDbQueries{}
+
+	qs.lookupOnlineStmt, err = r.Prepare("SELECT onlineaccounts.rowid, updround, rnd, data FROM acctrounds LEFT JOIN onlineaccounts ON address=? AND updround <= ? WHERE id='acctbase' ORDER BY updround DESC LIMIT 1")
+	if err != nil {
+		return nil, err
+	}
+
+	qs.lookupOnlineHistoryStmt, err = r.Prepare("SELECT onlineaccounts.rowid, updround, rnd, data FROM acctrounds LEFT JOIN onlineaccounts ON address=? WHERE id='acctbase' ORDER BY updround ASC")
 	if err != nil {
 		return nil, err
 	}
@@ -2640,15 +2677,17 @@ func (qs *accountsDbQueries) lookup(addr basics.Address) (data persistedAccountD
 	return
 }
 
-func (qs *accountsDbQueries) lookupOnline(addr basics.Address, rnd basics.Round) (data persistedOnlineAccountData, err error) {
+func (qs *onlineAccountsDbQueries) lookupOnline(addr basics.Address, rnd basics.Round) (data persistedOnlineAccountData, err error) {
 	err = db.Retry(func() error {
 		var buf []byte
 		var rowid sql.NullInt64
-		err := qs.lookupOnlineStmt.QueryRow(addr[:], rnd).Scan(&rowid, &data.round, &buf)
+		var updround sql.NullInt64
+		err := qs.lookupOnlineStmt.QueryRow(addr[:], rnd).Scan(&rowid, &updround, &data.round, &buf)
 		if err == nil {
 			data.addr = addr
-			if len(buf) > 0 && rowid.Valid {
+			if len(buf) > 0 && rowid.Valid && updround.Valid {
 				data.rowid = rowid.Int64
+				data.updRound = basics.Round(updround.Int64)
 				err = protocol.Decode(buf, &data.accountData)
 				return err
 			}
@@ -2662,6 +2701,33 @@ func (qs *accountsDbQueries) lookupOnline(addr basics.Address, rnd basics.Round)
 			return fmt.Errorf("unable to query online account data for address %v : %w", addr, err)
 		}
 
+		return err
+	})
+	return
+}
+
+func (qs *onlineAccountsDbQueries) lookupOnlineHistory(addr basics.Address) (result []persistedOnlineAccountData, rnd basics.Round, err error) {
+	err = db.Retry(func() error {
+		rows, err := qs.lookupOnlineHistoryStmt.Query(addr[:])
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+
+		for rows.Next() {
+			var buf []byte
+			data := persistedOnlineAccountData{}
+			err := rows.Scan(&data.rowid, &data.updRound, &rnd, &buf)
+			if err != nil {
+				return err
+			}
+			err = protocol.Decode(buf, &data.accountData)
+			if err != nil {
+				return err
+			}
+			data.addr = addr
+			result = append(result, data)
+		}
 		return err
 	})
 	return
@@ -2774,7 +2840,6 @@ func (qs *accountsDbQueries) close() {
 	preparedQueries := []**sql.Stmt{
 		&qs.listCreatablesStmt,
 		&qs.lookupStmt,
-		&qs.lookupOnlineStmt,
 		&qs.lookupResourcesStmt,
 		&qs.lookupAllResourcesStmt,
 		&qs.lookupCreatorStmt,
@@ -2786,6 +2851,19 @@ func (qs *accountsDbQueries) close() {
 		&qs.insertCatchpointStateUint64,
 		&qs.selectCatchpointStateString,
 		&qs.insertCatchpointStateString,
+	}
+	for _, preparedQuery := range preparedQueries {
+		if (*preparedQuery) != nil {
+			(*preparedQuery).Close()
+			*preparedQuery = nil
+		}
+	}
+}
+
+func (qs *onlineAccountsDbQueries) close() {
+	preparedQueries := []**sql.Stmt{
+		&qs.lookupOnlineStmt,
+		&qs.lookupOnlineHistoryStmt,
 	}
 	for _, preparedQuery := range preparedQueries {
 		if (*preparedQuery) != nil {
@@ -2974,12 +3052,52 @@ func onlineAccountsExpirations(tx *sql.Tx, maxBalLookback uint64) (result []onli
 	return result, nil
 }
 
-func accountsTotals(tx *sql.Tx, catchpointStaging bool) (totals ledgercore.AccountTotals, err error) {
+func onlineAccountsAll(tx *sql.Tx, maxAccounts uint64) ([]persistedOnlineAccountData, error) {
+	rows, err := tx.Query("SELECT rowid, address, updround, data FROM onlineaccounts ORDER BY address, updround ASC")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	result := make([]persistedOnlineAccountData, 0, maxAccounts)
+	var numAccounts uint64
+	var seenAddr []byte
+	for rows.Next() {
+		var addrbuf []byte
+		var buf []byte
+		data := persistedOnlineAccountData{}
+		err := rows.Scan(&data.rowid, &addrbuf, &data.updRound, &buf)
+		if err != nil {
+			return nil, err
+		}
+		if len(addrbuf) != len(data.addr) {
+			err = fmt.Errorf("account DB address length mismatch: %d != %d", len(addrbuf), len(data.addr))
+			return nil, err
+		}
+		if maxAccounts > 0 {
+			if !bytes.Equal(seenAddr, addrbuf) {
+				numAccounts++
+				if numAccounts > maxAccounts {
+					break
+				}
+			}
+		}
+		copy(data.addr[:], addrbuf)
+		err = protocol.Decode(buf, &data.accountData)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, data)
+	}
+	return result, nil
+}
+
+func accountsTotals(q db.Queryable, catchpointStaging bool) (totals ledgercore.AccountTotals, err error) {
 	id := ""
 	if catchpointStaging {
 		id = "catchpointStaging"
 	}
-	row := tx.QueryRow("SELECT online, onlinerewardunits, offline, offlinerewardunits, notparticipating, notparticipatingrewardunits, rewardslevel FROM accounttotals WHERE id=?", id)
+	row := q.QueryRow("SELECT online, onlinerewardunits, offline, offlinerewardunits, notparticipating, notparticipatingrewardunits, rewardslevel FROM accounttotals WHERE id=?", id)
 	err = row.Scan(&totals.Online.Money.Raw, &totals.Online.RewardUnits,
 		&totals.Offline.Money.Raw, &totals.Offline.RewardUnits,
 		&totals.NotParticipating.Money.Raw, &totals.NotParticipating.RewardUnits,
@@ -3563,6 +3681,7 @@ func onlineAccountsNewRoundImpl(
 									accountData: newAcct,
 									round:       lastUpdateRound,
 									rowid:       rowid,
+									updRound:    basics.Round(updRound),
 								}
 								updatedAccounts = append(updatedAccounts, updated)
 								prevAcct = updated
@@ -3587,6 +3706,7 @@ func onlineAccountsNewRoundImpl(
 								accountData: baseOnlineAccountData{},
 								round:       lastUpdateRound,
 								rowid:       rowid,
+								updRound:    basics.Round(updRound),
 							}
 
 							targetRound := basics.Round(updRound + proto.MaxBalLookback)
@@ -3612,6 +3732,7 @@ func onlineAccountsNewRoundImpl(
 								accountData: newAcct,
 								round:       lastUpdateRound,
 								rowid:       rowid,
+								updRound:    basics.Round(updRound),
 							}
 
 							targetRound := basics.Round(updRound + proto.MaxBalLookback)
@@ -4703,4 +4824,97 @@ func loadTxTail(ctx context.Context, tx *sql.Tx, dbRound basics.Round) (roundDat
 		roundHash[i], roundHash[len(roundHash)-i-1] = roundHash[len(roundHash)-i-1], roundHash[i]
 	}
 	return roundData, roundHash, expectedRound + 1, nil
+}
+
+// For the `catchpointfirststageinfo` table.
+type catchpointFirstStageInfo struct {
+	_struct struct{} `codec:",omitempty,omitemptyarray"`
+
+	Totals           ledgercore.AccountTotals `codec:"accountTotals"`
+	TrieBalancesHash crypto.Digest            `codec:"trieBalancesHash"`
+	// Total number of accounts in the catchpoint data file. Only set when catchpoint
+	// data files are generated.
+	TotalAccounts uint64 `codec:"accountsCount"`
+	// Total number of chunks in the catchpoint data file. Only set when catchpoint
+	// data files are generated.
+	TotalChunks uint64 `codec:"chunksCount"`
+}
+
+func insertCatchpointFirstStageInfo(e db.Executable, round basics.Round, info *catchpointFirstStageInfo) error {
+	infoSerialized := protocol.Encode(info)
+	f := func() error {
+		query := "INSERT INTO catchpointfirststageinfo(round, info) VALUES(?, ?)"
+		_, err := e.Exec(query, round, infoSerialized)
+		return err
+	}
+	return db.Retry(f)
+}
+
+func selectCatchpointFirstStageInfo(q db.Queryable, round basics.Round) (catchpointFirstStageInfo, bool /*exists*/, error) {
+	var data []byte
+	f := func() error {
+		query := "SELECT info FROM catchpointfirststageinfo WHERE round=?"
+		err := q.QueryRow(query, round).Scan(&data)
+		if err == sql.ErrNoRows {
+			data = nil
+			return nil
+		}
+		return err
+	}
+	err := db.Retry(f)
+	if err != nil {
+		return catchpointFirstStageInfo{}, false, err
+	}
+
+	if data == nil {
+		return catchpointFirstStageInfo{}, false, nil
+	}
+
+	var res catchpointFirstStageInfo
+	err = protocol.Decode(data, &res)
+	if err != nil {
+		return catchpointFirstStageInfo{}, false, err
+	}
+
+	return res, true, nil
+}
+
+func selectOldCatchpointFirstStageInfoRounds(q db.Queryable, maxRound basics.Round) ([]basics.Round, error) {
+	var res []basics.Round
+
+	f := func() error {
+		query := "SELECT round FROM catchpointfirststageinfo WHERE round <= ?"
+		rows, err := q.Query(query, maxRound)
+		if err != nil {
+			return err
+		}
+
+		// Clear `res` in case this function is repeated.
+		res = res[:0]
+		for rows.Next() {
+			var r basics.Round
+			err = rows.Scan(&r)
+			if err != nil {
+				return err
+			}
+			res = append(res, r)
+		}
+
+		return nil
+	}
+	err := db.Retry(f)
+	if err != nil {
+		return nil, err
+	}
+
+	return res, nil
+}
+
+func deleteOldCatchpointFirstStageInfo(e db.Executable, maxRoundToDelete basics.Round) error {
+	f := func() error {
+		query := "DELETE FROM catchpointfirststageinfo WHERE round <= ?"
+		_, err := e.Exec(query, maxRoundToDelete)
+		return err
+	}
+	return db.Retry(f)
 }

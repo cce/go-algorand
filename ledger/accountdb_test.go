@@ -26,6 +26,7 @@ import (
 	"fmt"
 	"math/rand"
 	"os"
+	"reflect"
 	"sort"
 	"strconv"
 	"strings"
@@ -2211,6 +2212,97 @@ func TestBaseOnlineAccountDataIsEmpty(t *testing.T) {
 
 }
 
+func TestBaseOnlineAccountDataGettersSetters(t *testing.T) {
+	partitiontest.PartitionTest(t)
+
+	proto := config.Consensus[protocol.ConsensusCurrentVersion]
+	addr := ledgertesting.RandomAddress()
+	data := ledgertesting.RandomAccountData(1)
+	data.Status = basics.Online
+	crypto.RandBytes(data.VoteID[:])
+	crypto.RandBytes(data.SelectionID[:])
+	crypto.RandBytes(data.StateProofID[:])
+	data.VoteFirstValid = basics.Round(crypto.RandUint64())
+	data.VoteLastValid = basics.Round(crypto.RandUint64()) // int64 is the max sqlite can store
+	data.VoteKeyDilution = crypto.RandUint64()
+
+	var ba baseOnlineAccountData
+	ba.SetCoreAccountData(ledgercore.ToAccountData(data))
+
+	require.Equal(t, data.MicroAlgos, ba.MicroAlgos)
+	require.Equal(t, data.RewardsBase, ba.RewardsBase)
+	require.Equal(t, data.VoteID, ba.VoteID)
+	require.Equal(t, data.SelectionID, ba.SelectionID)
+	require.Equal(t, data.VoteFirstValid, ba.VoteFirstValid)
+	require.Equal(t, data.VoteLastValid, ba.VoteLastValid)
+	require.Equal(t, data.VoteKeyDilution, ba.VoteKeyDilution)
+	require.Equal(t, data.StateProofID, ba.StateProofID)
+
+	normBalance := basics.NormalizedOnlineAccountBalance(basics.Online, data.RewardsBase, data.MicroAlgos, proto)
+	require.Equal(t, normBalance, ba.NormalizedOnlineBalance(proto))
+	oa := ba.GetOnlineAccount(addr, normBalance)
+
+	require.Equal(t, addr, oa.Address)
+	require.Equal(t, ba.MicroAlgos, oa.MicroAlgos)
+	require.Equal(t, ba.RewardsBase, oa.RewardsBase)
+	require.Equal(t, normBalance, oa.NormalizedOnlineBalance)
+	require.Equal(t, ba.VoteFirstValid, oa.VoteFirstValid)
+	require.Equal(t, ba.VoteLastValid, oa.VoteLastValid)
+	require.Equal(t, ba.StateProofID, oa.StateProofID)
+
+	rewardsLevel := uint64(1)
+	microAlgos, _, _ := basics.WithUpdatedRewards(
+		proto, basics.Online, oa.MicroAlgos, basics.MicroAlgos{}, ba.RewardsBase, rewardsLevel,
+	)
+	oad := ba.GetOnlineAccountData(proto, rewardsLevel)
+
+	require.Equal(t, microAlgos, oad.MicroAlgosWithRewards)
+	require.Equal(t, ba.VoteID, oad.VoteID)
+	require.Equal(t, ba.SelectionID, oad.SelectionID)
+	require.Equal(t, ba.StateProofID, oad.StateProofID)
+	require.Equal(t, ba.VoteFirstValid, oad.VoteFirstValid)
+	require.Equal(t, ba.VoteLastValid, oad.VoteLastValid)
+	require.Equal(t, ba.VoteKeyDilution, oad.VoteKeyDilution)
+}
+
+func TestBaseVotingDataGettersSetters(t *testing.T) {
+	partitiontest.PartitionTest(t)
+
+	data := ledgertesting.RandomAccountData(1)
+	data.Status = basics.Online
+	crypto.RandBytes(data.VoteID[:])
+	crypto.RandBytes(data.SelectionID[:])
+	crypto.RandBytes(data.StateProofID[:])
+	data.VoteFirstValid = basics.Round(crypto.RandUint64())
+	data.VoteLastValid = basics.Round(crypto.RandUint64()) // int64 is the max sqlite can store
+	data.VoteKeyDilution = crypto.RandUint64()
+
+	var bv baseVotingData
+	require.True(t, bv.IsEmpty())
+
+	bv.SetCoreAccountData(ledgercore.ToAccountData(data))
+
+	require.False(t, bv.IsEmpty())
+	require.Equal(t, data.VoteID, bv.VoteID)
+	require.Equal(t, data.SelectionID, bv.SelectionID)
+	require.Equal(t, data.VoteFirstValid, bv.VoteFirstValid)
+	require.Equal(t, data.VoteLastValid, bv.VoteLastValid)
+	require.Equal(t, data.VoteKeyDilution, bv.VoteKeyDilution)
+	require.Equal(t, data.StateProofID, bv.StateProofID)
+}
+
+func TestBaseOnlineAccountDataReflect(t *testing.T) {
+	partitiontest.PartitionTest(t)
+
+	require.Equal(t, 4, reflect.TypeOf(baseOnlineAccountData{}).NumField(), "update all getters and setters for baseOnlineAccountData and change the field count")
+}
+
+func TestBaseVotingDataReflect(t *testing.T) {
+	partitiontest.PartitionTest(t)
+
+	require.Equal(t, 7, reflect.TypeOf(baseVotingData{}).NumField(), "update all getters and setters for baseVotingData and change the field count")
+}
+
 func TestLookupAccountAddressFromAddressID(t *testing.T) {
 	partitiontest.PartitionTest(t)
 
@@ -2857,9 +2949,9 @@ func TestAccountOnlineQueries(t *testing.T) {
 	baseResources.init(nil, 100, 80)
 	baseOnlineAccounts.init(nil, 100, 80)
 
-	addrA := ledgertesting.RandomAddress()
-	addrB := ledgertesting.RandomAddress()
-	addrC := ledgertesting.RandomAddress()
+	addrA := basics.Address(crypto.Hash([]byte("A")))
+	addrB := basics.Address(crypto.Hash([]byte("B")))
+	addrC := basics.Address(crypto.Hash([]byte("C")))
 
 	var voteIDA crypto.OneTimeSignatureVerifier
 	crypto.RandBytes(voteIDA[:])
@@ -2949,7 +3041,7 @@ func TestAccountOnlineQueries(t *testing.T) {
 	addRound(2, delta2)
 	addRound(3, delta3)
 
-	queries, err := accountsInitDbQueries(tx, tx)
+	queries, err := onlineAccountsInitDbQueries(tx, tx)
 	require.NoError(t, err)
 
 	// check round 1
@@ -3056,6 +3148,53 @@ func TestAccountOnlineQueries(t *testing.T) {
 	require.Equal(t, addrC, paod.addr)
 	require.Equal(t, dataC3.AccountBaseData.MicroAlgos, paod.accountData.MicroAlgos)
 	require.Equal(t, voteIDC, paod.accountData.VoteID)
+
+	paods, err := onlineAccountsAll(tx, 0)
+	require.NoError(t, err)
+	require.Equal(t, 5, len(paods))
+
+	require.Equal(t, int64(2), paods[0].rowid)
+	require.Equal(t, basics.Round(1), paods[0].updRound)
+	require.Equal(t, addrB, paods[0].addr)
+	require.Equal(t, int64(4), paods[1].rowid)
+	require.Equal(t, basics.Round(3), paods[1].updRound)
+	require.Equal(t, addrB, paods[1].addr)
+
+	require.Equal(t, int64(5), paods[2].rowid)
+	require.Equal(t, basics.Round(3), paods[2].updRound)
+	require.Equal(t, addrC, paods[2].addr)
+
+	require.Equal(t, int64(1), paods[3].rowid)
+	require.Equal(t, basics.Round(1), paods[3].updRound)
+	require.Equal(t, addrA, paods[3].addr)
+	require.Equal(t, int64(3), paods[4].rowid)
+	require.Equal(t, basics.Round(2), paods[4].updRound)
+	require.Equal(t, addrA, paods[4].addr)
+
+	paods, rnd, err = queries.lookupOnlineHistory(addrA)
+	require.NoError(t, err)
+	require.Equal(t, basics.Round(3), rnd)
+	require.Equal(t, 2, len(paods))
+	require.Equal(t, int64(1), paods[0].rowid)
+	require.Equal(t, basics.Round(1), paods[0].updRound)
+	require.Equal(t, int64(3), paods[1].rowid)
+	require.Equal(t, basics.Round(2), paods[1].updRound)
+
+	paods, rnd, err = queries.lookupOnlineHistory(addrB)
+	require.NoError(t, err)
+	require.Equal(t, basics.Round(3), rnd)
+	require.Equal(t, 2, len(paods))
+	require.Equal(t, int64(2), paods[0].rowid)
+	require.Equal(t, basics.Round(1), paods[0].updRound)
+	require.Equal(t, int64(4), paods[1].rowid)
+	require.Equal(t, basics.Round(3), paods[1].updRound)
+
+	paods, rnd, err = queries.lookupOnlineHistory(addrC)
+	require.NoError(t, err)
+	require.Equal(t, basics.Round(3), rnd)
+	require.Equal(t, 1, len(paods))
+	require.Equal(t, int64(5), paods[0].rowid)
+	require.Equal(t, basics.Round(3), paods[0].updRound)
 }
 
 func TestAccountOnlineAccountsExpirations(t *testing.T) {
@@ -3554,4 +3693,48 @@ func TestAccountDBTxTailLoad(t *testing.T) {
 	for i, entry := range data {
 		require.Equal(t, int64(i+int(baseRound)), entry.Hdr.TimeStamp)
 	}
+}
+
+// Test functions operating on catchpointfirststageinfo table.
+func TestCatchpointFirstStageInfoTable(t *testing.T) {
+	dbs, _ := dbOpenTest(t, true)
+	defer dbs.Close()
+
+	err := accountsCreateCatchpointFirstStageInfoTable(
+		context.Background(), dbs.Wdb.Handle)
+	require.NoError(t, err)
+
+	for _, round := range []basics.Round{4, 6, 8} {
+		info := catchpointFirstStageInfo{
+			TotalAccounts: uint64(round) * 10,
+		}
+		err = insertCatchpointFirstStageInfo(dbs.Wdb.Handle, round, &info)
+		require.NoError(t, err)
+	}
+
+	for _, round := range []basics.Round{4, 6, 8} {
+		info, exists, err := selectCatchpointFirstStageInfo(dbs.Rdb.Handle, round)
+		require.NoError(t, err)
+		require.True(t, exists)
+
+		infoExpected := catchpointFirstStageInfo{
+			TotalAccounts: uint64(round) * 10,
+		}
+		require.Equal(t, infoExpected, info)
+	}
+
+	_, exists, err := selectCatchpointFirstStageInfo(dbs.Rdb.Handle, 7)
+	require.NoError(t, err)
+	require.False(t, exists)
+
+	rounds, err := selectOldCatchpointFirstStageInfoRounds(dbs.Rdb.Handle, 6)
+	require.NoError(t, err)
+	require.Equal(t, []basics.Round{4, 6}, rounds)
+
+	err = deleteOldCatchpointFirstStageInfo(dbs.Wdb.Handle, 6)
+	require.NoError(t, err)
+
+	rounds, err = selectOldCatchpointFirstStageInfoRounds(dbs.Rdb.Handle, 9)
+	require.NoError(t, err)
+	require.Equal(t, []basics.Round{8}, rounds)
 }

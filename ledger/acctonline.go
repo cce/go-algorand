@@ -50,13 +50,20 @@ type modifiedOnlineAccount struct {
 	ndeltas int
 }
 
+// cachedOnlineAccount is a light-weight version of persistedOnlineAccountData suitable for in-memory caching
+//msgp:ignore cachedOnlineAccount
+type cachedOnlineAccount struct {
+	baseOnlineAccountData
+	updRound basics.Round
+}
+
 // onlineAccounts tracks history of online accounts
 type onlineAccounts struct {
 	// Connection to the database.
 	dbs db.Pair
 
 	// Prepared SQL statements for fast accounts DB lookups.
-	accountsq *accountsDbQueries
+	accountsq *onlineAccountsDbQueries
 
 	// cachedDBRoundOnline is always exactly tracker DB round (and therefore, onlineAccountsRound()),
 	// cached to use in lookup functions
@@ -98,6 +105,15 @@ type onlineAccounts struct {
 
 	// baseAccounts stores the most recently used accounts, at exactly dbRound
 	baseOnlineAccounts lruOnlineAccounts
+
+	// onlineAccountsCache contains up to onlineAccountsCacheMaxSize accounts with their complete history
+	// for the range [Lastest - MaxBalLookback - X, Latest - lookback], where X = [0, commit range]
+	// and alway containing an entry for Lastest - MaxBalLookback + 1 if some account is cached.
+	// The invariant is held by
+	// 1) loading a full history when new accounts get added
+	// 2) adding online accounts state changes when flushing to disk
+	// 3) pruning the history by removing older than Lastest - MaxBalLookback non-online entries
+	onlineAccountsCache onlineAccountsCache
 
 	// maxAcctLookback sets the minimim deltas size to keep in memory
 	acctLookback uint64
@@ -153,13 +169,19 @@ func (ao *onlineAccounts) initializeFromDisk(l ledgerForTracker, lastBalancesRou
 			return fmt.Errorf("last onlineroundparams round %d does not match dbround %d", endRound, ao.cachedDBRoundOnline)
 		}
 
+		onlineAccounts, err0 := onlineAccountsAll(tx, onlineAccountsCacheMaxSize)
+		if err0 != nil {
+			return err0
+		}
+		ao.onlineAccountsCache.init(onlineAccounts, onlineAccountsCacheMaxSize)
+
 		return nil
 	})
 	if err != nil {
 		return
 	}
 
-	ao.accountsq, err = accountsInitDbQueries(ao.dbs.Rdb.Handle, ao.dbs.Wdb.Handle)
+	ao.accountsq, err = onlineAccountsInitDbQueries(ao.dbs.Rdb.Handle, ao.dbs.Wdb.Handle)
 	if err != nil {
 		return
 	}
@@ -370,8 +392,8 @@ func (ao *onlineAccounts) prepareCommit(dcc *deferredCommitContext) error {
 		// it's on a catchpoint round and the node is configured to generate catchpoints. Doing this in a deferred function
 		// here would prevent us from "forgetting" to update this variable later on.
 		// The same is repeated in commitRound on errors.
-		if dcc.isCatchpointRound && dcc.enableGeneratingCatchpointFiles {
-			atomic.StoreInt32(dcc.catchpointWriting, 0)
+		if dcc.catchpointFirstStage && dcc.enableGeneratingCatchpointFiles {
+			atomic.StoreInt32(dcc.catchpointDataWriting, 0)
 		}
 		return fmt.Errorf("attempted to commit series of rounds with non-uniform consensus versions")
 	}
@@ -468,6 +490,12 @@ func (ao *onlineAccounts) postCommit(ctx context.Context, dcc *deferredCommitCon
 
 	for _, persistedAcct := range dcc.updatedPersistedOnlineAccounts {
 		ao.baseOnlineAccounts.write(persistedAcct)
+		ao.onlineAccountsCache.writeFrontIfExist(
+			persistedAcct.addr,
+			cachedOnlineAccount{
+				baseOnlineAccountData: persistedAcct.accountData,
+				updRound:              persistedAcct.updRound,
+			})
 	}
 
 	ao.deltas = ao.deltas[offset:]
@@ -482,6 +510,17 @@ func (ao *onlineAccounts) postCommit(ctx context.Context, dcc *deferredCommitCon
 	if len(ao.onlineRoundParamsData) > maxOnlineLookback {
 		ao.onlineRoundParamsData = ao.onlineRoundParamsData[len(ao.onlineRoundParamsData)-maxOnlineLookback:]
 	}
+
+	// online accounts defines deletion round as (see onlineAccountsNewRoundImpl)
+	// targetRound := basics.Round(updRound + proto.MaxBalLookback)
+	// and deletes these entries at round newBase (see ao.prepareCommit)
+	// and the original condition
+	// if ao.expirations[i].rnd <= dcc.oldBase+basics.Round(offset)
+	// becomes
+	// targetRound <= newBase
+	// ==> basics.Round(updRound + proto.MaxBalLookback) <= newBase
+	// ==> updRound <= newBase - proto.MaxBalLookback
+	ao.onlineAccountsCache.prune(newBase.SubSaturate(basics.Round(ao.maxBalLookback())))
 
 	ao.accountsMu.Unlock()
 
@@ -581,6 +620,7 @@ func (ao *onlineAccounts) lookupOnlineAccountData(rnd basics.Round, addr basics.
 	var rewardsProto config.ConsensusParams
 	var rewardsLevel uint64
 	var persistedData persistedOnlineAccountData
+
 	for {
 		currentDbRound := ao.cachedDBRoundOnline
 		currentDeltaLen := len(ao.deltas)
@@ -626,42 +666,66 @@ func (ao *onlineAccounts) lookupOnlineAccountData(rnd basics.Round, addr basics.
 			}
 		}
 
-		// TODO: baseOnlineAccounts is not good for round-based lookup since it always contains the latest updated value
-		// if macct, has := ao.baseOnlineAccounts.read(addr); has && macct.round == currentDbRound {
-		// 	// we don't technically need this, since it's already in the baseAccounts, however, writing this over
-		// 	// would ensure that we promote this field.
-		// 	ao.baseOnlineAccounts.writePending(macct)
-		// 	return macct.accountData.GetOnlineAccountData(rewardsProto, rewardsLevel), nil
-		// }
+		if macct, has := ao.onlineAccountsCache.read(addr, rnd); has {
+			return macct.GetOnlineAccountData(rewardsProto, rewardsLevel), nil
+		}
 
 		ao.accountsMu.RUnlock()
 		needUnlock = false
 
 		// No updates of this account in the in-memory deltas; use on-disk DB.
-		// The check in roundOffset() made sure the round is exactly the one
-		// present in the on-disk DB.  As an optimization, we avoid creating
+		// As an optimization, we avoid creating
 		// a separate transaction here, and directly use a prepared SQL query
 		// against the database.
 		persistedData, err = ao.accountsq.lookupOnline(addr, rnd)
-		if persistedData.round == currentDbRound {
-			if persistedData.rowid != 0 {
-				// if we read actual data return it
-				// TODO: add another cache
-				// ao.baseOnlineAccounts.writePending(persistedData)
-				return persistedData.accountData.GetOnlineAccountData(rewardsProto, rewardsLevel), err
-			}
-			// otherwise return empty
+		if err != nil || persistedData.rowid == 0 {
+			// no such online account, return empty
 			return ledgercore.OnlineAccountData{}, err
 		}
-
-		if persistedData.round < currentDbRound {
-			ao.log.Errorf("accountUpdates.lookupOnlineAccountData: database round %d is behind in-memory round %d", persistedData.round, currentDbRound)
-			return ledgercore.OnlineAccountData{}, &StaleDatabaseRoundError{databaseRound: persistedData.round, memoryRound: currentDbRound}
+		// lookupOnlineHistory does not fetch the account db round because of the following observation:
+		// 1. ao.onlineAccountsCache update happens with ao.accountsMu taken below and in postCommit
+		// 2. If we started reading the history (lookupOnlineHistory)
+		//   1. before commitRound or while it is running => OK, read what is in DB and then add new entries in postCommit
+		//     * if commitRound deletes some history after, the cache has additional entries and updRound comparison gets a right value
+		//   2. after commitRound but before postCommit => OK, read full history, ignore the update from postCommit in writeFront's updRound comparison
+		//   3. after postCommit => OK, postCommit does not add new entry with writeFrontIfExist, but here all the full history is loaded
+		persistedDataHistory, validThrough, err := ao.accountsq.lookupOnlineHistory(addr)
+		if err != nil || len(persistedDataHistory) == 0 {
+			return ledgercore.OnlineAccountData{}, err
 		}
-		ao.accountsMu.RLock()
-		needUnlock = true
-		for currentDbRound >= ao.cachedDBRoundOnline && currentDeltaLen == len(ao.deltas) {
-			ao.accountsReadCond.Wait()
+		// 3. If we fishied reading the history (lookupOnlineHistory)
+		//   1. db has not advanced (validThrough == currentDbRound) => OK
+		//   2. after commitRound but before postCommit (currentDeltaLen == len(ao.deltas)) => OK, the cache gets populated and postCommit updates the new entry
+		//   3. after commitRound and after postCommit => problem, postCommit does not add a new entry but the cache gets constructed by misses the latest entry, retry
+		// In order to resolve this lookupOnlineHistory returns dbRound value and determine what happened
+		// So handle 3.1 and 3.2 here and 3.3 below
+		ao.accountsMu.Lock()
+		if validThrough == currentDbRound || currentDbRound >= ao.cachedDBRoundOnline && currentDeltaLen == len(ao.deltas) {
+			// not advanced or postCommit not called yet, write to the cache and return the value
+			ao.onlineAccountsCache.clear(addr)
+			if !ao.onlineAccountsCache.full() {
+				for _, data := range persistedDataHistory {
+					written := ao.onlineAccountsCache.writeFront(
+						data.addr,
+						cachedOnlineAccount{
+							baseOnlineAccountData: data.accountData,
+							updRound:              data.updRound,
+						})
+					if !written {
+						ao.accountsMu.Unlock()
+						err = fmt.Errorf("failed to write history of acct %s for round %d into online accounts cache", data.addr.String(), data.updRound)
+						return ledgercore.OnlineAccountData{}, err
+					}
+				}
+			}
+			ao.accountsMu.Unlock()
+			return persistedData.accountData.GetOnlineAccountData(rewardsProto, rewardsLevel), nil
+		}
+		ao.accountsMu.Unlock()
+
+		if validThrough < currentDbRound {
+			ao.log.Errorf("onlineAccounts.lookupOnlineAccountData: database round %d is behind in-memory round %d", validThrough, currentDbRound)
+			return ledgercore.OnlineAccountData{}, &StaleDatabaseRoundError{databaseRound: validThrough, memoryRound: currentDbRound}
 		}
 	}
 }
