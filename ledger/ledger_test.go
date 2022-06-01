@@ -22,11 +22,12 @@ import (
 	"io/ioutil"
 	"math/rand"
 	"os"
-	"runtime/pprof"
+	"runtime"
 	"testing"
 
 	"github.com/algorand/go-algorand/data/account"
 	"github.com/algorand/go-algorand/util/db"
+	"github.com/algorand/go-deadlock"
 
 	"github.com/stretchr/testify/require"
 
@@ -1567,18 +1568,20 @@ func TestListAssetsAndApplications(t *testing.T) {
 func TestLedgerMemoryLeak(t *testing.T) {
 	partitiontest.PartitionTest(t)
 
-	t.Skip() // for manual runs only
+	// t.Skip() // for manual runs only
 	dbName := fmt.Sprintf("%s.%d", t.Name(), crypto.RandUint64())
 	genesisInitState, initKeys := ledgertesting.GenerateInitState(t, protocol.ConsensusCurrentVersion, 10000000000)
 	const inMem = false
 	cfg := config.GetDefaultLocal()
 	cfg.Archival = true
 	log := logging.TestingLog(t)
+	log.SetLevel(logging.Info)   // prevent spamming with ledger.AddValidatedBlock debug message
+	deadlock.Opts.Disable = true // catchpoint writing might take long
 	l, err := OpenLedger(log, dbName, inMem, genesisInitState, cfg)
 	require.NoError(t, err)
 	defer l.Close()
 
-	maxBlocks := 10000
+	const maxBlocks = 1_000_000
 	nftPerAcct := make(map[basics.Address]int)
 	lastBlock, err := l.Block(l.Latest())
 	proto := config.Consensus[lastBlock.CurrentProtocol]
@@ -1595,6 +1598,9 @@ func TestLedgerMemoryLeak(t *testing.T) {
 		accounts[addr] = genesisInitState.Accounts[addr]
 		keys[addr] = initKeys[addr]
 	}
+
+	fmt.Printf("%s\t%s\t%s\t%s\t%s\n", "Round", "TotalAlloc, MB", "HeapAlloc, MB", "LiveObj", "Mallocs")
+	fmt.Printf("%s\t%s\t%s\t%s\t%s\n", "-----", "--------------", "-------------", "-------", "-------")
 
 	curAddressIdx := 0
 	// run for maxBlocks rounds
@@ -1673,18 +1679,26 @@ func TestLedgerMemoryLeak(t *testing.T) {
 		}
 		err = l.addBlockTxns(t, genesisInitState.Accounts, stxns, transactions.ApplyData{})
 		require.NoError(t, err)
-		if i%100 == 0 {
-			l.WaitForCommit(l.Latest())
-			fmt.Printf("block: %d\n", l.Latest())
+
+		latest := l.Latest()
+		if latest%100 == 0 {
+			l.WaitForCommit(latest)
 		}
-		if i%1000 == 0 && i > 0 {
-			memprofile := fmt.Sprintf("%s-memprof-%d", t.Name(), i)
-			f, err := os.Create(memprofile)
-			require.NoError(t, err)
-			err = pprof.WriteHeapProfile(f)
-			require.NoError(t, err)
-			f.Close()
-			fmt.Printf("Profile %s created\n", memprofile)
+		if latest%1000 == 0 || i%1000 == 0 && i > 0 {
+			var rtm runtime.MemStats
+			runtime.ReadMemStats(&rtm)
+			const meg = 1024 * 1024
+			fmt.Printf("%5d\t%14d\t%13d\t%7d\t%7d\n", latest, rtm.TotalAlloc/meg, rtm.HeapAlloc/meg, rtm.Mallocs-rtm.Frees, rtm.Mallocs)
+
+			// Use the code below to generate memory profile if needed for debugging
+			// memprofile := fmt.Sprintf("%s-memprof-%d", t.Name(), i)
+			// f, err := os.Create(memprofile)
+			// require.NoError(t, err)
+			// err = pprof.WriteHeapProfile(f)
+			// require.NoError(t, err)
+			// f.Close()
+			// fmt.Printf("Profile %s created\n", memprofile)
+
 		}
 	}
 }
