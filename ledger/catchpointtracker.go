@@ -103,7 +103,7 @@ func catchpointStage1Encoder(w io.Writer) (io.WriteCloser, error) {
 		return zlib.NewWriterLevel(w, zlib.BestSpeed)
 	case "zstd":
 		fmt.Println("using Zstd")
-		return zstd.NewWriter(w)
+		return zstd.NewWriter(w, zstd.WithEncoderLevel(zstd.SpeedFastest))
 	default:
 		fmt.Println("using Noop compression writer")
 		return nopWriteCloser{w}, nil
