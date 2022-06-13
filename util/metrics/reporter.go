@@ -19,6 +19,7 @@ package metrics
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"net/http"
 	"os"
@@ -126,6 +127,7 @@ func (reporter *MetricReporter) gatherMetrics() {
 }
 
 func (reporter *MetricReporter) postGatheredMetrics(ctx context.Context) bool {
+	fmt.Println("Posting metrics:", time.Now(), "\n", reporter.lastMetricsBuffer.String())
 	request, err := http.NewRequest("POST", "http://"+reporter.serviceConfig.NodeExporterListenAddress+nodeExporterMetricsPath, strings.NewReader(reporter.lastMetricsBuffer.String()))
 	if err != nil {
 		// logging.Base().Debugf("Unable to post metrics to '%s'; error : '%v'", reporter.serviceConfig.NodeExporterListenAddress, err)
