@@ -145,6 +145,7 @@ func (reporter *MetricReporter) postGatheredMetrics(ctx context.Context) bool {
 	var client http.Client
 	resp, err := client.Do(request)
 	if err == nil {
+		reporter.log.Infof("postGatheredMetrics POST metrics request response '%v'", resp)
 		reporter.parseSampleRate(resp)
 	} else {
 		reporter.log.Infof("Unable to post metrics to '%s'; error : '%v'", reporter.serviceConfig.NodeExporterListenAddress, err)
