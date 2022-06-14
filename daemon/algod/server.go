@@ -170,7 +170,7 @@ func (s *Server) Initialize(cfg config.Local, phonebookAddresses []string, genes
 			NodeExporterListenAddress: cfg.NodeExporterListenAddress,
 			Labels:                    metricLabels,
 			NodeExporterPath:          cfg.NodeExporterPath,
-		})
+		}, s.log)
 
 	s.node, err = node.MakeFull(s.log, s.RootPath, cfg, phonebookAddresses, s.Genesis)
 	if os.IsNotExist(err) {

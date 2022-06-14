@@ -19,7 +19,6 @@ package metrics
 
 import (
 	"context"
-	"fmt"
 	"net"
 	"net/http"
 	"os"
@@ -27,8 +26,6 @@ import (
 	"regexp"
 	"strings"
 	"time"
-	// logging imports metrics so that we can have metrics about logging, which is more important than the four Debug lines we had here logging about metrics. TODO: find a more clever cycle resolution
-	//"github.com/algorand/go-algorand/logging"
 )
 
 const (
@@ -46,13 +43,23 @@ type MetricReporter struct {
 	formattedLabels   string
 	neSync            net.Listener // we will use this "locked" network port listener to syncronize which of the algod processes invokes the node_exporter
 	neProcess         *os.Process  // a pointer to the node exporter process.
+	log               Logger
+}
+
+// Logger is used by the metrics package to write logs, matching the interface in the logging package.
+type Logger interface {
+	Debugf(string, ...interface{})
+	Infof(string, ...interface{})
+	Warnf(string, ...interface{})
+	Errorf(string, ...interface{})
 }
 
 // MakeMetricReporter creates a new metrics server at the given endpoint.
-func MakeMetricReporter(serviceConfig ServiceConfig) *MetricReporter {
+func MakeMetricReporter(serviceConfig ServiceConfig, log Logger) *MetricReporter {
 	reporter := &MetricReporter{
 		serviceConfig:  serviceConfig,
 		gatherInterval: time.Duration(0),
+		log:            log,
 	}
 	reporter.createFormattedLabels()
 	return reporter
@@ -124,13 +131,14 @@ func (reporter *MetricReporter) gatherMetrics() {
 	var buf strings.Builder
 	DefaultRegistry().WriteMetrics(&buf, reporter.formattedLabels)
 	reporter.lastMetricsBuffer = buf
+	reporter.log.Infof("gatherMetrics got: %s", buf)
 }
 
 func (reporter *MetricReporter) postGatheredMetrics(ctx context.Context) bool {
-	fmt.Println("Posting metrics:", time.Now(), "\n", reporter.lastMetricsBuffer.String())
+	reporter.log.Infof("postGatheredMetrics POSTing metrics to %s buf: %s", reporter.serviceConfig.NodeExporterListenAddress+nodeExporterMetricsPath, reporter.lastMetricsBuffer.String())
 	request, err := http.NewRequest("POST", "http://"+reporter.serviceConfig.NodeExporterListenAddress+nodeExporterMetricsPath, strings.NewReader(reporter.lastMetricsBuffer.String()))
 	if err != nil {
-		// logging.Base().Debugf("Unable to post metrics to '%s'; error : '%v'", reporter.serviceConfig.NodeExporterListenAddress, err)
+		reporter.log.Infof("Unable to make metrics request to '%s'; error : '%v'", reporter.serviceConfig.NodeExporterListenAddress, err)
 		return true
 	}
 	request = request.WithContext(ctx)
@@ -139,6 +147,7 @@ func (reporter *MetricReporter) postGatheredMetrics(ctx context.Context) bool {
 	if err == nil {
 		reporter.parseSampleRate(resp)
 	} else {
+		reporter.log.Infof("Unable to post metrics to '%s'; error : '%v'", reporter.serviceConfig.NodeExporterListenAddress, err)
 		// did we fail due to context expiration ?
 		if ctx.Err() != nil {
 			// we failed due to context reason.
@@ -236,18 +245,17 @@ func (reporter *MetricReporter) tryInvokeNodeExporter(ctx context.Context) {
 	// launch the process
 	proc, err := os.StartProcess(vargs[0], vargs, &neAttributes)
 	if err != nil {
-		// logging.Base().Debugf("Unable to start node exporter : %v", err)
+		reporter.log.Infof("Unable to start node exporter : %v", err)
 		return
 	}
-	// logging.Base().Debugf("Started node exporter with pid : %d", proc.Pid)
+	reporter.log.Infof("Started node exporter with pid : %d", proc.Pid)
 
 	reporter.neProcess = proc
 
 	// wait for the process to complete on a separate goroutine, and set the reporter.neProcess variable to nil once it's done.
 	go func(proc **os.Process) {
-		(*proc).Wait()
-		// status, _ :=
-		// logging.Base().Debugf("Node exporter process ended : %v", status)
+		status, _ := (*proc).Wait()
+		reporter.log.Infof("Node exporter process ended : %v", status)
 		(*proc) = nil
 	}(&reporter.neProcess)
 	return

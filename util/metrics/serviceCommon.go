@@ -39,4 +39,5 @@ type MetricService struct {
 	running   bool
 	cancel    context.CancelFunc
 	done      chan struct{}
+	log       Logger
 }

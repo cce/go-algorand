@@ -31,6 +31,13 @@ type CounterTest struct {
 	MetricTest
 }
 
+type nullLogger struct{}
+
+func (nullLogger) Debugf(string, ...interface{}) {}
+func (nullLogger) Infof(string, ...interface{})  {}
+func (nullLogger) Warnf(string, ...interface{})  {}
+func (nullLogger) Errorf(string, ...interface{}) {}
+
 func TestMetricCounter(t *testing.T) {
 	partitiontest.PartitionTest(t)
 
@@ -46,7 +53,7 @@ func TestMetricCounter(t *testing.T) {
 		Labels: map[string]string{
 			"host_name":  "host_one",
 			"session_id": "AFX-229"},
-	})
+	}, nullLogger{})
 	metricService.Start(context.Background())
 
 	counter := MakeCounter(MetricName{Name: "metric_test_name1", Description: "this is the metric test for counter object"})
@@ -92,7 +99,7 @@ func TestMetricCounterFastInts(t *testing.T) {
 		Labels: map[string]string{
 			"host_name":  "host_one",
 			"session_id": "AFX-229"},
-	})
+	}, nullLogger{})
 	metricService.Start(context.Background())
 
 	counter := MakeCounter(MetricName{Name: "metric_test_name1", Description: "this is the metric test for counter object"})
@@ -139,7 +146,7 @@ func TestMetricCounterMixed(t *testing.T) {
 		Labels: map[string]string{
 			"host_name":  "host_one",
 			"session_id": "AFX-229"},
-	})
+	}, nullLogger{})
 	metricService.Start(context.Background())
 
 	counter := MakeCounter(MetricName{Name: "metric_test_name1", Description: "this is the metric test for counter object"})

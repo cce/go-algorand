@@ -42,10 +42,11 @@ var (
 )
 
 // MakeMetricService creates a new metrics server at the given endpoint.
-func MakeMetricService(config *ServiceConfig) *MetricService {
+func MakeMetricService(config *ServiceConfig, log Logger) *MetricService {
 	server := &MetricService{
 		config: *config,
 		done:   make(chan struct{}, 1),
+		log:    log,
 	}
 	if _, hasPid := server.config.Labels["pid"]; !hasPid {
 		pid := os.Getpid()
@@ -61,7 +62,7 @@ func MakeMetricService(config *ServiceConfig) *MetricService {
 
 func (server *MetricService) startAsync(ctx context.Context) {
 	defer close(server.done)
-	metricsReporter := MakeMetricReporter(server.config)
+	metricsReporter := MakeMetricReporter(server.config, server.log)
 	metricsReporter.ReporterLoop(ctx)
 }
 

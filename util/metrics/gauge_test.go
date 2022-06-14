@@ -45,7 +45,7 @@ func TestMetricGauge(t *testing.T) {
 		Labels: map[string]string{
 			"host_name":  "host_one",
 			"session_id": "AFX-229"},
-	})
+	}, nullLogger{})
 	metricService.Start(context.Background())
 
 	gauge := MakeGauge(MetricName{Name: "metric_test_name1", Description: "this is the metric test for counter object"})
