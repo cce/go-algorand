@@ -131,7 +131,7 @@ func (reporter *MetricReporter) gatherMetrics() {
 	var buf strings.Builder
 	DefaultRegistry().WriteMetrics(&buf, reporter.formattedLabels)
 	reporter.lastMetricsBuffer = buf
-	reporter.log.Infof("gatherMetrics got: %s", buf)
+	reporter.log.Infof("gatherMetrics got: %s", buf.String())
 }
 
 func (reporter *MetricReporter) postGatheredMetrics(ctx context.Context) bool {
