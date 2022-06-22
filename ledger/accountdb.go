@@ -22,7 +22,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"sort"
 	"strings"
 	"time"
 
@@ -44,19 +43,11 @@ import (
 // accountsDbQueries is used to cache a prepared SQL statement to look up
 // the state of a single account.
 type accountsDbQueries struct {
-	listCreatablesStmt          *sql.Stmt
-	lookupStmt                  *sql.Stmt
-	lookupResourcesStmt         *sql.Stmt
-	lookupAllResourcesStmt      *sql.Stmt
-	lookupCreatorStmt           *sql.Stmt
-	deleteStoredCatchpoint      *sql.Stmt
-	insertStoredCatchpoint      *sql.Stmt
-	selectOldestCatchpointFiles *sql.Stmt
-	selectCatchpointStateUint64 *sql.Stmt
-	deleteCatchpointState       *sql.Stmt
-	insertCatchpointStateUint64 *sql.Stmt
-	selectCatchpointStateString *sql.Stmt
-	insertCatchpointStateString *sql.Stmt
+	listCreatablesStmt     *sql.Stmt
+	lookupStmt             *sql.Stmt
+	lookupResourcesStmt    *sql.Stmt
+	lookupAllResourcesStmt *sql.Stmt
+	lookupCreatorStmt      *sql.Stmt
 }
 
 type onlineAccountsDbQueries struct {
@@ -164,6 +155,11 @@ const createCatchpointFirstStageInfoTable = `
 	round integer primary key NOT NULL,
 	info blob NOT NULL)`
 
+const createUnfinishedCatchpointsTable = `
+	CREATE TABLE IF NOT EXISTS unfinishedcatchpoints (
+	round integer primary key NOT NULL,
+	blockhash blob NOT NULL)`
+
 var accountsResetExprs = []string{
 	`DROP TABLE IF EXISTS acctrounds`,
 	`DROP TABLE IF EXISTS accounttotals`,
@@ -177,6 +173,7 @@ var accountsResetExprs = []string{
 	`DROP TABLE IF EXISTS txtail`,
 	`DROP TABLE IF EXISTS onlineroundparamstail`,
 	`DROP TABLE IF EXISTS catchpointfirststageinfo`,
+	`DROP TABLE IF EXISTS unfinishedcatchpoints`,
 }
 
 // accountDBVersion is the database version that this binary would know how to support and how to upgrade to.
@@ -326,9 +323,14 @@ type catchpointState string
 const (
 	// catchpointStateLastCatchpoint is written by a node once a catchpoint label is created for a round
 	catchpointStateLastCatchpoint = catchpointState("lastCatchpoint")
-	// catchpointStateWritingCatchpoint is written by a node while a catchpoint file is being created. It gets deleted once the file
-	// creation is complete, and used as a way to record the fact that we've started generating the catchpoint file for that particular
-	// round.
+	// This state variable is set to 1 if catchpoint's first stage is unfinished,
+	// and is 0 otherwise. Used to clear / restart the first stage after a crash.
+	// This key is set in the same db transaction as the account updates, so the
+	// unfinished first stage corresponds to the current db round.
+	catchpointStateWritingFirstStageInfo = catchpointState("writingFirstStageInfo")
+	// If there is an unfinished catchpoint, this state variable is set to
+	// the catchpoint's round. Otherwise, it is set to 0.
+	// DEPRECATED.
 	catchpointStateWritingCatchpoint = catchpointState("writingCatchpoint")
 	// catchpointCatchupState is the state of the catchup process. The variable is stored only during the catchpoint catchup process, and removed afterward.
 	catchpointStateCatchupState = catchpointState("catchpointCatchupState")
@@ -342,7 +344,8 @@ const (
 	// catchpointStateCatchupHashRound is the round that is associated with the hash of the merkle trie. Normally, it's identical to catchpointStateCatchupBalancesRound,
 	// however, it could differ when we catchup from a catchpoint that was created using a different version : in this case,
 	// we set it to zero in order to reset the merkle trie. This would force the merkle trie to be re-build on startup ( if needed ).
-	catchpointStateCatchupHashRound = catchpointState("catchpointCatchupHashRound")
+	catchpointStateCatchupHashRound   = catchpointState("catchpointCatchupHashRound")
+	catchpointStateCatchpointLookback = catchpointState("catchpointLookback")
 )
 
 // normalizedAccountBalance is a staging area for a catchpoint file account information before it's being added to the catchpoint staging tables.
@@ -451,6 +454,7 @@ func prepareNormalizedBalancesV6(bals []encodedBalanceRecordV6, proto config.Con
 // makeCompactResourceDeltas takes an array of AccountDeltas ( one array entry per round ), and compacts the resource portions of the arrays into a single
 // data structure that contains all the resources deltas changes. While doing that, the function eliminate any intermediate resources changes.
 // It counts the number of changes each account get modified across the round range by specifying it in the nAcctDeltas field of the resourcesDeltas.
+// As an optimization, accountDeltas is passed as a slice and must not be modified.
 func makeCompactResourceDeltas(accountDeltas []ledgercore.AccountDeltas, baseRound basics.Round, setUpdateRound bool, baseAccounts lruAccounts, baseResources lruResources) (outResourcesDeltas compactResourcesDeltas) {
 	if len(accountDeltas) == 0 {
 		return
@@ -668,6 +672,7 @@ func (a *compactResourcesDeltas) updateOld(idx int, old persistedResourcesData) 
 // makeCompactAccountDeltas takes an array of account AccountDeltas ( one array entry per round ), and compacts the arrays into a single
 // data structure that contains all the account deltas changes. While doing that, the function eliminate any intermediate account changes.
 // It counts the number of changes each account get modified across the round range by specifying it in the nAcctDeltas field of the accountDeltaCount/modifiedCreatable.
+// As an optimization, accountDeltas is passed as a slice and must not be modified.
 func makeCompactAccountDeltas(accountDeltas []ledgercore.AccountDeltas, baseRound basics.Round, setUpdateRound bool, baseAccounts lruAccounts) (outAccountDeltas compactAccountDeltas) {
 	if len(accountDeltas) == 0 {
 		return
@@ -1080,8 +1085,6 @@ func resetCatchpointStagingBalances(ctx context.Context, tx *sql.Tx, newCatchup 
 		"DROP TABLE IF EXISTS catchpointaccounthashes",
 		"DROP TABLE IF EXISTS catchpointpendinghashes",
 		"DROP TABLE IF EXISTS catchpointresources",
-		"DROP TABLE IF EXISTS catchpointtxtail",
-		"DROP TABLE IF EXISTS catchpointonlineaccounts",
 		"DELETE FROM accounttotals where id='catchpointStaging'",
 	}
 
@@ -1095,7 +1098,6 @@ func resetCatchpointStagingBalances(ctx context.Context, tx *sql.Tx, newCatchup 
 		now := time.Now().UnixNano()
 		idxnameBalances := fmt.Sprintf("onlineaccountbals_idx_%d", now)
 		idxnameAddress := fmt.Sprintf("accountbase_address_idx_%d", now)
-		idxnameOnlineBalances := fmt.Sprintf("onlineaccountnorm_idx_%d", now)
 
 		s = append(s,
 			"CREATE TABLE IF NOT EXISTS catchpointassetcreators (asset integer primary key, creator blob, ctype integer)",
@@ -1103,11 +1105,8 @@ func resetCatchpointStagingBalances(ctx context.Context, tx *sql.Tx, newCatchup 
 			"CREATE TABLE IF NOT EXISTS catchpointpendinghashes (data blob)",
 			"CREATE TABLE IF NOT EXISTS catchpointaccounthashes (id integer primary key, data blob)",
 			"CREATE TABLE IF NOT EXISTS catchpointresources (addrid INTEGER NOT NULL, aidx INTEGER NOT NULL, data BLOB NOT NULL, PRIMARY KEY (addrid, aidx) ) WITHOUT ROWID",
-			"CREATE TABLE IF NOT EXISTS catchpointonlineaccounts (address blob NOT NULL, updround INTEGER, normalizedonlinebalance INTEGER NOT NULL, votelastvalid INTEGER NOT NULL, data blob NOT NULL, PRIMARY KEY (address, updround) )",
-			"CREATE TABLE IF NOT EXISTS catchpointtxtail (round INTEGER PRIMARY KEY NOT NULL, data blob)",
 			createNormalizedOnlineBalanceIndex(idxnameBalances, "catchpointbalances"), // should this be removed ?
 			createUniqueAddressBalanceIndex(idxnameAddress, "catchpointbalances"),
-			createNormalizedOnlineBalanceIndexOnline(idxnameOnlineBalances, "catchpointonlineaccounts"),
 		)
 	}
 
@@ -1125,26 +1124,15 @@ func resetCatchpointStagingBalances(ctx context.Context, tx *sql.Tx, newCatchup 
 // tables and update the correct balance round. This is the final step in switching onto the new catchpoint round.
 func applyCatchpointStagingBalances(ctx context.Context, tx *sql.Tx, balancesRound basics.Round, merkleRootRound basics.Round) (err error) {
 	stmts := []string{
-		"ALTER TABLE accountbase RENAME TO accountbase_old",
-		"ALTER TABLE assetcreators RENAME TO assetcreators_old",
-		"ALTER TABLE accounthashes RENAME TO accounthashes_old",
-		"ALTER TABLE resources RENAME TO resources_old",
-		"ALTER TABLE onlineaccounts RENAME TO onlineaccounts_old",
-		"ALTER TABLE txtail RENAME TO txtail_old",
+		"DROP TABLE IF EXISTS accountbase",
+		"DROP TABLE IF EXISTS assetcreators",
+		"DROP TABLE IF EXISTS accounthashes",
+		"DROP TABLE IF EXISTS resources",
 
 		"ALTER TABLE catchpointbalances RENAME TO accountbase",
 		"ALTER TABLE catchpointassetcreators RENAME TO assetcreators",
 		"ALTER TABLE catchpointaccounthashes RENAME TO accounthashes",
 		"ALTER TABLE catchpointresources RENAME TO resources",
-		"ALTER TABLE catchpointonlineaccounts RENAME TO onlineaccounts",
-		"ALTER TABLE catchpointtxtail RENAME TO txtail",
-
-		"DROP TABLE IF EXISTS accountbase_old",
-		"DROP TABLE IF EXISTS assetcreators_old",
-		"DROP TABLE IF EXISTS accounthashes_old",
-		"DROP TABLE IF EXISTS resources_old",
-		"DROP TABLE IF EXISTS onlineaccounts_old",
-		"DROP TABLE IF EXISTS txtail_old",
 	}
 
 	for _, stmt := range stmts {
@@ -1167,8 +1155,8 @@ func applyCatchpointStagingBalances(ctx context.Context, tx *sql.Tx, balancesRou
 	return
 }
 
-func getCatchpoint(tx *sql.Tx, round basics.Round) (fileName string, catchpoint string, fileSize int64, err error) {
-	err = tx.QueryRow("SELECT filename, catchpoint, filesize FROM storedcatchpoints WHERE round=?", int64(round)).Scan(&fileName, &catchpoint, &fileSize)
+func getCatchpoint(ctx context.Context, q db.Queryable, round basics.Round) (fileName string, catchpoint string, fileSize int64, err error) {
+	err = q.QueryRowContext(ctx, "SELECT filename, catchpoint, filesize FROM storedcatchpoints WHERE round=?", int64(round)).Scan(&fileName, &catchpoint, &fileSize)
 	return
 }
 
@@ -1351,6 +1339,11 @@ func accountsCreateOnlineRoundParamsTable(ctx context.Context, tx *sql.Tx) (err 
 
 func accountsCreateCatchpointFirstStageInfoTable(ctx context.Context, e db.Executable) error {
 	_, err := e.ExecContext(ctx, createCatchpointFirstStageInfoTable)
+	return err
+}
+
+func accountsCreateUnfinishedCatchpointsTable(ctx context.Context, e db.Executable) error {
+	_, err := e.ExecContext(ctx, createUnfinishedCatchpointsTable)
 	return err
 }
 
@@ -2197,7 +2190,7 @@ func performTxTailTableMigration(ctx context.Context, tx *sql.Tx, blockDb db.Acc
 }
 
 func performOnlineRoundParamsTailMigration(ctx context.Context, tx *sql.Tx, blockDb db.Accessor, newDatabase bool, initProto protocol.ConsensusVersion) (err error) {
-	totals, err := accountsTotals(tx, false)
+	totals, err := accountsTotals(ctx, tx, false)
 	if err != nil {
 		return err
 	}
@@ -2385,19 +2378,19 @@ func accountDataToOnline(address basics.Address, ad *ledgercore.AccountData, pro
 	}
 }
 
-func resetAccountHashes(tx *sql.Tx) (err error) {
-	_, err = tx.Exec(`DELETE FROM accounthashes`)
+func resetAccountHashes(ctx context.Context, tx *sql.Tx) (err error) {
+	_, err = tx.ExecContext(ctx, `DELETE FROM accounthashes`)
 	return
 }
 
-func accountsReset(tx *sql.Tx) error {
+func accountsReset(ctx context.Context, tx *sql.Tx) error {
 	for _, stmt := range accountsResetExprs {
-		_, err := tx.Exec(stmt)
+		_, err := tx.ExecContext(ctx, stmt)
 		if err != nil {
 			return err
 		}
 	}
-	_, err := db.SetUserVersion(context.Background(), tx, 0)
+	_, err := db.SetUserVersion(ctx, tx, 0)
 	return err
 }
 
@@ -2412,8 +2405,8 @@ func accountsRound(q db.Queryable) (rnd basics.Round, err error) {
 
 // accountsHashRound returns the round of the hash tree
 // if the hash of the tree doesn't exists, it returns zero.
-func accountsHashRound(tx *sql.Tx) (hashrnd basics.Round, err error) {
-	err = tx.QueryRow("SELECT rnd FROM acctrounds WHERE id='hashbase'").Scan(&hashrnd)
+func accountsHashRound(ctx context.Context, tx *sql.Tx) (hashrnd basics.Round, err error) {
+	err = tx.QueryRowContext(ctx, "SELECT rnd FROM acctrounds WHERE id='hashbase'").Scan(&hashrnd)
 	if err == sql.ErrNoRows {
 		hashrnd = basics.Round(0)
 		err = nil
@@ -2421,71 +2414,31 @@ func accountsHashRound(tx *sql.Tx) (hashrnd basics.Round, err error) {
 	return
 }
 
-func accountsInitDbQueries(r db.Queryable, w db.Queryable) (*accountsDbQueries, error) {
+func accountsInitDbQueries(q db.Queryable) (*accountsDbQueries, error) {
 	var err error
 	qs := &accountsDbQueries{}
 
-	qs.listCreatablesStmt, err = r.Prepare("SELECT rnd, asset, creator FROM acctrounds LEFT JOIN assetcreators ON assetcreators.asset <= ? AND assetcreators.ctype = ? WHERE acctrounds.id='acctbase' ORDER BY assetcreators.asset desc LIMIT ?")
+	qs.listCreatablesStmt, err = q.Prepare("SELECT rnd, asset, creator FROM acctrounds LEFT JOIN assetcreators ON assetcreators.asset <= ? AND assetcreators.ctype = ? WHERE acctrounds.id='acctbase' ORDER BY assetcreators.asset desc LIMIT ?")
 	if err != nil {
 		return nil, err
 	}
 
-	qs.lookupStmt, err = r.Prepare("SELECT accountbase.rowid, rnd, data FROM acctrounds LEFT JOIN accountbase ON address=? WHERE id='acctbase'")
+	qs.lookupStmt, err = q.Prepare("SELECT accountbase.rowid, rnd, data FROM acctrounds LEFT JOIN accountbase ON address=? WHERE id='acctbase'")
 	if err != nil {
 		return nil, err
 	}
 
-	qs.lookupResourcesStmt, err = r.Prepare("SELECT accountbase.rowid, rnd, resources.data FROM acctrounds LEFT JOIN accountbase ON accountbase.address = ? LEFT JOIN resources ON accountbase.rowid = resources.addrid AND resources.aidx = ? WHERE id='acctbase'")
+	qs.lookupResourcesStmt, err = q.Prepare("SELECT accountbase.rowid, rnd, resources.data FROM acctrounds LEFT JOIN accountbase ON accountbase.address = ? LEFT JOIN resources ON accountbase.rowid = resources.addrid AND resources.aidx = ? WHERE id='acctbase'")
 	if err != nil {
 		return nil, err
 	}
 
-	qs.lookupAllResourcesStmt, err = r.Prepare("SELECT accountbase.rowid, rnd, resources.aidx, resources.data FROM acctrounds LEFT JOIN accountbase ON accountbase.address = ? LEFT JOIN resources ON accountbase.rowid = resources.addrid WHERE id='acctbase'")
+	qs.lookupAllResourcesStmt, err = q.Prepare("SELECT accountbase.rowid, rnd, resources.aidx, resources.data FROM acctrounds LEFT JOIN accountbase ON accountbase.address = ? LEFT JOIN resources ON accountbase.rowid = resources.addrid WHERE id='acctbase'")
 	if err != nil {
 		return nil, err
 	}
 
-	qs.lookupCreatorStmt, err = r.Prepare("SELECT rnd, creator FROM acctrounds LEFT JOIN assetcreators ON asset = ? AND ctype = ? WHERE id='acctbase'")
-	if err != nil {
-		return nil, err
-	}
-
-	qs.deleteStoredCatchpoint, err = w.Prepare("DELETE FROM storedcatchpoints WHERE round=?")
-	if err != nil {
-		return nil, err
-	}
-
-	qs.insertStoredCatchpoint, err = w.Prepare("INSERT INTO storedcatchpoints(round, filename, catchpoint, filesize, pinned) VALUES(?, ?, ?, ?, 0)")
-	if err != nil {
-		return nil, err
-	}
-
-	qs.selectOldestCatchpointFiles, err = r.Prepare("SELECT round, filename FROM storedcatchpoints WHERE pinned = 0 and round <= COALESCE((SELECT round FROM storedcatchpoints WHERE pinned = 0 ORDER BY round DESC LIMIT ?, 1),0) ORDER BY round ASC LIMIT ?")
-	if err != nil {
-		return nil, err
-	}
-
-	qs.selectCatchpointStateUint64, err = r.Prepare("SELECT intval FROM catchpointstate WHERE id=?")
-	if err != nil {
-		return nil, err
-	}
-
-	qs.deleteCatchpointState, err = w.Prepare("DELETE FROM catchpointstate WHERE id=?")
-	if err != nil {
-		return nil, err
-	}
-
-	qs.insertCatchpointStateUint64, err = w.Prepare("INSERT OR REPLACE INTO catchpointstate(id, intval) VALUES(?, ?)")
-	if err != nil {
-		return nil, err
-	}
-
-	qs.insertCatchpointStateString, err = w.Prepare("INSERT OR REPLACE INTO catchpointstate(id, strval) VALUES(?, ?)")
-	if err != nil {
-		return nil, err
-	}
-
-	qs.selectCatchpointStateString, err = r.Prepare("SELECT strval FROM catchpointstate WHERE id=?")
+	qs.lookupCreatorStmt, err = q.Prepare("SELECT rnd, creator FROM acctrounds LEFT JOIN assetcreators ON asset = ? AND ctype = ? WHERE id='acctbase'")
 	if err != nil {
 		return nil, err
 	}
@@ -2493,7 +2446,7 @@ func accountsInitDbQueries(r db.Queryable, w db.Queryable) (*accountsDbQueries, 
 	return qs, nil
 }
 
-func onlineAccountsInitDbQueries(r db.Queryable, w db.Queryable) (*onlineAccountsDbQueries, error) {
+func onlineAccountsInitDbQueries(r db.Queryable) (*onlineAccountsDbQueries, error) {
 	var err error
 	qs := &onlineAccountsDbQueries{}
 
@@ -2733,26 +2686,27 @@ func (qs *onlineAccountsDbQueries) lookupOnlineHistory(addr basics.Address) (res
 	return
 }
 
-func (qs *accountsDbQueries) storeCatchpoint(ctx context.Context, round basics.Round, fileName string, catchpoint string, fileSize int64) (err error) {
+func storeCatchpoint(ctx context.Context, e db.Executable, round basics.Round, fileName string, catchpoint string, fileSize int64) (err error) {
 	err = db.Retry(func() (err error) {
-		_, err = qs.deleteStoredCatchpoint.ExecContext(ctx, round)
-
+		query := "DELETE FROM storedcatchpoints WHERE round=?"
+		_, err = e.ExecContext(ctx, query, round)
 		if err != nil || (fileName == "" && catchpoint == "" && fileSize == 0) {
-			return
+			return err
 		}
 
-		_, err = qs.insertStoredCatchpoint.ExecContext(ctx, round, fileName, catchpoint, fileSize)
-		return
+		query = "INSERT INTO storedcatchpoints(round, filename, catchpoint, filesize, pinned) VALUES(?, ?, ?, ?, 0)"
+		_, err = e.ExecContext(ctx, query, round, fileName, catchpoint, fileSize)
+		return err
 	})
 	return
 }
 
-func (qs *accountsDbQueries) getOldestCatchpointFiles(ctx context.Context, fileCount int, filesToKeep int) (fileNames map[basics.Round]string, err error) {
+func getOldestCatchpointFiles(ctx context.Context, q db.Queryable, fileCount int, filesToKeep int) (fileNames map[basics.Round]string, err error) {
 	err = db.Retry(func() (err error) {
-		var rows *sql.Rows
-		rows, err = qs.selectOldestCatchpointFiles.QueryContext(ctx, filesToKeep, fileCount)
+		query := "SELECT round, filename FROM storedcatchpoints WHERE pinned = 0 and round <= COALESCE((SELECT round FROM storedcatchpoints WHERE pinned = 0 ORDER BY round DESC LIMIT ?, 1),0) ORDER BY round ASC LIMIT ?"
+		rows, err := q.QueryContext(ctx, query, filesToKeep, fileCount)
 		if err != nil {
-			return
+			return err
 		}
 		defer rows.Close()
 
@@ -2762,78 +2716,90 @@ func (qs *accountsDbQueries) getOldestCatchpointFiles(ctx context.Context, fileC
 			var round basics.Round
 			err = rows.Scan(&round, &fileName)
 			if err != nil {
-				return
+				return err
 			}
 			fileNames[round] = fileName
 		}
 
-		err = rows.Err()
-		return
+		return rows.Err()
 	})
+	if err != nil {
+		fileNames = nil
+	}
 	return
 }
 
-func (qs *accountsDbQueries) readCatchpointStateUint64(ctx context.Context, stateName catchpointState) (rnd uint64, def bool, err error) {
-	var val sql.NullInt64
+func readCatchpointStateUint64(ctx context.Context, q db.Queryable, stateName catchpointState) (val uint64, err error) {
 	err = db.Retry(func() (err error) {
-		err = qs.selectCatchpointStateUint64.QueryRowContext(ctx, stateName).Scan(&val)
-		if err == sql.ErrNoRows || (err == nil && !val.Valid) {
-			val.Int64 = 0 // default to zero.
-			err = nil
-			def = true
-			return
+		query := "SELECT intval FROM catchpointstate WHERE id=?"
+		var v sql.NullInt64
+		err = q.QueryRowContext(ctx, query, stateName).Scan(&v)
+		if err == sql.ErrNoRows {
+			return nil
 		}
-		return err
+		if err != nil {
+			return err
+		}
+		if v.Valid {
+			val = uint64(v.Int64)
+		}
+		return nil
 	})
-	return uint64(val.Int64), def, err
+	return val, err
 }
 
-func (qs *accountsDbQueries) writeCatchpointStateUint64(ctx context.Context, stateName catchpointState, setValue uint64) (cleared bool, err error) {
+func writeCatchpointStateUint64(ctx context.Context, e db.Executable, stateName catchpointState, setValue uint64) (err error) {
 	err = db.Retry(func() (err error) {
 		if setValue == 0 {
-			_, err = qs.deleteCatchpointState.ExecContext(ctx, stateName)
-			cleared = true
-			return err
+			return deleteCatchpointStateImpl(ctx, e, stateName)
 		}
 
 		// we don't know if there is an entry in the table for this state, so we'll insert/replace it just in case.
-		_, err = qs.insertCatchpointStateUint64.ExecContext(ctx, stateName, setValue)
-		cleared = false
+		query := "INSERT OR REPLACE INTO catchpointstate(id, intval) VALUES(?, ?)"
+		_, err = e.ExecContext(ctx, query, stateName, setValue)
 		return err
 	})
-	return cleared, err
-
+	return err
 }
 
-func (qs *accountsDbQueries) readCatchpointStateString(ctx context.Context, stateName catchpointState) (str string, def bool, err error) {
-	var val sql.NullString
+func readCatchpointStateString(ctx context.Context, q db.Queryable, stateName catchpointState) (val string, err error) {
 	err = db.Retry(func() (err error) {
-		err = qs.selectCatchpointStateString.QueryRowContext(ctx, stateName).Scan(&val)
-		if err == sql.ErrNoRows || (err == nil && !val.Valid) {
-			val.String = "" // default to empty string
-			err = nil
-			def = true
-			return
+		query := "SELECT strval FROM catchpointstate WHERE id=?"
+		var v sql.NullString
+		err = q.QueryRowContext(ctx, query, stateName).Scan(&v)
+		if err == sql.ErrNoRows {
+			return nil
 		}
-		return err
+		if err != nil {
+			return err
+		}
+
+		if v.Valid {
+			val = v.String
+		}
+		return nil
 	})
-	return val.String, def, err
+	return val, err
 }
 
-func (qs *accountsDbQueries) writeCatchpointStateString(ctx context.Context, stateName catchpointState, setValue string) (cleared bool, err error) {
+func writeCatchpointStateString(ctx context.Context, e db.Executable, stateName catchpointState, setValue string) (err error) {
 	err = db.Retry(func() (err error) {
 		if setValue == "" {
-			_, err = qs.deleteCatchpointState.ExecContext(ctx, stateName)
-			cleared = true
-			return err
+			return deleteCatchpointStateImpl(ctx, e, stateName)
 		}
 
 		// we don't know if there is an entry in the table for this state, so we'll insert/replace it just in case.
-		_, err = qs.insertCatchpointStateString.ExecContext(ctx, stateName, setValue)
-		cleared = false
+		query := "INSERT OR REPLACE INTO catchpointstate(id, strval) VALUES(?, ?)"
+		_, err = e.ExecContext(ctx, query, stateName, setValue)
 		return err
 	})
-	return cleared, err
+	return err
+}
+
+func deleteCatchpointStateImpl(ctx context.Context, e db.Executable, stateName catchpointState) error {
+	query := "DELETE FROM catchpointstate WHERE id=?"
+	_, err := e.ExecContext(ctx, query, stateName)
+	return err
 }
 
 func (qs *accountsDbQueries) close() {
@@ -2843,14 +2809,6 @@ func (qs *accountsDbQueries) close() {
 		&qs.lookupResourcesStmt,
 		&qs.lookupAllResourcesStmt,
 		&qs.lookupCreatorStmt,
-		&qs.deleteStoredCatchpoint,
-		&qs.insertStoredCatchpoint,
-		&qs.selectOldestCatchpointFiles,
-		&qs.selectCatchpointStateUint64,
-		&qs.deleteCatchpointState,
-		&qs.insertCatchpointStateUint64,
-		&qs.selectCatchpointStateString,
-		&qs.insertCatchpointStateString,
 	}
 	for _, preparedQuery := range preparedQueries {
 		if (*preparedQuery) != nil {
@@ -2942,116 +2900,6 @@ type onlineAccountExpiration struct {
 	rowids []int64
 }
 
-// onlineAccountsExpirations scans onlineaccounts table and builds expirations map using the following algorithm
-// 1. Query the table ordred by update round and address.
-// 2. for every address record "online" entries, when encounter "offline" record mark previous "online" for deletion.
-// Set expiration round to the "offline" round + MaxBalLookback
-// 3. If there are multiple "online" entires, mark all except the last one for deletion as well.
-// Expiration round is set to the last online + MaxBalLookback
-func onlineAccountsExpirations(tx *sql.Tx, maxBalLookback uint64) (result []onlineAccountExpiration, err error) {
-	rows, err := tx.Query(`SELECT rowid, address, normalizedonlinebalance, updround FROM onlineaccounts ORDER BY address, updround ASC`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	expirations := make(map[basics.Round][]int64)
-
-	addToExpiration := func(targetRound basics.Round, rowids []int64) {
-		if len(rowids) > 0 {
-			var entries []int64
-			var ok bool
-			if entries, ok = expirations[targetRound]; ok {
-				entries = append(entries, rowids...)
-			} else {
-				entries = make([]int64, len(rowids))
-				copy(entries, rowids)
-			}
-			expirations[targetRound] = entries
-		}
-	}
-
-	var lastAddr basics.Address
-	var rowids []int64
-	var rounds []int64
-
-	for rows.Next() {
-		var addrbuf []byte
-		var rowid sql.NullInt64
-		var updround sql.NullInt64
-		var normBal sql.NullInt64
-		err = rows.Scan(&rowid, &addrbuf, &normBal, &updround)
-		if err != nil {
-			return nil, err
-		}
-
-		var addr basics.Address
-		if len(addrbuf) != len(addr) {
-			err = fmt.Errorf("account DB address length mismatch: %d != %d", len(addrbuf), len(addr))
-			return nil, err
-		}
-		copy(addr[:], addrbuf)
-
-		if addr != lastAddr {
-			// when switching from one account to another:
-			// expire older online entries.
-			// offline entries explicitly processed below on a previous iteration
-			if len(rowids) > 1 {
-				if len(rowids) != len(rounds) {
-					return nil, fmt.Errorf("inconsistence: len(rowids) %d != %d len(rounds)", len(rowids), len(rounds))
-				}
-				targetRound := uint64(rounds[len(rounds)-1]) + maxBalLookback
-				prevRowids := rowids[:len(rowids)-1]
-				addToExpiration(basics.Round(targetRound), prevRowids)
-			}
-
-			// reset the state
-			rowids = rowids[:0]
-			rounds = rounds[:0]
-			copy(lastAddr[:], addr[:])
-		}
-
-		if normBal.Valid && normBal.Int64 > 0 {
-			// online account, save rowids and rounds
-			rowids = append(rowids, rowid.Int64)
-			rounds = append(rounds, updround.Int64)
-		} else {
-			// became offline: expire all previous online rowids and this row id
-			rowids = append(rowids, rowid.Int64)
-			targetRound := uint64(updround.Int64) + maxBalLookback
-			addToExpiration(basics.Round(targetRound), rowids)
-
-			rowids = rowids[:0]
-			rounds = rounds[:0]
-		}
-	}
-
-	// process the last address
-	if len(rowids) > 1 {
-		if len(rowids) != len(rounds) {
-			return nil, fmt.Errorf("inconsistence: len(rowids) %d != %d len(rounds)", len(rowids), len(rounds))
-		}
-		targetRound := uint64(rounds[len(rounds)-1]) + maxBalLookback
-		rowids = rowids[:len(rowids)-1]
-		addToExpiration(basics.Round(targetRound), rowids)
-	}
-
-	// convert map to a sorted array
-	if len(expirations) > 0 {
-		result = make([]onlineAccountExpiration, len(expirations))
-		i := 0
-		for rnd, rowids := range expirations {
-			result[i] = onlineAccountExpiration{rnd: rnd, rowids: rowids}
-			i++
-		}
-		sort.SliceStable(result, func(i, j int) bool {
-			return result[i].rnd < result[j].rnd
-		})
-	}
-
-	return result, nil
-}
-
 func onlineAccountsAll(tx *sql.Tx, maxAccounts uint64) ([]persistedOnlineAccountData, error) {
 	rows, err := tx.Query("SELECT rowid, address, updround, data FROM onlineaccounts ORDER BY address, updround ASC")
 	if err != nil {
@@ -3092,12 +2940,12 @@ func onlineAccountsAll(tx *sql.Tx, maxAccounts uint64) ([]persistedOnlineAccount
 	return result, nil
 }
 
-func accountsTotals(q db.Queryable, catchpointStaging bool) (totals ledgercore.AccountTotals, err error) {
+func accountsTotals(ctx context.Context, q db.Queryable, catchpointStaging bool) (totals ledgercore.AccountTotals, err error) {
 	id := ""
 	if catchpointStaging {
 		id = "catchpointStaging"
 	}
-	row := q.QueryRow("SELECT online, onlinerewardunits, offline, offlinerewardunits, notparticipating, notparticipatingrewardunits, rewardslevel FROM accounttotals WHERE id=?", id)
+	row := q.QueryRowContext(ctx, "SELECT online, onlinerewardunits, offline, offlinerewardunits, notparticipating, notparticipatingrewardunits, rewardslevel FROM accounttotals WHERE id=?", id)
 	err = row.Scan(&totals.Online.Money.Raw, &totals.Online.RewardUnits,
 		&totals.Offline.Money.Raw, &totals.Offline.RewardUnits,
 		&totals.NotParticipating.Money.Raw, &totals.NotParticipating.RewardUnits,
@@ -3413,7 +3261,7 @@ func onlineAccountsNewRound(
 	tx *sql.Tx,
 	updates compactOnlineAccountDeltas,
 	proto config.ConsensusParams, lastUpdateRound basics.Round,
-) (updatedAccounts []persistedOnlineAccountData, expirations []onlineAccountExpiration, err error) {
+) (updatedAccounts []persistedOnlineAccountData, err error) {
 	hasAccounts := updates.len() > 0
 
 	writer, err := makeOnlineAccountsSQLWriter(tx, hasAccounts)
@@ -3422,7 +3270,7 @@ func onlineAccountsNewRound(
 	}
 	defer writer.close()
 
-	updatedAccounts, expirations, err = onlineAccountsNewRoundImpl(writer, updates, proto, lastUpdateRound)
+	updatedAccounts, err = onlineAccountsNewRoundImpl(writer, updates, proto, lastUpdateRound)
 	return
 }
 
@@ -3650,9 +3498,7 @@ func accountsNewRoundImpl(
 func onlineAccountsNewRoundImpl(
 	writer onlineAccountsWriter, updates compactOnlineAccountDeltas,
 	proto config.ConsensusParams, lastUpdateRound basics.Round,
-) (updatedAccounts []persistedOnlineAccountData, expirations []onlineAccountExpiration, err error) {
-
-	expirationMap := make(map[basics.Round][]int64)
+) (updatedAccounts []persistedOnlineAccountData, err error) {
 
 	for i := 0; i < updates.len(); i++ {
 		data := updates.getByIdx(i)
@@ -3687,8 +3533,9 @@ func onlineAccountsNewRoundImpl(
 								prevAcct = updated
 							}
 						}
-					} else if !newAcct.IsVotingEmpty() {
-						err = fmt.Errorf("non-empty voting data for non-online account %s: %v", data.address.String(), newAcct)
+						// TODO: restore after migrating offline accounts and clearing state proof PK
+						// } else if !newAcct.IsVotingEmpty() {
+						// 	err = fmt.Errorf("non-empty voting data for non-online account %s: %v", data.address.String(), newAcct)
 					}
 				}
 			} else {
@@ -3709,14 +3556,6 @@ func onlineAccountsNewRoundImpl(
 								updRound:    basics.Round(updRound),
 							}
 
-							targetRound := basics.Round(updRound + proto.MaxBalLookback)
-							if entries, ok := expirationMap[targetRound]; ok {
-								entries = append(entries, prevAcct.rowid, rowid)
-								expirationMap[targetRound] = entries
-							} else {
-								expirationMap[targetRound] = []int64{prevAcct.rowid, rowid}
-							}
-
 							updatedAccounts = append(updatedAccounts, updated)
 							prevAcct = updated
 						}
@@ -3735,14 +3574,6 @@ func onlineAccountsNewRoundImpl(
 								updRound:    basics.Round(updRound),
 							}
 
-							targetRound := basics.Round(updRound + proto.MaxBalLookback)
-							if entries, ok := expirationMap[targetRound]; ok {
-								entries = append(entries, prevAcct.rowid)
-								expirationMap[targetRound] = entries
-							} else {
-								expirationMap[targetRound] = []int64{prevAcct.rowid}
-							}
-
 							updatedAccounts = append(updatedAccounts, updated)
 							prevAcct = updated
 						}
@@ -3755,16 +3586,6 @@ func onlineAccountsNewRoundImpl(
 			}
 		}
 	}
-
-	expirations = make([]onlineAccountExpiration, len(expirationMap))
-	i := 0
-	for rnd, rowids := range expirationMap {
-		expirations[i] = onlineAccountExpiration{rnd: rnd, rowids: rowids}
-		i++
-	}
-	sort.SliceStable(expirations, func(i, j int) bool {
-		return expirations[i].rnd < expirations[j].rnd
-	})
 
 	return
 }
@@ -3799,7 +3620,7 @@ func rowidsToChunkedArgs(rowids []int64) [][]interface{} {
 	return chunks
 }
 
-func onlineAccountsDeleteExpired(tx *sql.Tx, rowids []int64) (err error) {
+func onlineAccountsDeleteByRowIDs(tx *sql.Tx, rowids []int64) (err error) {
 	if len(rowids) == 0 {
 		return
 	}
@@ -3815,6 +3636,66 @@ func onlineAccountsDeleteExpired(tx *sql.Tx, rowids []int64) (err error) {
 		}
 	}
 	return
+}
+
+// onlineAccountsDelete deleted entries with updRound <= expRound
+func onlineAccountsDelete(tx *sql.Tx, forgetBefore basics.Round) (err error) {
+	rows, err := tx.Query("SELECT rowid, address, updRound, data FROM onlineaccounts WHERE updRound < ? ORDER BY address, updRound DESC", forgetBefore)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	var rowids []int64
+	var rowid sql.NullInt64
+	var updRound sql.NullInt64
+	var buf []byte
+	var addrbuf []byte
+
+	var prevAddr []byte
+
+	for rows.Next() {
+		err = rows.Scan(&rowid, &addrbuf, &updRound, &buf)
+		if err != nil {
+			return err
+		}
+		if !rowid.Valid || !updRound.Valid {
+			return fmt.Errorf("onlineAccountsDelete: invalid rowid or updRound")
+		}
+		if len(addrbuf) != len(basics.Address{}) {
+			err = fmt.Errorf("account DB address length mismatch: %d != %d", len(addrbuf), len(basics.Address{}))
+			return
+		}
+
+		if !bytes.Equal(addrbuf, prevAddr) {
+			// new address
+			// if the first (latest) entry is
+			//  - offline then delete all
+			//  - online then safe to delete all previous except this first (latest)
+
+			// reset the state
+			prevAddr = addrbuf
+
+			var oad baseOnlineAccountData
+			err = protocol.Decode(buf, &oad)
+			if err != nil {
+				return
+			}
+			if oad.IsVotingEmpty() {
+				// delete this and all subsequent
+				rowids = append(rowids, rowid.Int64)
+			}
+
+			// restart the loop
+			// if there are some subsequent entries, they will deleted on the next iteration
+			// if no subsequent entries, the loop will reset the state and the latest entry does not get deleted
+			continue
+		}
+		// delete all subsequent entries
+		rowids = append(rowids, rowid.Int64)
+	}
+
+	return onlineAccountsDeleteByRowIDs(tx, rowids)
 }
 
 // updates the round number associated with the current account data.
@@ -3848,8 +3729,8 @@ func updateAccountsRound(tx *sql.Tx, rnd basics.Round) (err error) {
 }
 
 // updates the round number associated with the hash of current account data.
-func updateAccountsHashRound(tx *sql.Tx, hashRound basics.Round) (err error) {
-	res, err := tx.Exec("INSERT OR REPLACE INTO acctrounds(id,rnd) VALUES('hashbase',?)", hashRound)
+func updateAccountsHashRound(ctx context.Context, tx *sql.Tx, hashRound basics.Round) (err error) {
+	res, err := tx.ExecContext(ctx, "INSERT OR REPLACE INTO acctrounds(id,rnd) VALUES('hashbase',?)", hashRound)
 	if err != nil {
 		return
 	}
@@ -4114,6 +3995,10 @@ func (iterator *encodedAccountsBatchIter) Close() {
 		iterator.accountsRows.Close()
 		iterator.accountsRows = nil
 	}
+	if iterator.resourcesRows != nil {
+		iterator.resourcesRows.Close()
+		iterator.resourcesRows = nil
+	}
 }
 
 // orderedAccountsIterStep is used by orderedAccountsIter to define the current step
@@ -4177,10 +4062,14 @@ func processAllResources(
 	callback func(addr basics.Address, creatableIdx basics.CreatableIndex, resData *resourcesData, encodedResourceData []byte) error,
 ) (pendingRow, error) {
 	var err error
+
+	// Declare variabled outside of the loop to prevent allocations per iteration.
+	// At least resData is resolved as "escaped" because of passing it by a pointer to protocol.Decode()
+	var buf []byte
+	var addrid int64
+	var aidx basics.CreatableIndex
+	var resData resourcesData
 	for {
-		var buf []byte
-		var addrid int64
-		var aidx basics.CreatableIndex
 		if pr.addrid != 0 {
 			// some accounts may not have resources, consider the following case:
 			// acct 1 and 3 has resources, account 2 does not
@@ -4218,7 +4107,7 @@ func processAllResources(
 				return pendingRow{addrid, aidx, buf}, err
 			}
 		}
-		var resData resourcesData
+		resData = resourcesData{}
 		err = protocol.Decode(buf, &resData)
 		if err != nil {
 			return pendingRow{}, err
@@ -4242,10 +4131,12 @@ func processAllBaseAccountRecords(
 	var prevAddr basics.Address
 	var err error
 	count := 0
+
+	var accountData baseAccountData
+	var addrbuf []byte
+	var buf []byte
+	var rowid int64
 	for baseRows.Next() {
-		var addrbuf []byte
-		var buf []byte
-		var rowid int64
 		err = baseRows.Scan(&rowid, &addrbuf, &buf)
 		if err != nil {
 			return 0, pendingRow{}, err
@@ -4258,7 +4149,7 @@ func processAllBaseAccountRecords(
 
 		copy(addr[:], addrbuf)
 
-		var accountData baseAccountData
+		accountData = baseAccountData{}
 		err = protocol.Decode(buf, &accountData)
 		if err != nil {
 			return 0, pendingRow{}, err
@@ -4838,23 +4729,25 @@ type catchpointFirstStageInfo struct {
 	// Total number of chunks in the catchpoint data file. Only set when catchpoint
 	// data files are generated.
 	TotalChunks uint64 `codec:"chunksCount"`
+	// BiggestChunkLen is the size in the bytes of the largest chunk, used when re-packing.
+	BiggestChunkLen uint64 `codec:"biggestChunk"`
 }
 
-func insertCatchpointFirstStageInfo(e db.Executable, round basics.Round, info *catchpointFirstStageInfo) error {
+func insertOrReplaceCatchpointFirstStageInfo(ctx context.Context, e db.Executable, round basics.Round, info *catchpointFirstStageInfo) error {
 	infoSerialized := protocol.Encode(info)
 	f := func() error {
-		query := "INSERT INTO catchpointfirststageinfo(round, info) VALUES(?, ?)"
-		_, err := e.Exec(query, round, infoSerialized)
+		query := "INSERT OR REPLACE INTO catchpointfirststageinfo(round, info) VALUES(?, ?)"
+		_, err := e.ExecContext(ctx, query, round, infoSerialized)
 		return err
 	}
 	return db.Retry(f)
 }
 
-func selectCatchpointFirstStageInfo(q db.Queryable, round basics.Round) (catchpointFirstStageInfo, bool /*exists*/, error) {
+func selectCatchpointFirstStageInfo(ctx context.Context, q db.Queryable, round basics.Round) (catchpointFirstStageInfo, bool /*exists*/, error) {
 	var data []byte
 	f := func() error {
 		query := "SELECT info FROM catchpointfirststageinfo WHERE round=?"
-		err := q.QueryRow(query, round).Scan(&data)
+		err := q.QueryRowContext(ctx, query, round).Scan(&data)
 		if err == sql.ErrNoRows {
 			data = nil
 			return nil
@@ -4879,12 +4772,12 @@ func selectCatchpointFirstStageInfo(q db.Queryable, round basics.Round) (catchpo
 	return res, true, nil
 }
 
-func selectOldCatchpointFirstStageInfoRounds(q db.Queryable, maxRound basics.Round) ([]basics.Round, error) {
+func selectOldCatchpointFirstStageInfoRounds(ctx context.Context, q db.Queryable, maxRound basics.Round) ([]basics.Round, error) {
 	var res []basics.Round
 
 	f := func() error {
 		query := "SELECT round FROM catchpointfirststageinfo WHERE round <= ?"
-		rows, err := q.Query(query, maxRound)
+		rows, err := q.QueryContext(ctx, query, maxRound)
 		if err != nil {
 			return err
 		}
@@ -4910,10 +4803,66 @@ func selectOldCatchpointFirstStageInfoRounds(q db.Queryable, maxRound basics.Rou
 	return res, nil
 }
 
-func deleteOldCatchpointFirstStageInfo(e db.Executable, maxRoundToDelete basics.Round) error {
+func deleteOldCatchpointFirstStageInfo(ctx context.Context, e db.Executable, maxRoundToDelete basics.Round) error {
 	f := func() error {
 		query := "DELETE FROM catchpointfirststageinfo WHERE round <= ?"
-		_, err := e.Exec(query, maxRoundToDelete)
+		_, err := e.ExecContext(ctx, query, maxRoundToDelete)
+		return err
+	}
+	return db.Retry(f)
+}
+
+func insertUnfinishedCatchpoint(ctx context.Context, e db.Executable, round basics.Round, blockHash crypto.Digest) error {
+	f := func() error {
+		query := "INSERT INTO unfinishedcatchpoints(round, blockhash) VALUES(?, ?)"
+		_, err := e.ExecContext(ctx, query, round, blockHash[:])
+		return err
+	}
+	return db.Retry(f)
+}
+
+type unfinishedCatchpointRecord struct {
+	round     basics.Round
+	blockHash crypto.Digest
+}
+
+func selectUnfinishedCatchpoints(ctx context.Context, q db.Queryable) ([]unfinishedCatchpointRecord, error) {
+	var res []unfinishedCatchpointRecord
+
+	f := func() error {
+		query := "SELECT round, blockhash FROM unfinishedcatchpoints ORDER BY round"
+		rows, err := q.QueryContext(ctx, query)
+		if err != nil {
+			return err
+		}
+
+		// Clear `res` in case this function is repeated.
+		res = res[:0]
+		for rows.Next() {
+			var record unfinishedCatchpointRecord
+			var blockHash []byte
+			err = rows.Scan(&record.round, &blockHash)
+			if err != nil {
+				return err
+			}
+			copy(record.blockHash[:], blockHash)
+			res = append(res, record)
+		}
+
+		return nil
+	}
+	err := db.Retry(f)
+	if err != nil {
+		return nil, err
+	}
+
+	return res, nil
+}
+
+func deleteUnfinishedCatchpoint(ctx context.Context, e db.Executable, round basics.Round) error {
+	f := func() error {
+		query := "DELETE FROM unfinishedcatchpoints WHERE round = ?"
+		_, err := e.ExecContext(ctx, query, round)
 		return err
 	}
 	return db.Retry(f)

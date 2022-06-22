@@ -84,7 +84,7 @@ func trackerDBInitialize(l ledgerForTracker, catchpointEnabled bool, dbPathPrefi
 			blockDb:           bdbs,
 		}
 		var err0 error
-		mgr, err0 = trackerDBInitializeImpl(ctx, tx, tp, log)
+		mgr, err0 = runMigrations(ctx, tx, tp, log, accountDBVersion)
 		if err0 != nil {
 			return err0
 		}
@@ -95,11 +95,11 @@ func trackerDBInitialize(l ledgerForTracker, catchpointEnabled bool, dbPathPrefi
 		// Check for blocks DB and tracker DB un-sync
 		if lastBalancesRound > lastestBlockRound {
 			log.Warnf("trackerDBInitialize: resetting accounts DB (on round %v, but blocks DB's latest is %v)", lastBalancesRound, lastestBlockRound)
-			err0 = accountsReset(tx)
+			err0 = accountsReset(ctx, tx)
 			if err0 != nil {
 				return err0
 			}
-			mgr, err0 = trackerDBInitializeImpl(ctx, tx, tp, log)
+			mgr, err0 = runMigrations(ctx, tx, tp, log, accountDBVersion)
 			if err0 != nil {
 				return err0
 			}
@@ -110,10 +110,10 @@ func trackerDBInitialize(l ledgerForTracker, catchpointEnabled bool, dbPathPrefi
 	return
 }
 
-// trackerDBInitializeImpl initializes the accounts DB if needed and return current account round.
+// runMigrations initializes the accounts DB if needed and return current account round.
 // as part of the initialization, it tests the current database schema version, and perform upgrade
 // procedures to bring it up to the database schema supported by the binary.
-func trackerDBInitializeImpl(ctx context.Context, tx *sql.Tx, params trackerDBParams, log logging.Logger) (mgr trackerDBInitParams, err error) {
+func runMigrations(ctx context.Context, tx *sql.Tx, params trackerDBParams, log logging.Logger, targetVersion int32) (mgr trackerDBInitParams, err error) {
 	// check current database version.
 	dbVersion, err := db.GetUserVersion(ctx, tx)
 	if err != nil {
@@ -128,15 +128,15 @@ func trackerDBInitializeImpl(ctx context.Context, tx *sql.Tx, params trackerDBPa
 
 	// if database version is greater than supported by current binary, write a warning. This would keep the existing
 	// fallback behavior where we could use an older binary iff the schema happen to be backward compatible.
-	if tu.version() > accountDBVersion {
-		tu.log.Warnf("trackerDBInitialize database schema version is %d, but algod supports only %d", tu.version(), accountDBVersion)
+	if tu.version() > targetVersion {
+		tu.log.Warnf("trackerDBInitialize database schema version is %d, but migration target version is %d", tu.version(), targetVersion)
 	}
 
-	if tu.version() < accountDBVersion {
-		tu.log.Infof("trackerDBInitialize upgrading database schema from version %d to version %d", tu.version(), accountDBVersion)
+	if tu.version() < targetVersion {
+		tu.log.Infof("trackerDBInitialize upgrading database schema from version %d to version %d", tu.version(), targetVersion)
 		// newDatabase is determined during the tables creations. If we're filling the database with accounts,
 		// then we set this variable to true, allowing some of the upgrades to be skipped.
-		for tu.version() < accountDBVersion {
+		for tu.version() < targetVersion {
 			tu.log.Infof("trackerDBInitialize performing upgrade from version %d", tu.version())
 			// perform the initialization/upgrade
 			switch tu.version() {
@@ -269,31 +269,22 @@ func (tu *trackerDBSchemaInitializer) upgradeDatabaseSchema1(ctx context.Context
 
 		tu.log.Infof("upgradeDatabaseSchema1 resetting account hashes")
 		// reset the merkle trie
-		err = resetAccountHashes(tx)
+		err = resetAccountHashes(ctx, tx)
 		if err != nil {
 			return fmt.Errorf("upgradeDatabaseSchema1 unable to reset account hashes : %v", err)
 		}
 
 		tu.log.Infof("upgradeDatabaseSchema1 preparing queries")
-		// initialize a new accountsq with the incoming transaction.
-		accountsq, err := accountsInitDbQueries(tx, tx)
-		if err != nil {
-			return fmt.Errorf("upgradeDatabaseSchema1 unable to prepare queries : %v", err)
-		}
-
-		// close the prepared statements when we're done with them.
-		defer accountsq.close()
-
 		tu.log.Infof("upgradeDatabaseSchema1 resetting prior catchpoints")
 		// delete the last catchpoint label if we have any.
-		_, err = accountsq.writeCatchpointStateString(ctx, catchpointStateLastCatchpoint, "")
+		err = writeCatchpointStateString(ctx, tx, catchpointStateLastCatchpoint, "")
 		if err != nil {
 			return fmt.Errorf("upgradeDatabaseSchema1 unable to clear prior catchpoint : %v", err)
 		}
 
 		tu.log.Infof("upgradeDatabaseSchema1 deleting stored catchpoints")
 		// delete catchpoints.
-		err = deleteStoredCatchpoints(ctx, accountsq, tu.trackerDBParams.dbPathPrefix)
+		err = deleteStoredCatchpoints(ctx, tx, tu.trackerDBParams.dbPathPrefix)
 		if err != nil {
 			return fmt.Errorf("upgradeDatabaseSchema1 unable to delete stored catchpoints : %v", err)
 		}
@@ -418,13 +409,34 @@ func (tu *trackerDBSchemaInitializer) upgradeDatabaseSchema5(ctx context.Context
 	}
 
 	// reset the merkle trie
-	err = resetAccountHashes(tx)
+	err = resetAccountHashes(ctx, tx)
 	if err != nil {
 		return fmt.Errorf("upgradeDatabaseSchema5 unable to reset account hashes : %v", err)
 	}
 
 	// update version
 	return tu.setVersion(ctx, tx, 6)
+}
+
+func (tu *trackerDBSchemaInitializer) deleteUnfinishedCatchpoint(ctx context.Context, tx *sql.Tx) error {
+	// Delete an unfinished catchpoint if there is one.
+	round, err := readCatchpointStateUint64(ctx, tx, catchpointStateWritingCatchpoint)
+	if err != nil {
+		return err
+	}
+	if round == 0 {
+		return nil
+	}
+
+	relCatchpointFilePath := filepath.Join(
+		CatchpointDirName,
+		makeCatchpointFilePath(basics.Round(round)))
+	err = removeSingleCatchpointFileFromDisk(tu.dbPathPrefix, relCatchpointFilePath)
+	if err != nil {
+		return err
+	}
+
+	return writeCatchpointStateUint64(ctx, tx, catchpointStateWritingCatchpoint, 0)
 }
 
 // upgradeDatabaseSchema6 upgrades the database schema from version 6 to version 7,
@@ -472,7 +484,15 @@ func (tu *trackerDBSchemaInitializer) upgradeDatabaseSchema6(ctx context.Context
 		return fmt.Errorf("upgradeDatabaseSchema6 unable to complete online round params data migration : %w", err)
 	}
 
+	err = tu.deleteUnfinishedCatchpoint(ctx, tx)
+	if err != nil {
+		return err
+	}
 	err = accountsCreateCatchpointFirstStageInfoTable(ctx, tx)
+	if err != nil {
+		return err
+	}
+	err = accountsCreateUnfinishedCatchpointsTable(ctx, tx)
 	if err != nil {
 		return err
 	}

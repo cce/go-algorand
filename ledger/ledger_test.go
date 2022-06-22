@@ -24,12 +24,13 @@ import (
 	"io/ioutil"
 	"math/rand"
 	"os"
-	"runtime/pprof"
+	"runtime"
 	"sort"
 	"testing"
 
 	"github.com/algorand/go-algorand/data/account"
 	"github.com/algorand/go-algorand/util/db"
+	"github.com/algorand/go-deadlock"
 
 	"github.com/stretchr/testify/require"
 
@@ -1577,13 +1578,16 @@ func TestLedgerMemoryLeak(t *testing.T) {
 	cfg := config.GetDefaultLocal()
 	cfg.Archival = true
 	log := logging.TestingLog(t)
+	log.SetLevel(logging.Info)   // prevent spamming with ledger.AddValidatedBlock debug message
+	deadlock.Opts.Disable = true // catchpoint writing might take long
 	l, err := OpenLedger(log, dbName, inMem, genesisInitState, cfg)
 	require.NoError(t, err)
 	defer l.Close()
 
-	maxBlocks := 10000
+	const maxBlocks = 1_000_000
 	nftPerAcct := make(map[basics.Address]int)
 	lastBlock, err := l.Block(l.Latest())
+	require.NoError(t, err)
 	proto := config.Consensus[lastBlock.CurrentProtocol]
 	accounts := make(map[basics.Address]basics.AccountData, len(genesisInitState.Accounts)+maxBlocks)
 	keys := make(map[basics.Address]*crypto.SignatureSecrets, len(initKeys)+maxBlocks)
@@ -1598,6 +1602,9 @@ func TestLedgerMemoryLeak(t *testing.T) {
 		accounts[addr] = genesisInitState.Accounts[addr]
 		keys[addr] = initKeys[addr]
 	}
+
+	fmt.Printf("%s\t%s\t%s\t%s\n", "Round", "TotalAlloc, MB", "HeapAlloc, MB", "LiveObj")
+	fmt.Printf("%s\t%s\t%s\t%s\n", "-----", "--------------", "-------------", "-------")
 
 	curAddressIdx := 0
 	// run for maxBlocks rounds
@@ -1676,18 +1683,28 @@ func TestLedgerMemoryLeak(t *testing.T) {
 		}
 		err = l.addBlockTxns(t, genesisInitState.Accounts, stxns, transactions.ApplyData{})
 		require.NoError(t, err)
-		if i%100 == 0 {
-			l.WaitForCommit(l.Latest())
-			fmt.Printf("block: %d\n", l.Latest())
+
+		latest := l.Latest()
+		if latest%100 == 0 {
+			l.WaitForCommit(latest)
 		}
-		if i%1000 == 0 && i > 0 {
-			memprofile := fmt.Sprintf("%s-memprof-%d", t.Name(), i)
-			f, err := os.Create(memprofile)
-			require.NoError(t, err)
-			err = pprof.WriteHeapProfile(f)
-			require.NoError(t, err)
-			f.Close()
-			fmt.Printf("Profile %s created\n", memprofile)
+		if latest%1000 == 0 || i%1000 == 0 && i > 0 {
+			// pct := debug.SetGCPercent(-1) // prevent CG in between memory stats reading and heap profiling
+
+			var rtm runtime.MemStats
+			runtime.ReadMemStats(&rtm)
+			const meg = 1024 * 1024
+			fmt.Printf("%5d\t%14d\t%13d\t%7d\n", latest, rtm.TotalAlloc/meg, rtm.HeapAlloc/meg, rtm.Mallocs-rtm.Frees)
+
+			// Use the code below to generate memory profile if needed for debugging
+			// memprofile := fmt.Sprintf("%s-memprof-%d", t.Name(), latest)
+			// f, err := os.Create(memprofile)
+			// require.NoError(t, err)
+			// err = pprof.WriteHeapProfile(f)
+			// require.NoError(t, err)
+			// f.Close()
+
+			// debug.SetGCPercent(pct)
 		}
 	}
 }
@@ -1884,6 +1901,14 @@ func TestLedgerReloadShrinkDeltas(t *testing.T) {
 		origAgreementBalances[i] = oad.MicroAlgosWithRewards
 	}
 
+	var nonZeros int
+	for _, bal := range origAgreementBalances {
+		if bal.Raw > 0 {
+			nonZeros++
+		}
+	}
+	require.Greater(t, nonZeros, 0)
+
 	// at round "maxBlocks" the ledger must have maxValidity blocks of transactions
 	for i := latest; i <= latest+maxValidity; i++ {
 		for txid := range txnIDs[i] {
@@ -1975,11 +2000,22 @@ func TestLedgerMigrateV6ShrinkDeltas(t *testing.T) {
 	}()
 	// create tables so online accounts can still be written
 	err = trackerDB.Wdb.Atomic(func(ctx context.Context, tx *sql.Tx) error {
-		accountsCreateOnlineAccountsTable(ctx, tx)
-		accountsCreateTxTailTable(ctx, tx)
-		accountsCreateOnlineRoundParamsTable(ctx, tx)
+		if err := accountsCreateOnlineAccountsTable(ctx, tx); err != nil {
+			return err
+		}
+		if err := accountsCreateTxTailTable(ctx, tx); err != nil {
+			return err
+		}
+		if err := accountsCreateOnlineRoundParamsTable(ctx, tx); err != nil {
+			return err
+		}
+		if err := accountsCreateCatchpointFirstStageInfoTable(ctx, tx); err != nil {
+			return err
+		}
 		return nil
 	})
+	require.NoError(t, err)
+
 	l, err := OpenLedger(log, dbName, inMem, genesisInitState, cfg)
 	require.NoError(t, err)
 	defer func() {
@@ -1991,6 +2027,16 @@ func TestLedgerMigrateV6ShrinkDeltas(t *testing.T) {
 		os.Remove(dbName + ".block.sqlite-wal")
 		os.Remove(dbName + ".tracker.sqlite-wal")
 	}()
+
+	// remove online tracker in order to make v6 schema work
+	for i := range l.trackers.trackers {
+		if l.trackers.trackers[i] == l.trackers.acctsOnline {
+			l.trackers.trackers = append(l.trackers.trackers[:i], l.trackers.trackers[i+1:]...)
+			break
+		}
+	}
+	l.trackers.acctsOnline = nil
+	l.acctsOnline = onlineAccounts{}
 
 	maxBlocks := 2000
 	accounts := make(map[basics.Address]basics.AccountData, len(genesisInitState.Accounts))
@@ -2013,7 +2059,7 @@ func TestLedgerMigrateV6ShrinkDeltas(t *testing.T) {
 	maxValidity := basics.Round(20) // some number different from number of txns in blocks
 	txnIDs := make(map[basics.Round]map[transactions.Txid]struct{})
 	// run for maxBlocks rounds with random payment transactions
-	// generate 1000 txn per block
+	// generate numTxns txn per block
 	for i := 0; i < maxBlocks; i++ {
 		numTxns := crypto.RandUint64()%9 + 7
 		stxns := make([]transactions.SignedTxn, numTxns)
@@ -2040,8 +2086,24 @@ func TestLedgerMigrateV6ShrinkDeltas(t *testing.T) {
 			// have all other txns be random payment txns
 			if j == 0 {
 				var keyregTxnFields transactions.KeyregTxnFields
-				if i%(len(addresses)*2) < len(addresses) {
-					keyregTxnFields.VoteLast = 10000
+				// keep low accounts online, high accounts offline
+				// otherwise all accounts become offline eventually and no agreement balances to check
+				if curAddressIdx < len(addresses)/2 {
+					keyregTxnFields = transactions.KeyregTxnFields{
+						VoteFirst: latest + 1,
+						VoteLast:  latest + 100_000,
+					}
+					var votepk crypto.OneTimeSignatureVerifier
+					votepk[0] = byte(j % 256)
+					votepk[1] = byte(i % 256)
+					votepk[2] = byte(254)
+					var selpk crypto.VRFVerifier
+					selpk[0] = byte(j % 256)
+					selpk[1] = byte(i % 256)
+					selpk[2] = byte(255)
+
+					keyregTxnFields.VotePK = votepk
+					keyregTxnFields.SelectionPK = selpk
 				}
 				tx.Type = protocol.KeyRegistrationTx
 				tx.KeyregTxnFields = keyregTxnFields
@@ -2086,10 +2148,23 @@ func TestLedgerMigrateV6ShrinkDeltas(t *testing.T) {
 		require.Equal(t, origBalances[i], wo)
 		origRewardsBalances[i] = acct.MicroAlgos
 
-		oad, err := l.LookupAgreement(balancesRound, addr)
+		acct, rnd, _, err = l.LookupAccount(balancesRound, addr)
 		require.NoError(t, err)
-		origAgreementBalances[i] = oad.MicroAlgosWithRewards
+		require.Equal(t, balancesRound, rnd)
+		if acct.Status == basics.Online {
+			origAgreementBalances[i] = acct.MicroAlgos
+		} else {
+			origAgreementBalances[i] = basics.MicroAlgos{}
+		}
 	}
+
+	var nonZeros int
+	for _, bal := range origAgreementBalances {
+		if bal.Raw > 0 {
+			nonZeros++
+		}
+	}
+	require.Greater(t, nonZeros, 0)
 
 	// at round "maxBlocks" the ledger must have maxValidity blocks of transactions
 	for i := latest; i <= latest+maxValidity; i++ {
@@ -2106,44 +2181,51 @@ func TestLedgerMigrateV6ShrinkDeltas(t *testing.T) {
 	shorterLookback := config.GetDefaultLocal().MaxAcctLookback
 	require.Less(t, shorterLookback, cfg.MaxAcctLookback)
 	l.Close()
+
 	cfg.MaxAcctLookback = shorterLookback
 	accountDBVersion = 7
 	// delete tables since we want to check they can be made from other data
 	err = trackerDB.Wdb.Atomic(func(ctx context.Context, tx *sql.Tx) error {
-		tx.ExecContext(ctx, "DROP TABLE IF EXISTS onlineaccounts")
-		tx.ExecContext(ctx, "DROP TABLE IF EXISTS txtail")
-		tx.ExecContext(ctx, "DROP TABLE IF EXISTS onlineroundparamstail")
+		if _, err := tx.ExecContext(ctx, "DROP TABLE IF EXISTS onlineaccounts"); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, "DROP TABLE IF EXISTS txtail"); err != nil {
+			return err
+		}
+		if _, err = tx.ExecContext(ctx, "DROP TABLE IF EXISTS onlineroundparamstail"); err != nil {
+			return err
+		}
 		return nil
 	})
-	l.genesisProtoVersion = protocol.ConsensusCurrentVersion
-	l.genesisProto = config.Consensus[protocol.ConsensusCurrentVersion]
-	l, err = OpenLedger(log, dbName, inMem, genesisInitState, cfg)
+	require.NoError(t, err)
+
+	l2, err := OpenLedger(log, dbName, inMem, genesisInitState, cfg)
 	require.NoError(t, err)
 	defer func() {
-		l.Close()
+		l2.Close()
 	}()
 
-	_, err = l.OnlineTotals(basics.Round(proto.MaxBalLookback - shorterLookback))
+	_, err = l2.OnlineTotals(basics.Round(proto.MaxBalLookback - shorterLookback))
 	require.Error(t, err)
-	for i := l.Latest() - basics.Round(proto.MaxBalLookback+shorterLookback-1); i <= l.Latest(); i++ {
-		online, err := l.OnlineTotals(i)
+	for i := l2.Latest() - basics.Round(proto.MaxBalLookback-1); i <= l2.Latest(); i++ {
+		online, err := l2.OnlineTotals(i)
 		require.NoError(t, err)
 		require.Equal(t, onlineTotals[i], online)
 	}
 
 	for i, addr := range addresses {
-		ad, rnd, err := l.LookupWithoutRewards(latest, addr)
+		ad, rnd, err := l2.LookupWithoutRewards(latest, addr)
 		require.NoError(t, err)
 		require.Equal(t, latest, rnd)
 		require.Equal(t, origBalances[i], ad.MicroAlgos)
 
-		acct, rnd, wo, err := l.LookupAccount(latest, addr)
+		acct, rnd, wo, err := l2.LookupAccount(latest, addr)
 		require.NoError(t, err)
 		require.Equal(t, latest, rnd)
 		require.Equal(t, origRewardsBalances[i], acct.MicroAlgos)
 		require.Equal(t, origBalances[i], wo)
 
-		oad, err := l.LookupAgreement(balancesRound, addr)
+		oad, err := l2.LookupAgreement(balancesRound, addr)
 		require.NoError(t, err)
 		require.Equal(t, origAgreementBalances[i], oad.MicroAlgosWithRewards)
 	}
@@ -2151,13 +2233,13 @@ func TestLedgerMigrateV6ShrinkDeltas(t *testing.T) {
 	// at round maxBlocks the ledger must have maxValidity blocks of transactions, check
 	for i := latest; i <= latest+maxValidity; i++ {
 		for txid := range txnIDs[i] {
-			require.NoError(t, l.CheckDup(proto, nextRound, i-maxValidity, i, txid, ledgercore.Txlease{}))
+			require.NoError(t, l2.CheckDup(proto, nextRound, i-maxValidity, i, txid, ledgercore.Txlease{}))
 		}
 	}
 
 	// check an error latest-1
 	for txid := range txnIDs[latest-1] {
-		require.Error(t, l.CheckDup(proto, nextRound, latest-maxValidity, latest-1, txid, ledgercore.Txlease{}))
+		require.Error(t, l2.CheckDup(proto, nextRound, latest-maxValidity, latest-1, txid, ledgercore.Txlease{}))
 	}
 }
 

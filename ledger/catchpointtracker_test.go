@@ -111,7 +111,7 @@ func TestGetCatchpointStream(t *testing.T) {
 		require.NoError(t, err)
 
 		// Store the catchpoint into the database
-		err := ct.accountsq.storeCatchpoint(context.Background(), basics.Round(i), fileName, "", int64(len(data)))
+		err := storeCatchpoint(context.Background(), ml.dbs.Wdb.Handle, basics.Round(i), fileName, "", int64(len(data)))
 		require.NoError(t, err)
 	}
 
@@ -138,7 +138,7 @@ func TestGetCatchpointStream(t *testing.T) {
 	require.Nil(t, reader)
 
 	// File on disk, but database lost the record
-	err = ct.accountsq.storeCatchpoint(context.Background(), basics.Round(3), "", "", 0)
+	err = storeCatchpoint(context.Background(), ml.dbs.Wdb.Handle, basics.Round(3), "", "", 0)
 	require.NoError(t, err)
 	reader, err = ct.GetCatchpointStream(basics.Round(3))
 	require.NoError(t, err)
@@ -148,7 +148,7 @@ func TestGetCatchpointStream(t *testing.T) {
 	outData = []byte{3, 4, 5}
 	require.Equal(t, outData, dataRead)
 
-	err = deleteStoredCatchpoints(context.Background(), ct.accountsq, ct.dbDirectory)
+	err = deleteStoredCatchpoints(context.Background(), ml.dbs.Wdb.Handle, ct.dbDirectory)
 	require.NoError(t, err)
 }
 
@@ -194,11 +194,11 @@ func TestAcctUpdatesDeleteStoredCatchpoints(t *testing.T) {
 		require.NoError(t, err)
 		err = f.Close()
 		require.NoError(t, err)
-		err = ct.accountsq.storeCatchpoint(context.Background(), basics.Round(i), file, "", 0)
+		err = storeCatchpoint(context.Background(), ml.dbs.Wdb.Handle, basics.Round(i), file, "", 0)
 		require.NoError(t, err)
 	}
 
-	err = deleteStoredCatchpoints(context.Background(), ct.accountsq, ct.dbDirectory)
+	err = deleteStoredCatchpoints(context.Background(), ml.dbs.Wdb.Handle, ct.dbDirectory)
 	require.NoError(t, err)
 
 	// ensure that all the files were deleted.
@@ -206,7 +206,7 @@ func TestAcctUpdatesDeleteStoredCatchpoints(t *testing.T) {
 		_, err := os.Open(file)
 		require.True(t, os.IsNotExist(err))
 	}
-	fileNames, err := ct.accountsq.getOldestCatchpointFiles(context.Background(), dummyCatchpointFilesToCreate, 0)
+	fileNames, err := getOldestCatchpointFiles(context.Background(), ml.dbs.Rdb.Handle, dummyCatchpointFilesToCreate, 0)
 	require.NoError(t, err)
 	require.Equal(t, 0, len(fileNames))
 }
@@ -315,11 +315,11 @@ func TestRecordCatchpointFile(t *testing.T) {
 	for _, round := range []basics.Round{2000000, 3000010, 3000015, 3000020} {
 		accountsRound := round - 1
 
-		_, _, err := ct.generateCatchpointData(
+		_, _, biggestChunkLen, err := ct.generateCatchpointData(
 			context.Background(), accountsRound, time.Second)
 		require.NoError(t, err)
 
-		err = ct.createCatchpoint(accountsRound, round, catchpointFirstStageInfo{}, crypto.Digest{})
+		err = ct.createCatchpoint(context.Background(), accountsRound, round, catchpointFirstStageInfo{BiggestChunkLen: biggestChunkLen}, crypto.Digest{})
 		require.NoError(t, err)
 	}
 
@@ -391,7 +391,7 @@ func BenchmarkLargeCatchpointDataWriting(b *testing.B) {
 			}
 		}
 
-		return updateAccountsHashRound(tx, 1)
+		return updateAccountsHashRound(ctx, tx, 1)
 	})
 	require.NoError(b, err)
 
@@ -444,13 +444,15 @@ func TestReproducibleCatchpointLabels(t *testing.T) {
 	const testCatchpointLabelsCount = 5
 
 	// lastCreatableID stores asset or app max used index to get rid of conflicts
-	lastCreatableID := crypto.RandUint64() % 512
+	lastCreatableID := basics.CreatableIndex(crypto.RandUint64() % 512)
 	knownCreatables := make(map[basics.CreatableIndex]bool)
 	catchpointLabels := make(map[basics.Round]string)
 	ledgerHistory := make(map[basics.Round]*mockLedgerForTracker)
 	roundDeltas := make(map[basics.Round]ledgercore.StateDelta)
 	numCatchpointsCreated := 0
 	i := basics.Round(0)
+	lastCatchpointLabel := ""
+
 	for numCatchpointsCreated < testCatchpointLabelsCount {
 		i++
 		rewardLevelDelta := crypto.RandUint64() % 5
@@ -458,7 +460,7 @@ func TestReproducibleCatchpointLabels(t *testing.T) {
 		var updates ledgercore.AccountDeltas
 		var totals map[basics.Address]ledgercore.AccountData
 		base := accts[i-1]
-		updates, totals, lastCreatableID = ledgertesting.RandomDeltasBalancedFull(1, base, rewardLevel, lastCreatableID)
+		updates, totals = ledgertesting.RandomDeltasBalancedFull(1, base, rewardLevel, &lastCreatableID)
 		prevRound, prevTotals, err := au.LatestTotals()
 		require.Equal(t, i-1, prevRound)
 		require.NoError(t, err)
@@ -486,9 +488,6 @@ func TestReproducibleCatchpointLabels(t *testing.T) {
 		delta.Creatables = creatablesFromUpdates(base, updates, knownCreatables)
 		delta.Totals = newTotals
 
-		ml.trackers.mu.Lock()
-		ml.trackers.lastFlushTime = time.Time{}
-		ml.trackers.mu.Unlock()
 		ml.trackers.newBlock(blk, delta)
 		ml.trackers.committedUpTo(i)
 		ml.addMockBlock(blockEntry{block: blk}, delta)
@@ -500,7 +499,8 @@ func TestReproducibleCatchpointLabels(t *testing.T) {
 		if (uint64(i) >= cfg.MaxAcctLookback) && (uint64(i)-cfg.MaxAcctLookback > protoParams.CatchpointLookback) && ((uint64(i)-cfg.MaxAcctLookback)%cfg.CatchpointInterval == 0) {
 			ml.trackers.waitAccountsWriting()
 			catchpointLabels[i] = ct.GetLastCatchpointLabel()
-			require.NotEmpty(t, catchpointLabels[i], i)
+			require.NotEqual(t, lastCatchpointLabel, catchpointLabels[i])
+			lastCatchpointLabel = catchpointLabels[i]
 			ledgerHistory[i] = ml.fork(t)
 			defer ledgerHistory[i].Close()
 			numCatchpointsCreated++
@@ -532,9 +532,6 @@ func TestReproducibleCatchpointLabels(t *testing.T) {
 			blk.CurrentProtocol = testProtocolVersion
 			delta := roundDeltas[i]
 
-			ml2.trackers.mu.Lock()
-			ml2.trackers.lastFlushTime = time.Time{}
-			ml2.trackers.mu.Unlock()
 			ml2.trackers.newBlock(blk, delta)
 			ml2.trackers.committedUpTo(i)
 
@@ -807,6 +804,7 @@ func TestCalculateFirstStageRounds(t *testing.T) {
 		{29680, 1, 1, 10000, 320, false, false, 1},
 		{29679, 1, 1, 10000, 320, true, false, 1},
 		{29678, 10003, 1, 10000, 320, true, true, 10002},
+		{79680, 7320, 1, 10000, 320, false, false, 7320},
 	}
 
 	for i, testCase := range testCases {
@@ -826,29 +824,29 @@ func TestCalculateFirstStageRounds(t *testing.T) {
 }
 
 func TestCalculateCatchpointRounds(t *testing.T) {
-	const catchpointInterval = 10
-
 	type TestCase struct {
 		// input
-		min basics.Round
-		max basics.Round
+		min                basics.Round
+		max                basics.Round
+		catchpointInterval uint64
 		// output
 		output []basics.Round
 	}
 	testCases := []TestCase{
-		{1, 0, nil},
-		{0, 0, []basics.Round{0}},
-		{11, 19, nil},
-		{11, 20, []basics.Round{20}},
-		{11, 29, []basics.Round{20}},
-		{11, 30, []basics.Round{20, 30}},
-		{10, 20, []basics.Round{10, 20}},
+		{1, 0, 10, nil},
+		{0, 0, 10, []basics.Round{0}},
+		{11, 19, 10, nil},
+		{11, 20, 10, []basics.Round{20}},
+		{11, 29, 10, []basics.Round{20}},
+		{11, 30, 10, []basics.Round{20, 30}},
+		{10, 20, 10, []basics.Round{10, 20}},
+		{79_680 + 1, 87_000, 10_000, []basics.Round{80_000}},
 	}
 
 	for i, testCase := range testCases {
 		t.Run(fmt.Sprintf("test_case_%d", i), func(t *testing.T) {
 			rounds := calculateCatchpointRounds(
-				testCase.min, testCase.max, catchpointInterval)
+				testCase.min, testCase.max, testCase.catchpointInterval)
 			require.Equal(t, testCase.output, rounds)
 		})
 	}
@@ -895,6 +893,8 @@ func TestFirstStageInfoPruning(t *testing.T) {
 
 	numCatchpointsCreated := uint64(0)
 	i := basics.Round(0)
+	lastCatchpointLabel := ""
+
 	for numCatchpointsCreated < expectedNumEntries {
 		i++
 
@@ -908,17 +908,15 @@ func TestFirstStageInfoPruning(t *testing.T) {
 		}
 		delta := ledgercore.MakeStateDelta(&blk.BlockHeader, 0, 0, 0)
 
-		ml.trackers.mu.Lock()
-		ml.trackers.lastFlushTime = time.Time{}
-		ml.trackers.mu.Unlock()
 		ml.trackers.newBlock(blk, delta)
 		ml.trackers.committedUpTo(i)
 		ml.addMockBlock(blockEntry{block: blk}, delta)
 
-		// If we made a catchpoint, save the label.
 		if (uint64(i) >= cfg.MaxAcctLookback) && (uint64(i)-cfg.MaxAcctLookback > protoParams.CatchpointLookback) && ((uint64(i)-cfg.MaxAcctLookback)%cfg.CatchpointInterval == 0) {
 			ml.trackers.waitAccountsWriting()
-			require.NotEmpty(t, ct.GetLastCatchpointLabel(), i)
+			catchpointLabel := ct.GetLastCatchpointLabel()
+			require.NotEqual(t, lastCatchpointLabel, catchpointLabel)
+			lastCatchpointLabel = catchpointLabel
 			numCatchpointsCreated++
 		}
 
@@ -931,7 +929,8 @@ func TestFirstStageInfoPruning(t *testing.T) {
 	numEntries := uint64(0)
 	i -= basics.Round(cfg.MaxAcctLookback)
 	for i > 0 {
-		_, recordExists, err := selectCatchpointFirstStageInfo(ct.dbs.Rdb.Handle, i)
+		_, recordExists, err := selectCatchpointFirstStageInfo(
+			context.Background(), ct.dbs.Rdb.Handle, i)
 		require.NoError(t, err)
 
 		catchpointDataFilePath :=
@@ -949,4 +948,422 @@ func TestFirstStageInfoPruning(t *testing.T) {
 	}
 
 	require.Equal(t, expectedNumEntries, numEntries)
+}
+
+// Test that on startup the catchpoint tracker restarts catchpoint's first stage if
+// there is an unfinished first stage record in the database.
+func TestFirstStagePersistence(t *testing.T) {
+	partitiontest.PartitionTest(t)
+
+	// create new protocol version, which has lower lookback
+	testProtocolVersion :=
+		protocol.ConsensusVersion("test-protocol-TestFirstStagePersistence")
+	protoParams := config.Consensus[protocol.ConsensusCurrentVersion]
+	protoParams.CatchpointLookback = 32
+	config.Consensus[testProtocolVersion] = protoParams
+	defer func() {
+		delete(config.Consensus, testProtocolVersion)
+	}()
+
+	accts := []map[basics.Address]basics.AccountData{ledgertesting.RandomAccounts(20, true)}
+
+	ml := makeMockLedgerForTracker(t, false, 1, testProtocolVersion, accts)
+	defer ml.Close()
+
+	tempDirectory, err := ioutil.TempDir(os.TempDir(), CatchpointDirName)
+	require.NoError(t, err)
+	defer func() {
+		os.RemoveAll(tempDirectory)
+	}()
+	catchpointsDirectory := filepath.Join(tempDirectory, CatchpointDirName)
+
+	cfg := config.GetDefaultLocal()
+	cfg.CatchpointInterval = 4
+	cfg.CatchpointTracking = 2
+	cfg.MaxAcctLookback = 0
+	ct := newCatchpointTracker(
+		t, ml, cfg, filepath.Join(tempDirectory, config.LedgerFilenamePrefix))
+	defer ct.close()
+
+	// Add blocks until the first catchpoint first stage round.
+	firstStageRound := basics.Round(4)
+	for i := basics.Round(1); i <= firstStageRound; i++ {
+		blk := bookkeeping.Block{
+			BlockHeader: bookkeeping.BlockHeader{
+				Round: i,
+				UpgradeState: bookkeeping.UpgradeState{
+					CurrentProtocol: testProtocolVersion,
+				},
+			},
+		}
+		delta := ledgercore.MakeStateDelta(&blk.BlockHeader, 0, 0, 0)
+
+		ml.trackers.newBlock(blk, delta)
+		ml.trackers.committedUpTo(i)
+		ml.addMockBlock(blockEntry{block: blk}, delta)
+	}
+
+	ml.trackers.waitAccountsWriting()
+
+	// Check that the data file exists.
+	catchpointDataFilePath :=
+		filepath.Join(catchpointsDirectory, makeCatchpointDataFilePath(firstStageRound))
+	info, err := os.Stat(catchpointDataFilePath)
+	require.NoError(t, err)
+
+	// Override file.
+	err = os.WriteFile(catchpointDataFilePath, []byte{0}, info.Mode().Perm())
+	require.NoError(t, err)
+
+	// Copy the database.
+	ct.close()
+	ml2 := ml.fork(t)
+	require.NotNil(t, ml2)
+	defer ml2.Close()
+	ml.Close()
+
+	// Insert unfinished first stage record.
+	err = writeCatchpointStateUint64(
+		context.Background(), ml2.dbs.Wdb.Handle, catchpointStateWritingFirstStageInfo, 1)
+	require.NoError(t, err)
+
+	// Delete the database record.
+	err = deleteOldCatchpointFirstStageInfo(
+		context.Background(), ml2.dbs.Wdb.Handle, firstStageRound)
+	require.NoError(t, err)
+
+	// Create a catchpoint tracker and let it restart catchpoint's first stage.
+	ct2 := newCatchpointTracker(
+		t, ml2, cfg, filepath.Join(tempDirectory, config.LedgerFilenamePrefix))
+	defer ct2.close()
+
+	// Check that the catchpoint data file was rewritten.
+	info, err = os.Stat(catchpointDataFilePath)
+	require.NoError(t, err)
+	require.Greater(t, info.Size(), int64(1))
+
+	// Check that the database record exists.
+	_, exists, err := selectCatchpointFirstStageInfo(
+		context.Background(), ml2.dbs.Rdb.Handle, firstStageRound)
+	require.NoError(t, err)
+	require.True(t, exists)
+
+	// Check that the unfinished first stage record is deleted.
+	v, err := readCatchpointStateUint64(
+		context.Background(), ml2.dbs.Rdb.Handle, catchpointStateWritingFirstStageInfo)
+	require.NoError(t, err)
+	require.Zero(t, v)
+}
+
+// Test that on startup the catchpoint tracker restarts catchpoint's second stage if
+// there is an unfinished catchpoint record in the database.
+func TestSecondStagePersistence(t *testing.T) {
+	partitiontest.PartitionTest(t)
+
+	// create new protocol version, which has lower lookback
+	testProtocolVersion :=
+		protocol.ConsensusVersion("test-protocol-TestFirstStagePersistence")
+	protoParams := config.Consensus[protocol.ConsensusCurrentVersion]
+	protoParams.CatchpointLookback = 32
+	config.Consensus[testProtocolVersion] = protoParams
+	defer func() {
+		delete(config.Consensus, testProtocolVersion)
+	}()
+
+	accts := []map[basics.Address]basics.AccountData{ledgertesting.RandomAccounts(20, true)}
+
+	ml := makeMockLedgerForTracker(t, false, 1, testProtocolVersion, accts)
+	defer ml.Close()
+
+	tempDirectory, err := ioutil.TempDir(os.TempDir(), CatchpointDirName)
+	require.NoError(t, err)
+	defer func() {
+		os.RemoveAll(tempDirectory)
+	}()
+	catchpointsDirectory := filepath.Join(tempDirectory, CatchpointDirName)
+
+	cfg := config.GetDefaultLocal()
+	cfg.CatchpointInterval = 4
+	cfg.CatchpointTracking = 2
+	cfg.MaxAcctLookback = 0
+	ct := newCatchpointTracker(
+		t, ml, cfg, filepath.Join(tempDirectory, config.LedgerFilenamePrefix))
+	defer ct.close()
+
+	secondStageRound := basics.Round(36)
+	firstStageRound := secondStageRound - basics.Round(protoParams.CatchpointLookback)
+	catchpointDataFilePath :=
+		filepath.Join(catchpointsDirectory, makeCatchpointDataFilePath(firstStageRound))
+	var firstStageInfo catchpointFirstStageInfo
+	var catchpointData []byte
+
+	// Add blocks until the first catchpoint round.
+	for i := basics.Round(1); i <= secondStageRound; i++ {
+		if i == secondStageRound {
+			// Save first stage info and data file.
+			var exists bool
+			firstStageInfo, exists, err = selectCatchpointFirstStageInfo(
+				context.Background(), ml.dbs.Rdb.Handle, firstStageRound)
+			require.NoError(t, err)
+			require.True(t, exists)
+
+			catchpointData, err = os.ReadFile(catchpointDataFilePath)
+			require.NoError(t, err)
+		}
+
+		blk := bookkeeping.Block{
+			BlockHeader: bookkeeping.BlockHeader{
+				Round: i,
+				UpgradeState: bookkeeping.UpgradeState{
+					CurrentProtocol: testProtocolVersion,
+				},
+			},
+		}
+		delta := ledgercore.MakeStateDelta(&blk.BlockHeader, 0, 0, 0)
+
+		ml.trackers.newBlock(blk, delta)
+		ml.trackers.committedUpTo(i)
+		ml.addMockBlock(blockEntry{block: blk}, delta)
+
+		// Let catchpoint data generation finish so that nothing gets skipped.
+		for ct.IsWritingCatchpointDataFile() {
+			time.Sleep(time.Millisecond)
+		}
+	}
+
+	ml.trackers.waitAccountsWriting()
+
+	// Check that the data file exists.
+	catchpointFilePath :=
+		filepath.Join(catchpointsDirectory, makeCatchpointFilePath(secondStageRound))
+	info, err := os.Stat(catchpointFilePath)
+	require.NoError(t, err)
+
+	// Override file.
+	err = os.WriteFile(catchpointFilePath, []byte{0}, info.Mode().Perm())
+	require.NoError(t, err)
+
+	// Copy the database.
+	ct.close()
+	ml2 := ml.fork(t)
+	require.NotNil(t, ml2)
+	defer ml2.Close()
+	ml.Close()
+
+	// Restore the (first stage) catchpoint data file.
+	err = os.WriteFile(catchpointDataFilePath, catchpointData, 0644)
+	require.NoError(t, err)
+
+	// Restore the first stage database record.
+	err = insertOrReplaceCatchpointFirstStageInfo(
+		context.Background(), ml2.dbs.Wdb.Handle, firstStageRound, &firstStageInfo)
+	require.NoError(t, err)
+
+	// Insert unfinished catchpoint record.
+	err = insertUnfinishedCatchpoint(
+		context.Background(), ml2.dbs.Wdb.Handle, secondStageRound, crypto.Digest{})
+	require.NoError(t, err)
+
+	// Delete the catchpoint file database record.
+	err = storeCatchpoint(
+		context.Background(), ml2.dbs.Wdb.Handle, secondStageRound, "", "", 0)
+	require.NoError(t, err)
+
+	// Create a catchpoint tracker and let it restart catchpoint's second stage.
+	ct2 := newCatchpointTracker(
+		t, ml2, cfg, filepath.Join(tempDirectory, config.LedgerFilenamePrefix))
+	defer ct2.close()
+
+	// Check that the catchpoint data file was rewritten.
+	info, err = os.Stat(catchpointFilePath)
+	require.NoError(t, err)
+	require.Greater(t, info.Size(), int64(1))
+
+	// Check that the database record exists.
+	filename, _, _, err := getCatchpoint(
+		context.Background(), ml2.dbs.Rdb.Handle, secondStageRound)
+	require.NoError(t, err)
+	require.NotEmpty(t, filename)
+
+	// Check that the unfinished catchpoint database record is deleted.
+	unfinishedCatchpoints, err := selectUnfinishedCatchpoints(
+		context.Background(), ml2.dbs.Rdb.Handle)
+	require.NoError(t, err)
+	require.Empty(t, unfinishedCatchpoints)
+}
+
+// Test that when catchpoint's first stage record is unavailable
+// (e.g. catchpoints were disabled at first stage), the unfinished catchpoint
+// database record is deleted.
+func TestSecondStageDeletesUnfinishedCatchpointRecord(t *testing.T) {
+	partitiontest.PartitionTest(t)
+
+	// create new protocol version, which has lower lookback
+	testProtocolVersion :=
+		protocol.ConsensusVersion("test-protocol-TestFirstStagePersistence")
+	protoParams := config.Consensus[protocol.ConsensusCurrentVersion]
+	protoParams.CatchpointLookback = 32
+	config.Consensus[testProtocolVersion] = protoParams
+	defer func() {
+		delete(config.Consensus, testProtocolVersion)
+	}()
+
+	accts := []map[basics.Address]basics.AccountData{ledgertesting.RandomAccounts(20, true)}
+
+	ml := makeMockLedgerForTracker(t, false, 1, testProtocolVersion, accts)
+	defer ml.Close()
+
+	tempDirectory, err := ioutil.TempDir(os.TempDir(), CatchpointDirName)
+	require.NoError(t, err)
+	defer func() {
+		os.RemoveAll(tempDirectory)
+	}()
+
+	cfg := config.GetDefaultLocal()
+	cfg.CatchpointInterval = 4
+	cfg.CatchpointTracking = 0
+	cfg.MaxAcctLookback = 0
+	ct := newCatchpointTracker(
+		t, ml, cfg, filepath.Join(tempDirectory, config.LedgerFilenamePrefix))
+	defer ct.close()
+
+	secondStageRound := basics.Round(36)
+
+	// Add blocks that preceed the first catchpoint round.
+	for i := basics.Round(1); i < secondStageRound; i++ {
+		blk := bookkeeping.Block{
+			BlockHeader: bookkeeping.BlockHeader{
+				Round: i,
+				UpgradeState: bookkeeping.UpgradeState{
+					CurrentProtocol: testProtocolVersion,
+				},
+			},
+		}
+		delta := ledgercore.MakeStateDelta(&blk.BlockHeader, 0, 0, 0)
+
+		ml.trackers.newBlock(blk, delta)
+		ml.trackers.committedUpTo(i)
+		ml.addMockBlock(blockEntry{block: blk}, delta)
+	}
+	ml.trackers.waitAccountsWriting()
+
+	// Copy the database.
+	ct.close()
+	ml2 := ml.fork(t)
+	require.NotNil(t, ml2)
+	defer ml2.Close()
+	ml.Close()
+
+	// Configure a new catchpoint tracker with catchpoints enabled.
+	cfg.CatchpointTracking = 2
+	ct2 := newCatchpointTracker(
+		t, ml2, cfg, filepath.Join(tempDirectory, config.LedgerFilenamePrefix))
+	defer ct2.close()
+
+	// Add the last block.
+	{
+		blk := bookkeeping.Block{
+			BlockHeader: bookkeeping.BlockHeader{
+				Round: secondStageRound,
+				UpgradeState: bookkeeping.UpgradeState{
+					CurrentProtocol: testProtocolVersion,
+				},
+			},
+		}
+		delta := ledgercore.MakeStateDelta(&blk.BlockHeader, 0, 0, 0)
+
+		ml2.trackers.newBlock(blk, delta)
+		ml2.trackers.committedUpTo(secondStageRound)
+		ml2.addMockBlock(blockEntry{block: blk}, delta)
+	}
+	ml2.trackers.waitAccountsWriting()
+
+	// Check that the unfinished catchpoint database record is deleted.
+	unfinishedCatchpoints, err := selectUnfinishedCatchpoints(
+		context.Background(), ml2.dbs.Rdb.Handle)
+	require.NoError(t, err)
+	require.Empty(t, unfinishedCatchpoints)
+}
+
+// Test that on startup the catchpoint tracker deletes the unfinished catchpoint
+// database record when the first stage database record is missing.
+func TestSecondStageDeletesUnfinishedCatchpointRecordAfterRestart(t *testing.T) {
+	partitiontest.PartitionTest(t)
+
+	// create new protocol version, which has lower lookback
+	testProtocolVersion :=
+		protocol.ConsensusVersion("test-protocol-TestFirstStagePersistence")
+	protoParams := config.Consensus[protocol.ConsensusCurrentVersion]
+	protoParams.CatchpointLookback = 32
+	config.Consensus[testProtocolVersion] = protoParams
+	defer func() {
+		delete(config.Consensus, testProtocolVersion)
+	}()
+
+	accts := []map[basics.Address]basics.AccountData{ledgertesting.RandomAccounts(20, true)}
+
+	ml := makeMockLedgerForTracker(t, false, 1, testProtocolVersion, accts)
+	defer ml.Close()
+
+	cfg := config.GetDefaultLocal()
+	cfg.CatchpointInterval = 4
+	cfg.CatchpointTracking = 0
+	cfg.MaxAcctLookback = 0
+	ct := newCatchpointTracker(t, ml, cfg, ".")
+	defer ct.close()
+
+	secondStageRound := basics.Round(36)
+	firstStageRound := secondStageRound - basics.Round(protoParams.CatchpointLookback)
+
+	// Add blocks until the first catchpoint round.
+	for i := basics.Round(1); i <= secondStageRound; i++ {
+		blk := bookkeeping.Block{
+			BlockHeader: bookkeeping.BlockHeader{
+				Round: i,
+				UpgradeState: bookkeeping.UpgradeState{
+					CurrentProtocol: testProtocolVersion,
+				},
+			},
+		}
+		delta := ledgercore.MakeStateDelta(&blk.BlockHeader, 0, 0, 0)
+
+		ml.trackers.newBlock(blk, delta)
+		ml.trackers.committedUpTo(i)
+		ml.addMockBlock(blockEntry{block: blk}, delta)
+
+		// Let catchpoint data generation finish so that nothing gets skipped.
+		for ct.IsWritingCatchpointDataFile() {
+			time.Sleep(time.Millisecond)
+		}
+	}
+
+	ml.trackers.waitAccountsWriting()
+
+	// Copy the database.
+	ct.close()
+	ml2 := ml.fork(t)
+	require.NotNil(t, ml2)
+	defer ml2.Close()
+	ml.Close()
+
+	// Sanity check: first stage record should be deleted.
+	_, exists, err := selectCatchpointFirstStageInfo(
+		context.Background(), ml2.dbs.Rdb.Handle, firstStageRound)
+	require.NoError(t, err)
+	require.False(t, exists)
+
+	// Insert unfinished catchpoint record.
+	err = insertUnfinishedCatchpoint(
+		context.Background(), ml2.dbs.Wdb.Handle, secondStageRound, crypto.Digest{})
+	require.NoError(t, err)
+
+	// Create a catchpoint tracker and let it restart catchpoint's second stage.
+	ct2 := newCatchpointTracker(t, ml2, cfg, ".")
+	defer ct2.close()
+
+	// Check that the unfinished catchpoint database record is deleted.
+	unfinishedCatchpoints, err := selectUnfinishedCatchpoints(
+		context.Background(), ml2.dbs.Rdb.Handle)
+	require.NoError(t, err)
+	require.Empty(t, unfinishedCatchpoints)
 }

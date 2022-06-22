@@ -495,7 +495,7 @@ func TestAcctUpdates(t *testing.T) {
 			checkAcctUpdates(t, au, ao, 0, basics.Round(initialBlocksCount-1), accts, rewardsLevels, proto)
 
 			// lastCreatableID stores asset or app max used index to get rid of conflicts
-			lastCreatableID := crypto.RandUint64() % 512
+			lastCreatableID := basics.CreatableIndex(crypto.RandUint64() % 512)
 			knownCreatables := make(map[basics.CreatableIndex]bool)
 
 			maxLookback := conf.MaxAcctLookback
@@ -508,7 +508,7 @@ func TestAcctUpdates(t *testing.T) {
 				var updates ledgercore.AccountDeltas
 				var totals map[basics.Address]ledgercore.AccountData
 				base := accts[i-1]
-				updates, totals, lastCreatableID = ledgertesting.RandomDeltasBalancedFull(1, base, rewardLevel, lastCreatableID)
+				updates, totals = ledgertesting.RandomDeltasBalancedFull(1, base, rewardLevel, &lastCreatableID)
 				prevRound, prevTotals, err := au.LatestTotals()
 				require.Equal(t, i-1, prevRound)
 				require.NoError(t, err)
@@ -567,7 +567,7 @@ func TestAcctUpdates(t *testing.T) {
 			expectedTotals := ledgertesting.CalculateNewRoundAccountTotals(t, updates, rewardsLevels[dbRound], proto, nil, ledgercore.AccountTotals{})
 			var actualTotals ledgercore.AccountTotals
 			err = ml.dbs.Rdb.Atomic(func(ctx context.Context, tx *sql.Tx) (err error) {
-				actualTotals, err = accountsTotals(tx, false)
+				actualTotals, err = accountsTotals(ctx, tx, false)
 				return
 			})
 			require.NoError(t, err)
@@ -1184,7 +1184,7 @@ func TestListCreatables(t *testing.T) {
 	require.NoError(t, err)
 
 	au := &accountUpdates{}
-	au.accountsq, err = accountsInitDbQueries(tx, tx)
+	au.accountsq, err = accountsInitDbQueries(tx)
 	require.NoError(t, err)
 
 	// ******* All results are obtained from the cache. Empty database *******
@@ -1313,7 +1313,7 @@ func BenchmarkLargeMerkleTrieRebuild(b *testing.B) {
 	}
 
 	err := ml.dbs.Wdb.Atomic(func(ctx context.Context, tx *sql.Tx) (err error) {
-		return updateAccountsHashRound(tx, 1)
+		return updateAccountsHashRound(ctx, tx, 1)
 	})
 	require.NoError(b, err)
 
@@ -2257,7 +2257,7 @@ func testAcctUpdatesLookupRetry(t *testing.T, assertFn func(au *accountUpdates, 
 	checkAcctUpdates(t, au, ao, 0, basics.Round(initialBlocksCount)-1, accts, rewardsLevels, proto)
 
 	// lastCreatableID stores asset or app max used index to get rid of conflicts
-	lastCreatableID := crypto.RandUint64() % 512
+	lastCreatableID := basics.CreatableIndex(crypto.RandUint64() % 512)
 	knownCreatables := make(map[basics.CreatableIndex]bool)
 
 	for i := basics.Round(initialBlocksCount); i < basics.Round(conf.MaxAcctLookback+15); i++ {
@@ -2266,7 +2266,8 @@ func testAcctUpdatesLookupRetry(t *testing.T, assertFn func(au *accountUpdates, 
 		var updates ledgercore.AccountDeltas
 		var totals map[basics.Address]ledgercore.AccountData
 		base := accts[i-1]
-		updates, totals, lastCreatableID = ledgertesting.RandomDeltasBalancedFull(1, base, rewardLevel, lastCreatableID)
+		updates, totals = ledgertesting.RandomDeltasBalancedFull(
+			1, base, rewardLevel, &lastCreatableID)
 		prevRound, prevTotals, err := au.LatestTotals()
 		require.Equal(t, i-1, prevRound)
 		require.NoError(t, err)
