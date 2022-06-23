@@ -207,6 +207,12 @@
       "BaseConfiguration": "c5d.4xlarge"
     },
     {
+      "Name": "AWS-US-EAST-1-c5d.2xl",
+      "Provider": "AWS",
+      "Region": "us-east-1",
+      "BaseConfiguration": "c5d.2xlarge"
+    },
+    {
       "Name": "AWS-US-EAST-1-c5d.9xl",
       "Provider": "AWS",
       "Region": "us-east-1",
@@ -253,6 +259,12 @@
       "Provider": "AWS",
       "Region": "us-east-2",
       "BaseConfiguration": "c5d.4xlarge"
+    },
+    {
+      "Name": "AWS-US-EAST-2-c5d.2xl",
+      "Provider": "AWS",
+      "Region": "us-east-2",
+      "BaseConfiguration": "c5d.2xlarge"
     },
     {
       "Name": "AWS-US-EAST-2-c5d.9xl",
