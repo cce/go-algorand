@@ -418,9 +418,6 @@ type ConsensusParams struct {
 	// in a separate table.
 	EnableAccountDataResourceSeparation bool
 
-	//EnableBatchVerification enable the use of the batch verification algorithm.
-	EnableBatchVerification bool
-
 	// When rewards rate changes, use the new value immediately.
 	RewardsCalculationFix bool
 
@@ -446,7 +443,7 @@ type ConsensusParams struct {
 	CatchpointLookback uint64
 
 	// DeeperBlockHeaderHistory defines number of rounds in addition to MaxTxnLife
-	// available for lookup for smart conttracts and smart signatures.
+	// available for lookup for smart contracts and smart signatures.
 	// Setting it to 1 for example allows querying data up to MaxTxnLife + 1 rounds back from the Latest.
 	DeeperBlockHeaderHistory uint64
 }
@@ -1094,7 +1091,6 @@ func initConsensusProtocols() {
 
 	v31 := v30
 	v31.ApprovedUpgrades = map[protocol.ConsensusVersion]uint64{}
-	v31.EnableBatchVerification = true
 	v31.RewardsCalculationFix = true
 	v31.MaxProposedExpiredOnlineAccounts = 32
 
@@ -1151,7 +1147,7 @@ func initConsensusProtocols() {
 	// Make the accounts snapshot for round X at X-CatchpointLookback
 	vFuture.CatchpointLookback = 320
 
-	// Require MaxTxnLife + 1 blocks and headers preserved by a node
+	// Require MaxTxnLife + X blocks and headers preserved by a node
 	vFuture.DeeperBlockHeaderHistory = 1
 
 	// Enable compact certificates.

@@ -1511,7 +1511,7 @@ func (ba *baseAccountData) GetAccountData() basics.AccountData {
 	}
 }
 
-// IsEmpty return true if any of the fields other then the UpdateRound are non-zero.
+// IsEmpty returns true if all of the fields other than UpdateRound are zero.
 func (bv baseVotingData) IsEmpty() bool {
 	return bv.VoteID.MsgIsZero() &&
 		bv.SelectionID.MsgIsZero() &&
@@ -2893,11 +2893,6 @@ ORDER BY normalizedonlinebalance DESC, address DESC LIMIT ? OFFSET ?`, rnd, n, o
 	}
 
 	return res, rows.Err()
-}
-
-type onlineAccountExpiration struct {
-	rnd    basics.Round
-	rowids []int64
 }
 
 func onlineAccountsAll(tx *sql.Tx, maxAccounts uint64) ([]persistedOnlineAccountData, error) {
