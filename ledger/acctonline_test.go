@@ -1407,8 +1407,54 @@ func TestAcctOnlineTopInBatches(t *testing.T) {
 	compareTopAccounts(a, top, allAccts)
 }
 
+func TestAcctOnlineLookupBetweenCommitAndPostCommit(t *testing.T) {
+	partitiontest.PartitionTest(t)
+	testOnlineAccountsBetweenCommitAndPostCommit(t,
+		// preAssertFn
+		func(a *require.Assertions, oa *onlineAccounts, numAccts int, allAccts []basics.BalanceRecord) {},
+		// assertFn
+		func(a *require.Assertions, oa *onlineAccounts, numAccts int, allAccts []basics.BalanceRecord) {
+			// prune the baseOnlineAccounts cache, so that lookup will fall through to the DB
+			oa.accountsMu.Lock()
+			oa.baseOnlineAccounts.prune(0)
+			oa.accountsMu.Unlock()
+
+			addr := allAccts[0].Addr
+			oad, err := oa.lookupOnlineAccountData(2, addr)
+			a.NoError(err)
+
+			expected := ledgercore.ToAccountData(allAccts[0].AccountData).OnlineAccountData(config.Consensus[protocol.ConsensusCurrentVersion], 0)
+			a.Equal(expected, oad)
+		})
+	t.Fail()
+}
+
 func TestAcctOnlineTopBetweenCommitAndPostCommit(t *testing.T) {
 	partitiontest.PartitionTest(t)
+	testOnlineAccountsBetweenCommitAndPostCommit(t,
+		// preAssertFn
+		func(a *require.Assertions, oa *onlineAccounts, numAccts int, allAccts []basics.BalanceRecord) {
+			top, err := oa.onlineTop(0, 0, 5)
+			a.NoError(err)
+			compareTopAccounts(a, top, allAccts)
+		},
+		// assertFn
+		func(a *require.Assertions, oa *onlineAccounts, numAccts int, allAccts []basics.BalanceRecord) {
+			top, err := oa.onlineTop(2, 2, 5)
+			a.NoError(err)
+
+			accountToBeUpdated := allAccts[numAccts-1]
+			accountToBeUpdated.Status = basics.Offline
+			allAccts[numAccts-1] = accountToBeUpdated
+
+			compareTopAccounts(a, top, allAccts)
+
+		})
+}
+
+func testOnlineAccountsBetweenCommitAndPostCommit(t *testing.T,
+	preAssertFn func(a *require.Assertions, oa *onlineAccounts, numAccts int, allAccts []basics.BalanceRecord),
+	assertFn func(a *require.Assertions, oa *onlineAccounts, numAccts int, allAccts []basics.BalanceRecord)) {
 	a := require.New(t)
 
 	const numAccts = 20
@@ -1447,9 +1493,7 @@ func TestAcctOnlineTopBetweenCommitAndPostCommit(t *testing.T) {
 	defer oa.close()
 	ml.trackers.trackers = append([]ledgerTracker{stallingTracker}, ml.trackers.trackers...)
 
-	top, err := oa.onlineTop(0, 0, 5)
-	a.NoError(err)
-	compareTopAccounts(a, top, allAccts)
+	preAssertFn(a, oa, numAccts, allAccts)
 
 	_, totals, err := au.LatestTotals()
 	require.NoError(t, err)
@@ -1485,14 +1529,9 @@ func TestAcctOnlineTopBetweenCommitAndPostCommit(t *testing.T) {
 			time.Sleep(2 * time.Second)
 			stallingTracker.postCommitReleaseLock <- struct{}{}
 		}()
-		top, err = oa.onlineTop(2, 2, 5)
-		a.NoError(err)
 
-		accountToBeUpdated := allAccts[numAccts-1]
-		accountToBeUpdated.Status = basics.Offline
-		allAccts[numAccts-1] = accountToBeUpdated
+		assertFn(a, oa, numAccts, allAccts)
 
-		compareTopAccounts(a, top, allAccts)
 	case <-time.After(1 * time.Minute):
 		a.FailNow("timedout while waiting for post commit")
 	}

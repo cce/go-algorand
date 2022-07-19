@@ -2221,11 +2221,11 @@ func TestAcctUpdatesLookupLatest(t *testing.T) {
 //
 // In this case it waits on a condition variable and retries when
 // commitSyncer/accountUpdates has advanced the cachedDBRound.
-func testAcctUpdatesLookupRetry(t *testing.T, assertFn func(au *accountUpdates, accts []map[basics.Address]basics.AccountData, rnd basics.Round, proto config.ConsensusParams, rewardsLevels []uint64)) {
+func testAcctUpdatesLookupRetry(t *testing.T, assertFn func(au *accountUpdates, oa *onlineAccounts, accts []map[basics.Address]basics.AccountData, rnd basics.Round, proto config.ConsensusParams, rewardsLevels []uint64)) {
 	testProtocolVersion := protocol.ConsensusCurrentVersion
 	proto := config.Consensus[testProtocolVersion]
 
-	accts := []map[basics.Address]basics.AccountData{ledgertesting.RandomAccounts(20, true)}
+	accts := []map[basics.Address]basics.AccountData{ledgertesting.RandomAccounts(20, false)}
 	rewardsLevels := []uint64{0}
 
 	pooldata := basics.AccountData{}
@@ -2348,14 +2348,14 @@ func testAcctUpdatesLookupRetry(t *testing.T, assertFn func(au *accountUpdates, 
 		stallingTracker.postCommitReleaseLock <- struct{}{}
 	}()
 
-	assertFn(au, accts, rnd, proto, rewardsLevels)
+	assertFn(au, ao, accts, rnd, proto, rewardsLevels)
 }
 
 func TestAcctUpdatesLookupLatestRetry(t *testing.T) {
 	partitiontest.PartitionTest(t)
 
 	testAcctUpdatesLookupRetry(t,
-		func(au *accountUpdates, accts []map[basics.Address]basics.AccountData, rnd basics.Round, proto config.ConsensusParams, rewardsLevels []uint64) {
+		func(au *accountUpdates, _ *onlineAccounts, accts []map[basics.Address]basics.AccountData, rnd basics.Round, proto config.ConsensusParams, rewardsLevels []uint64) {
 			// grab any address and data to use for call to lookup
 			var addr basics.Address
 			for a := range accts[rnd] {
@@ -2376,7 +2376,7 @@ func TestAcctUpdatesLookupRetry(t *testing.T) {
 	partitiontest.PartitionTest(t)
 
 	testAcctUpdatesLookupRetry(t,
-		func(au *accountUpdates, accts []map[basics.Address]basics.AccountData, rnd basics.Round, proto config.ConsensusParams, rewardsLevels []uint64) {
+		func(au *accountUpdates, _ *onlineAccounts, accts []map[basics.Address]basics.AccountData, rnd basics.Round, proto config.ConsensusParams, rewardsLevels []uint64) {
 			// grab any address and data to use for call to lookup
 			var addr basics.Address
 			var data basics.AccountData
@@ -2392,6 +2392,28 @@ func TestAcctUpdatesLookupRetry(t *testing.T) {
 			require.Equal(t, d, ledgercore.ToAccountData(data))
 			// TODO: add online account data check
 			require.GreaterOrEqualf(t, uint64(validThrough), uint64(rnd), "validThrough: %v rnd :%v", validThrough, rnd)
+		})
+}
+
+func TestAcctUpdatesLookupOnlineAccountData(t *testing.T) {
+	partitiontest.PartitionTest(t)
+
+	testAcctUpdatesLookupRetry(t,
+		func(au *accountUpdates, oa *onlineAccounts, accts []map[basics.Address]basics.AccountData, rnd basics.Round, proto config.ConsensusParams, rewardsLevels []uint64) {
+			// grab any address and data to use for call to lookup
+			var addr basics.Address
+			var data basics.AccountData
+			for a, d := range accts[rnd] {
+				addr = a
+				data = d
+				break
+			}
+
+			// issue a LookupWithoutRewards while persistedData.round != au.cachedDBRound
+			d, err := oa.lookupOnlineAccountData(rnd, addr)
+			require.NoError(t, err)
+			expected := ledgercore.ToAccountData(data).OnlineAccountData(config.Consensus[protocol.ConsensusCurrentVersion], 0)
+			require.Equal(t, expected, d)
 		})
 }
 
