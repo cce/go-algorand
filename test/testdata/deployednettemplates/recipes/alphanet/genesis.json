@@ -1,6 +1,6 @@
 {
-	"NetworkName": "alphanet",
-	"VersionModifier": "v1.1",
+	"NetworkName": "",
+	"VersionModifier": "",
 	"ConsensusProtocol": "alpha2",
 	"FirstPartKeyRound": 0,
 	"LastPartKeyRound": 50000,
