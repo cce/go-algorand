@@ -1,4 +1,4 @@
-PARAMS=-w 500 -R 20 -N 100 -n 100 -H 15 --node-template node.json --relay-template relay.json --non-participating-node-template nonPartNode.json
+PARAMS=-w 100 -R 20 -N 100 -n 100 -H 15 --node-template node.json --relay-template relay.json --non-participating-node-template nonPartNode.json
 
 SOURCES=node.json ${GOPATH}/bin/netgoal Makefile relay.json nonPartNode.json
 
