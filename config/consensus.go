@@ -1188,7 +1188,7 @@ func initConsensusProtocols() {
 	vFuWat := vFuture
 	vFuWat.ApprovedUpgrades = map[protocol.ConsensusVersion]uint64{}
 	vFuWat.MaxTxnBytesPerBlock = 5 * 1024 * 1024
-	vFuWat.AgreementFilterTimeoutPeriod0 = 3500 * time.Millisecond
+	vFuWat.AgreementFilterTimeoutPeriod0 = 3400 * time.Millisecond
 	Consensus[protocol.ConsensusVersion("wat")] = vFuWat
 
 	vAlpha1 := v32
@@ -1200,7 +1200,7 @@ func initConsensusProtocols() {
 	Consensus[protocol.ConsensusVAlpha1] = vAlpha1
 
 	vAlpha2 := vAlpha1
-	vAlpha2.AgreementFilterTimeoutPeriod0 = 3500 * time.Millisecond
+	vAlpha2.AgreementFilterTimeoutPeriod0 = 3400 * time.Millisecond
 	vAlpha2.MaxTxnBytesPerBlock = 5 * 1024 * 1024
 
 	Consensus[protocol.ConsensusVAlpha2] = vAlpha2
