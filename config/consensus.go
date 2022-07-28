@@ -1041,9 +1041,6 @@ func initConsensusProtocols() {
 	vFuture := v30
 	vFuture.ApprovedUpgrades = map[protocol.ConsensusVersion]uint64{}
 
-	// FilterTimeout for period 0 should take a new optimized, configured value, need to revisit this later
-	vFuture.AgreementFilterTimeoutPeriod0 = 4 * time.Second
-
 	// Enable compact certificates.
 	vFuture.CompactCertRounds = 128
 	vFuture.CompactCertTopVoters = 1024 * 1024
@@ -1055,6 +1052,9 @@ func initConsensusProtocols() {
 	vFuture.LogicSigVersion = 6
 
 	vFuture.MaxProposedExpiredOnlineAccounts = 32
+
+	vFuture.AgreementFilterTimeoutPeriod0 = 3400 * time.Millisecond
+	vFuture.MaxTxnBytesPerBlock = 5 * 1024 * 1024
 
 	Consensus[protocol.ConsensusFuture] = vFuture
 }
