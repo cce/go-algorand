@@ -387,10 +387,10 @@ type ConsensusParams struct {
 	// StateProofStrengthTarget represents either k+q (for pre-quantum security) or k+2q (for post-quantum security)
 	StateProofStrengthTarget uint64
 
-	// StateProofRecoveryInterval represents the number of state proof intervals that the network will try to catch-up with.
+	// StateProofMaxRecoveryIntervals represents the number of state proof intervals that the network will try to catch-up with.
 	// When the difference between the latest state proof and the current round will be greater than value, Nodes will
 	// release resources allocated for creating state proofs.
-	StateProofRecoveryInterval uint64
+	StateProofMaxRecoveryIntervals uint64
 
 	// EnableAssetCloseAmount adds an extra field to the ApplyData. The field contains the amount of the remaining
 	// asset that were sent to the close-to address.
@@ -1155,9 +1155,6 @@ func initConsensusProtocols() {
 	vFuture := v32
 	vFuture.ApprovedUpgrades = map[protocol.ConsensusVersion]uint64{}
 
-	// FilterTimeout for period 0 should take a new optimized, configured value, need to revisit this later
-	vFuture.AgreementFilterTimeoutPeriod0 = 4 * time.Second
-
 	// Make the accounts snapshot for round X at X-CatchpointLookback
 	vFuture.CatchpointLookback = 320
 
@@ -1170,7 +1167,7 @@ func initConsensusProtocols() {
 	vFuture.StateProofVotersLookback = 16
 	vFuture.StateProofWeightThreshold = (1 << 32) * 30 / 100
 	vFuture.StateProofStrengthTarget = 256
-	vFuture.StateProofRecoveryInterval = 10
+	vFuture.StateProofMaxRecoveryIntervals = 10
 
 	vFuture.LogicSigVersion = 7 // When moving this to a release, put a new higher LogicSigVersion here
 	vFuture.MinInnerApplVersion = 4
@@ -1181,6 +1178,9 @@ func initConsensusProtocols() {
 	vFuture.EnableOnlineAccountCatchpoints = true
 
 	vFuture.UnfundedSenders = true
+
+	vFuture.AgreementFilterTimeoutPeriod0 = 3400 * time.Millisecond
+	vFuture.MaxTxnBytesPerBlock = 5 * 1024 * 1024
 
 	Consensus[protocol.ConsensusFuture] = vFuture
 
