@@ -71,7 +71,7 @@ type enqueuedTask struct {
 func MakePool(owner interface{}) ExecutionPool {
 	p := &pool{
 		inputs:  make([]chan enqueuedTask, numPrios),
-		numCPUs: runtime.NumCPU(),
+		numCPUs: 2 * runtime.NumCPU(),
 		owner:   owner,
 	}
 

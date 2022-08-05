@@ -1179,7 +1179,7 @@ func initConsensusProtocols() {
 
 	vFuture.UnfundedSenders = true
 
-	vFuture.AgreementFilterTimeoutPeriod0 = 3400 * time.Millisecond
+	vFuture.AgreementFilterTimeoutPeriod0 = 2200 * time.Millisecond
 	vFuture.MaxTxnBytesPerBlock = 5 * 1024 * 1024
 
 	Consensus[protocol.ConsensusFuture] = vFuture
@@ -1188,7 +1188,7 @@ func initConsensusProtocols() {
 	vFuWat := vFuture
 	vFuWat.ApprovedUpgrades = map[protocol.ConsensusVersion]uint64{}
 	vFuWat.MaxTxnBytesPerBlock = 5 * 1024 * 1024
-	vFuWat.AgreementFilterTimeoutPeriod0 = 3400 * time.Millisecond
+	vFuWat.AgreementFilterTimeoutPeriod0 = 2200 * time.Millisecond
 	Consensus[protocol.ConsensusVersion("wat")] = vFuWat
 
 	vAlpha1 := v32
