@@ -31,6 +31,7 @@ import (
 
 	"github.com/algorand/go-algorand/config"
 	"github.com/algorand/go-algorand/crypto"
+	"github.com/algorand/go-algorand/crypto/merklesignature"
 	"github.com/algorand/go-algorand/data"
 	"github.com/algorand/go-algorand/data/account"
 	"github.com/algorand/go-algorand/data/basics"
@@ -546,6 +547,65 @@ func TestAsyncRecord(t *testing.T) {
 
 	node.Record(addr, 10000, account.Vote)
 	node.Record(addr, 20000, account.BlockProposal)
+
+	time.Sleep(5000 * time.Millisecond)
+	records := node.accountManager.Registry().GetAll()
+	require.Len(t, records, 1)
+	require.Equal(t, 10000, int(records[0].LastVote))
+	require.Equal(t, 20000, int(records[0].LastBlockProposal))
+}
+
+func TestVotingKeys(t *testing.T) {
+	partitiontest.PartitionTest(t)
+
+	testDirectroy, err := ioutil.TempDir(os.TempDir(), t.Name())
+	require.NoError(t, err)
+
+	genesis := bookkeeping.Genesis{
+		SchemaID:    "go-test-node-voting-keys",
+		Proto:       protocol.ConsensusCurrentVersion,
+		Network:     config.Devtestnet,
+		FeeSink:     sinkAddr.String(),
+		RewardsPool: poolAddr.String(),
+	}
+
+	cfg := config.GetDefaultLocal()
+	cfg.DisableNetworking = true
+	node, err := MakeFull(logging.TestingLog(t), testDirectroy, config.GetDefaultLocal(), []string{}, genesis)
+	require.NoError(t, err)
+	node.Start()
+	defer node.Stop()
+
+	var addr basics.Address
+	addr[0] = 1
+
+	// make keys
+	keyDilution := uint64(1000) // sqrt of 1M
+	firstValid := basics.Round(0)
+	lastValid := basics.Round(1000000)
+	firstID := basics.OneTimeIDForRound(firstValid, keyDilution)
+	lastID := basics.OneTimeIDForRound(lastValid, keyDilution)
+	numBatches := lastID.Batch - firstID.Batch + 1
+	votingSecrets := crypto.GenerateOneTimeSignatureSecrets(firstID.Batch, numBatches)
+	vrfSecrets := crypto.GenerateVRFSecrets()
+	stateProofSecrets, err := merklesignature.New(uint64(firstValid), uint64(lastValid), (uint64(lastValid)+1)/2)
+	require.NoError(t, err)
+
+	p := account.Participation{
+		Parent:            addr,
+		FirstValid:        firstValid,
+		LastValid:         lastValid,
+		Voting:            votingSecrets,
+		VRF:               vrfSecrets,
+		StateProofSecrets: stateProofSecrets,
+	}
+
+	id, err := node.accountManager.Registry().Insert(p)
+	require.NoError(t, err)
+	err = node.accountManager.Registry().Register(id, 0)
+	require.NoError(t, err)
+
+	vKeys := node.VotingKeys(1000, 1000-320)
 
 	time.Sleep(5000 * time.Millisecond)
 	records := node.accountManager.Registry().GetAll()
