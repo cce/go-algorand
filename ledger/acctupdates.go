@@ -1384,7 +1384,7 @@ func (au *accountUpdates) commitRound(ctx context.Context, tx *sql.Tx, dcc *defe
 		dcc.stats.AccountsWritingDuration = time.Duration(time.Now().UnixNano()) - dcc.stats.AccountsWritingDuration
 	}
 
-	return
+	return nil
 }
 
 func (au *accountUpdates) postCommit(ctx context.Context, dcc *deferredCommitContext) {

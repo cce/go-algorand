@@ -556,7 +556,7 @@ func makeCompactResourceDeltas(accountDeltas []ledgercore.AccountDeltas, baseRou
 			}
 		}
 	}
-	return
+	return outResourcesDeltas
 }
 
 // resourcesLoadOld updates the entries on the deltas.oldResource map that matches the provided addresses.
@@ -3586,18 +3586,20 @@ func accountsNewRoundImpl(
 		}
 	}
 
-	return
+	return updatedAccounts, updatedResources, err
 }
 
 func onlineAccountsNewRoundImpl(
 	writer onlineAccountsWriter, updates compactOnlineAccountDeltas,
 	proto config.ConsensusParams, lastUpdateRound basics.Round,
-) (updatedAccounts []persistedOnlineAccountData, err error) {
+) ([]persistedOnlineAccountData, error) {
+	var updatedAccounts []persistedOnlineAccountData
 
 	for i := 0; i < updates.len(); i++ {
 		data := updates.getByIdx(i)
 		prevAcct := data.oldAcct
 		for j := 0; j < len(data.newAcct); j++ {
+			var err error
 			newAcct := data.newAcct[j]
 			updRound := data.updRound[j]
 			newStatus := data.newStatus[j]
@@ -3675,12 +3677,12 @@ func onlineAccountsNewRoundImpl(
 			}
 
 			if err != nil {
-				return
+				return updatedAccounts, err
 			}
 		}
 	}
 
-	return
+	return updatedAccounts, nil
 }
 
 func rowidsToChunkedArgs(rowids []int64) [][]interface{} {
@@ -4100,7 +4102,7 @@ func (iterator *encodedAccountsBatchIter) Next(ctx context.Context, tx *sql.Tx, 
 	}
 	// we just finished reading the table.
 	iterator.Close()
-	return
+	return bals, numAccountsProcessed, nil
 }
 
 // Close shuts down the encodedAccountsBatchIter, releasing database resources.
@@ -4419,7 +4421,7 @@ func loadFullAccount(ctx context.Context, tx *sql.Tx, resourcesTable string, add
 		return
 	}
 
-	return
+	return ad, nil
 }
 
 // LoadAllFullAccounts loads all accounts from balancesTable and resourcesTable.

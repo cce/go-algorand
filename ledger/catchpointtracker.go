@@ -1020,7 +1020,7 @@ func (ct *catchpointTracker) accountsUpdateBalances(accountsDeltas compactAccoun
 		_, err = ct.balancesTrie.Commit()
 	}
 
-	return
+	return err
 }
 
 // IsWritingCatchpointDataFile returns true iff a (first stage) catchpoint data file

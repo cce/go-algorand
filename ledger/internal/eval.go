@@ -1174,7 +1174,7 @@ func (eval *BlockEvaluator) applyTransaction(tx transactions.Transaction, cow *r
 		ad.ConfigAsset = 0
 	}
 
-	return
+	return ad, err
 }
 
 // stateProofVotersAndTotal returns the expected values of StateProofVotersCommitment

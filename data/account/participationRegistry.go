@@ -545,7 +545,7 @@ func (db *participationDB) Insert(record Participation) (id ParticipationID, err
 		VRF:               vrf,
 	}
 
-	return
+	return id, nil
 }
 
 func (db *participationDB) AppendKeys(id ParticipationID, keys StateProofKeys) error {

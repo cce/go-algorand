@@ -4392,7 +4392,8 @@ func (cx *EvalContext) availableApp(sv stackValue) (basics.AppIndex, error) {
 	return 0, fmt.Errorf("invalid App reference %d", aid)
 }
 
-func (cx *EvalContext) stackIntoTxnField(sv stackValue, fs *txnFieldSpec, txn *transactions.Transaction) (err error) {
+func (cx *EvalContext) stackIntoTxnField(sv stackValue, fs *txnFieldSpec, txn *transactions.Transaction) error {
+	var err error
 	switch fs.field {
 	case Type:
 		if sv.Bytes == nil {
@@ -4636,7 +4637,7 @@ func (cx *EvalContext) stackIntoTxnField(sv stackValue, fs *txnFieldSpec, txn *t
 	default:
 		return fmt.Errorf("invalid itxn_field %s", fs.field)
 	}
-	return
+	return err
 }
 
 func opItxnField(cx *EvalContext) error {

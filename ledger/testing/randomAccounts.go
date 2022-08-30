@@ -498,7 +498,7 @@ func RandomDeltasImpl(niter int, base map[basics.Address]basics.AccountData, rew
 		totals[addr] = new
 	}
 
-	return
+	return updates, totals, imbalance
 }
 
 // RandomDeltasBalanced generates a random set of accounts delta

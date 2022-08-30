@@ -110,5 +110,5 @@ func GenerateInitState(tb testing.TB, proto protocol.ConsensusVersion, baseAlgoP
 	genesisInitState.Accounts = initAccounts
 	genesisInitState.GenesisHash = crypto.Hash([]byte(tb.Name()))
 
-	return
+	return genesisInitState, initKeys
 }

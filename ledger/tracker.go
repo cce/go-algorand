@@ -711,5 +711,5 @@ func (tr *trackerRegistry) replay(l ledgerForTracker) (err error) {
 	if blockRetrievalError != nil {
 		err = blockRetrievalError
 	}
-	return
+	return err
 }

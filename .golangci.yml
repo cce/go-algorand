@@ -12,6 +12,7 @@ linters:
     - govet
     - ineffassign
     - misspell
+    - nakedret
     - nolintlint
     - revive
     - staticcheck
@@ -33,6 +34,10 @@ linters-settings:
     - (*github.com/algorand/go-algorand/data/transactions/logic.OpStream).error
     - (*github.com/algorand/go-algorand/data/transactions/logic.OpStream).warnf
     - (*github.com/algorand/go-algorand/data/transactions/logic.OpStream).warn
+  nakedret:
+    # Make an issue if func has more lines of code than this setting, and it has naked returns.
+    # Default: 30
+    max-func-lines: 50
 
 issues:
   # Work our way back over time to be clean against all these
