@@ -133,7 +133,9 @@ const peerDisconnectionAckDuration = 5 * time.Second
 const peerShutdownDisconnectionAckDuration = 50 * time.Millisecond
 
 // Peer opaque interface for referring to a neighbor in the network
-type Peer interface{}
+type Peer interface {
+	GetAddress() string
+}
 
 // PeerOption allows users to specify a subset of peers to query
 type PeerOption int

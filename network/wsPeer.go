@@ -259,7 +259,6 @@ func makePeerCore(net *WebsocketNetwork, rootURL string, roundTripper http.Round
 }
 
 // GetAddress returns the root url to use to connect to this peer.
-// TODO: should GetAddress be added to Peer interface?
 func (wp *wsPeerCore) GetAddress() string {
 	return wp.rootURL
 }
