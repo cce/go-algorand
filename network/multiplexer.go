@@ -65,6 +65,7 @@ func (m *Multiplexer) Handle(msg IncomingMessage) OutgoingMessage {
 		outmsg := handler.Handle(msg)
 		return outmsg
 	}
+	m.log.Debugf("peer used unrecognized tag %x: %s", msg.Tag, msg.Sender.(*wsPeer).conn.RemoteAddr())
 	return OutgoingMessage{}
 }
 
