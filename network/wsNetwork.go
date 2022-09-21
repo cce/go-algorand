@@ -438,6 +438,12 @@ const (
 	wantTXGossipNo  = 2
 )
 
+const (
+	bcastAllPeers  = 0
+	bcastPrioPeers = 1
+	bcastBulkPeers = 2
+)
+
 type broadcastRequest struct {
 	tags        []Tag
 	data        [][]byte
@@ -445,6 +451,7 @@ type broadcastRequest struct {
 	done        chan struct{}
 	enqueueTime time.Time
 	ctx         context.Context
+	prioPeers   int // whether to bcast to all or some peers
 }
 
 // Address returns a string and whether that is a 'final' address or guessed.
@@ -500,47 +507,61 @@ func (wn *WebsocketNetwork) BroadcastArray(ctx context.Context, tags []protocol.
 		return errBcastInvalidArray
 	}
 
-	request := broadcastRequest{tags: tags, data: data, enqueueTime: time.Now(), ctx: ctx}
-	if except != nil {
-		request.except = except.(*wsPeer)
-	}
+	sendQ := func(prioPeers int, broadcastQueue chan<- broadcastRequest) error {
+		request := broadcastRequest{tags: tags, data: data, enqueueTime: time.Now(), ctx: ctx, prioPeers: prioPeers}
+		if except != nil {
+			request.except = except.(*wsPeer)
+		}
 
-	broadcastQueue := wn.broadcastQueueBulk
-	if highPriorityTag(tags) {
-		broadcastQueue = wn.broadcastQueueHighPrio
-	}
-	if wait {
-		request.done = make(chan struct{})
+		if wait {
+			request.done = make(chan struct{})
+			select {
+			case broadcastQueue <- request:
+				// ok, enqueued
+				//wn.log.Debugf("broadcast enqueued")
+			case <-wn.ctx.Done():
+				return errNetworkClosing
+			case <-ctx.Done():
+				return errBcastCallerCancel
+			}
+			select {
+			case <-request.done:
+				//wn.log.Debugf("broadcast done")
+				return nil
+			case <-wn.ctx.Done():
+				return errNetworkClosing
+			case <-ctx.Done():
+				return errBcastCallerCancel
+			}
+		}
+		// no wait
 		select {
 		case broadcastQueue <- request:
-			// ok, enqueued
-			//wn.log.Debugf("broadcast enqueued")
-		case <-wn.ctx.Done():
-			return errNetworkClosing
-		case <-ctx.Done():
-			return errBcastCallerCancel
-		}
-		select {
-		case <-request.done:
-			//wn.log.Debugf("broadcast done")
+			//wn.log.Debugf("broadcast enqueued nowait")
 			return nil
-		case <-wn.ctx.Done():
-			return errNetworkClosing
-		case <-ctx.Done():
-			return errBcastCallerCancel
+		default:
+			wn.log.Debugf("broadcast queue full")
+			// broadcastQueue full, and we're not going to wait for it.
+			networkBroadcastQueueFull.Inc(nil)
+			return errBcastQFull
 		}
 	}
-	// no wait
-	select {
-	case broadcastQueue <- request:
-		//wn.log.Debugf("broadcast enqueued nowait")
-		return nil
-	default:
-		wn.log.Debugf("broadcast queue full")
-		// broadcastQueue full, and we're not going to wait for it.
-		networkBroadcastQueueFull.Inc(nil)
-		return errBcastQFull
+
+	if highPriorityTag(tags) {
+		// first, send a task to broadcast high-priority peers
+		if err := sendQ(bcastPrioPeers, wn.broadcastQueueHighPrio); err != nil {
+			return err
+		}
+		// second, send a task to broadcast to bulk peers
+		if err := sendQ(bcastBulkPeers, wn.broadcastQueueBulk); err != nil {
+			return err
+		}
+	} else {
+		if err := sendQ(bcastAllPeers, wn.broadcastQueueBulk); err != nil {
+			return err
+		}
 	}
+	return nil
 }
 
 // Relay message
@@ -1449,6 +1470,12 @@ func (wn *WebsocketNetwork) innerBroadcast(request broadcastRequest, prio bool, 
 	// first send to all the easy outbound peers who don't block, get them started.
 	sentMessageCount := 0
 	for _, peer := range peers {
+		if request.prioPeers == bcastPrioPeers && peer.prioWeight == 0 {
+			continue
+		}
+		if request.prioPeers == bcastBulkPeers && peer.prioWeight != 0 {
+			continue
+		}
 		if wn.config.BroadcastConnectionsLimit >= 0 && sentMessageCount >= wn.config.BroadcastConnectionsLimit {
 			break
 		}
