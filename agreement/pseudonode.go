@@ -249,7 +249,7 @@ func (n asyncPseudonode) makeProposalsTask(ctx context.Context, r round, p perio
 		round:  r,
 		period: p,
 	}
-	_, span := otTracer.Start(ctx, "pseudonodeBaseTask.populateParticipationKeys")
+	_, span := otTracer.Start(ctx, "makeProposalsTask.populateParticipationKeys")
 	defer span.End()
 	if !pt.populateParticipationKeys(r) {
 		close(pt.out)
@@ -270,6 +270,8 @@ func (n asyncPseudonode) makeVotesTask(ctx context.Context, r round, p period, s
 		prop:             prop,
 		persistStateDone: persistStateDone,
 	}
+	_, span := otTracer.Start(ctx, "makeVotesTask.populateParticipationKeys")
+	defer span.End()
 	if !pvt.populateParticipationKeys(r) {
 		close(pvt.out)
 	}
@@ -328,7 +330,11 @@ func (n asyncPseudonode) makeProposals(traceCtx context.Context, round basics.Ro
 
 // makeVotes creates a slice of votes for a given proposal value in a given
 // round, period, and step.
-func (n asyncPseudonode) makeVotes(round basics.Round, period period, step step, proposal proposalValue, participation []account.ParticipationRecordForRound) []unauthenticatedVote {
+func (n asyncPseudonode) makeVotes(traceCtx context.Context, round basics.Round, period period, step step, proposal proposalValue, participation []account.ParticipationRecordForRound) []unauthenticatedVote {
+	traceCtx, span := otTracer.Start(traceCtx, "asyncPseudonode.makeVotes",
+		trace.WithAttributes(attribute.Int("numAccounts", len(participation))),
+	)
+	defer span.End()
 	votes := make([]unauthenticatedVote, 0)
 	for _, part := range participation {
 		rv := rawVote{Sender: part.Account, Round: round, Period: period, Step: step, Proposal: proposal}
@@ -384,18 +390,21 @@ func (t pseudonodeBaseTask) close() {
 func (t pseudonodeVotesTask) execute(verifier *AsyncVoteVerifier, quit chan struct{}) {
 	defer t.close()
 
+	traceCtx, span := otTracer.Start(t.context, "pseudonodeVotesTask.execute")
+	defer span.End()
+
 	// check to see if task already expired.
 	if t.context.Err() != nil {
 		return
 	}
 
-	unverifiedVotes := t.node.makeVotes(t.round, t.period, t.step, t.prop, t.participation)
+	unverifiedVotes := t.node.makeVotes(traceCtx, t.round, t.period, t.step, t.prop, t.participation)
 	t.node.log.Infof("pseudonode: made %v votes", len(unverifiedVotes))
 	results := make(chan asyncVerifyVoteResponse, len(unverifiedVotes))
 	orderedResults := make([]asyncVerifyVoteResponse, len(unverifiedVotes))
 	asyncVerifyingVotes := len(unverifiedVotes)
 	for i, uv := range unverifiedVotes {
-		msg := message{Tag: protocol.AgreementVoteTag, UnauthenticatedVote: uv}
+		msg := message{Tag: protocol.AgreementVoteTag, UnauthenticatedVote: uv, traceCtx: traceCtx}
 		err := verifier.verifyVote(context.TODO(), t.node.ledger, uv, i, msg, results)
 		if err != nil {
 			orderedResults[i].err = err

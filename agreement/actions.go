@@ -328,6 +328,8 @@ type pseudonodeAction struct {
 	Period   period
 	Step     step
 	Proposal proposalValue
+
+	traceCtx context.Context
 }
 
 func (a pseudonodeAction) t() actionType {
@@ -349,6 +351,7 @@ func (a pseudonodeAction) do(ctx context.Context, s *Service) {
 	switch a.T {
 	// loopback
 	case assemble:
+		// this starts a trace -- parent ctx has no trace context
 		ctx, span := otTracer.Start(ctx, "pseudonodeAction.assemble",
 			trace.WithAttributes(attribute.Int64("round", int64(a.Round))),
 			trace.WithAttributes(attribute.Int64("period", int64(a.Period))),
@@ -397,6 +400,14 @@ func (a pseudonodeAction) do(ctx context.Context, s *Service) {
 			Hash:   a.Proposal.BlockDigest.String(),
 		}
 		s.log.with(logEvent).Infof("attested to %v at (%v, %v, %v)", a.Proposal, a.Round, a.Period, a.Step)
+		// join pseudonode traceCtx with this func's ctx
+		ctx = trace.ContextWithSpanContext(ctx, trace.SpanContextFromContext(a.traceCtx))
+		ctx, span := otTracer.Start(ctx, "pseudonodeAction.attest",
+			trace.WithAttributes(attribute.Int64("round", int64(a.Round))),
+			trace.WithAttributes(attribute.Int64("period", int64(a.Period))),
+			trace.WithAttributes(attribute.Int64("step", int64(a.Step))),
+		)
+		defer span.End()
 		// create a channel that would get closed when we're done storing the persistence information to disk.
 		// ( or will let us know if we failed ! )
 		persistStateDone := make(chan error)

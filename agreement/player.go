@@ -185,7 +185,7 @@ func (p *player) issueSoftVote(r routerHandle) (actions []action) {
 // A committableEvent is the trigger for issuing a cert vote.
 func (p *player) issueCertVote(r routerHandle, e committableEvent) action {
 	r.t.timeR().RecStep(p.Period, cert, e.Proposal)
-	return pseudonodeAction{T: attest, Round: p.Round, Period: p.Period, Step: cert, Proposal: e.Proposal}
+	return pseudonodeAction{T: attest, Round: p.Round, Period: p.Period, Step: cert, Proposal: e.Proposal, traceCtx: e.traceCtx}
 }
 
 func (p *player) issueNextVote(r routerHandle) []action {

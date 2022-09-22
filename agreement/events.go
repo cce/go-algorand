@@ -493,6 +493,8 @@ type committableEvent struct {
 
 	// the proposal-vote that authenticated the payload (if one exists)
 	Vote vote
+
+	traceCtx context.Context
 }
 
 func (e committableEvent) t() eventType {

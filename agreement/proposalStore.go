@@ -264,7 +264,7 @@ func (store *proposalStore) handle(r routerHandle, p player, e event) event {
 		a := stagedValue(p, r, p.Round, p.Period)
 		authVote := ea.authenticator(p.Period)
 		if a.Proposal == pv {
-			return committableEvent{Proposal: pv, Vote: authVote}
+			return committableEvent{Proposal: pv, Vote: authVote, traceCtx: ea.traceCtx}
 		}
 		return payloadProcessedEvent{
 			T:        payloadAccepted,
@@ -325,6 +325,7 @@ func (store *proposalStore) handle(r routerHandle, p player, e event) event {
 			return committableEvent{
 				Proposal: e.Proposal,
 				Vote:     authVote,
+				traceCtx: store.Assemblers[e.Proposal].traceCtx,
 			}
 		}
 		// an assembler may not exist - we should add a new one, if it doesn't
