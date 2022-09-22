@@ -23,6 +23,7 @@ import (
 	"github.com/algorand/go-algorand/logging"
 	"github.com/algorand/go-algorand/protocol"
 	"github.com/algorand/go-algorand/util/metrics"
+	"go.opentelemetry.io/otel/trace"
 )
 
 var voteVerifierOutFullCounter = metrics.MakeCounter(
@@ -371,7 +372,12 @@ func (c *poolCryptoVerifier) verifyProposalPayload(request cryptoProposalRequest
 	m := request.message
 	up := request.UnauthenticatedProposal
 
-	p, err := up.validate(request.ctx, request.Round, c.ledger, c.validator)
+	traceCtx, span := otTracer.Start(m.traceCtx, "poolCryptoVerifier.verifyProposalPayload")
+	defer span.End()
+	// merge request.ctx with span context
+	ctx := trace.ContextWithSpanContext(request.ctx, trace.SpanContextFromContext(traceCtx))
+
+	p, err := up.validate(ctx, request.Round, c.ledger, c.validator)
 	select {
 	case <-request.ctx.Done():
 		m.Proposal = p

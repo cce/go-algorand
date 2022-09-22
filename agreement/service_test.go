@@ -466,12 +466,12 @@ func (e *testingNetworkEndpoint) Messages(tag protocol.Tag) <-chan Message {
 	}
 }
 
-func (e *testingNetworkEndpoint) Broadcast(tag protocol.Tag, data []byte) error {
+func (e *testingNetworkEndpoint) Broadcast(_ context.Context, tag protocol.Tag, data []byte) error {
 	e.parent.multicast(tag, data, e.id, e.id)
 	return nil
 }
 
-func (e *testingNetworkEndpoint) Relay(h MessageHandle, t protocol.Tag, data []byte) error {
+func (e *testingNetworkEndpoint) Relay(_ context.Context, h MessageHandle, t protocol.Tag, data []byte) error {
 	sourceID := e.id
 	if _, isMsg := h.(*int); isMsg {
 		sourceID = e.parent.sourceOf(h)

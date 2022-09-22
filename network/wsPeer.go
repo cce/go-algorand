@@ -30,6 +30,8 @@ import (
 
 	"github.com/algorand/go-deadlock"
 	"github.com/algorand/websocket"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/algorand/go-algorand/config"
 	"github.com/algorand/go-algorand/crypto"
@@ -416,13 +418,30 @@ func (wp *wsPeer) readLoop() {
 			wp.reportReadErr(err)
 			return
 		}
-		msg.Tag = Tag(string(tag[:]))
+
+		// if this message is trace-enabled, read trace propagation information and make a span
+		var span trace.Span
+		if tag[0] == 't' {
+			msg.Tag = protocol.UnwrapTracedTag(Tag(string(tag[:])))
+			var traceMD traceMetadata
+			if _, err := io.ReadFull(reader, traceMD[:]); err != nil {
+				wp.reportReadErr(err)
+				return
+			}
+			// start span and add context to IncomingMessage
+			msg.TraceCtx, span = tracer.Start(contextFromTraceMetadata(context.Background(), traceMD), "wsPeer.readLoop")
+			defer span.End()
+		} else {
+			msg.Tag = Tag(string(tag[:]))
+		}
+
 		slurper.Reset()
 		err = slurper.Read(reader)
 		if err != nil {
 			wp.reportReadErr(err)
 			return
 		}
+		span.AddEvent("finished-read")
 
 		msg.processing = wp.processed
 		msg.Received = time.Now().UnixNano()
@@ -498,6 +517,7 @@ func (wp *wsPeer) readLoop() {
 			return
 		}
 
+		span.AddEvent("enqueue-readBuffer")
 		select {
 		case wp.net.readBuffer <- msg:
 		case <-wp.closing:
@@ -505,6 +525,36 @@ func (wp *wsPeer) readLoop() {
 			return
 		}
 	}
+}
+
+var tracer = otel.Tracer("algod-network")
+
+type traceMetadata [25]byte
+
+func contextFromTraceMetadata(ctx context.Context, md traceMetadata) context.Context {
+	sc := trace.NewSpanContext(trace.SpanContextConfig{
+		TraceID:    trace.TraceID(*(*[16]byte)(md[0:16])),
+		SpanID:     trace.SpanID(*(*[8]byte)(md[16:24])),
+		TraceFlags: trace.TraceFlags(md[24]),
+	})
+	if !sc.IsValid() {
+		return ctx
+	}
+	return trace.ContextWithRemoteSpanContext(ctx, sc)
+}
+
+func traceMetadataFromContext(ctx context.Context) traceMetadata {
+	sc := trace.SpanContextFromContext(ctx)
+	if !sc.IsValid() {
+		return traceMetadata{}
+	}
+	var md traceMetadata
+	tid := sc.TraceID()
+	sid := sc.SpanID()
+	copy(md[0:16], tid[:])
+	copy(md[16:24], sid[:])
+	md[24] = byte(sc.TraceFlags())
+	return md
 }
 
 func (wp *wsPeer) handleMessageOfInterest(msg IncomingMessage) (shutdown bool) {

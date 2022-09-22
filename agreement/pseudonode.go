@@ -30,6 +30,8 @@ import (
 	"github.com/algorand/go-algorand/logging/telemetryspec"
 	"github.com/algorand/go-algorand/protocol"
 	"github.com/algorand/go-algorand/util/metrics"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // TODO put these in config
@@ -247,6 +249,8 @@ func (n asyncPseudonode) makeProposalsTask(ctx context.Context, r round, p perio
 		round:  r,
 		period: p,
 	}
+	_, span := otTracer.Start(ctx, "pseudonodeBaseTask.populateParticipationKeys")
+	defer span.End()
 	if !pt.populateParticipationKeys(r) {
 		close(pt.out)
 	}
@@ -283,8 +287,13 @@ func (n asyncPseudonode) makePseudonodeVerifier(voteVerifier *AsyncVoteVerifier)
 }
 
 // makeProposals creates a slice of block proposals for the given round and period.
-func (n asyncPseudonode) makeProposals(round basics.Round, period period, accounts []account.ParticipationRecordForRound) ([]proposal, []unauthenticatedVote) {
-	ve, err := n.factory.AssembleBlock(round)
+func (n asyncPseudonode) makeProposals(traceCtx context.Context, round basics.Round, period period, accounts []account.ParticipationRecordForRound) ([]proposal, []unauthenticatedVote) {
+	traceCtx, span := otTracer.Start(traceCtx, "asyncPseudonode.makeProposals",
+		trace.WithAttributes(attribute.Int("numAccounts", len(accounts))),
+	)
+	defer span.End()
+
+	ve, err := n.factory.AssembleBlock(traceCtx, round)
 	if err != nil {
 		if err != ErrAssembleBlockRoundStale {
 			n.log.Errorf("pseudonode.makeProposals: could not generate a proposal for round %d: %v", round, err)
@@ -295,7 +304,7 @@ func (n asyncPseudonode) makeProposals(round basics.Round, period period, accoun
 	votes := make([]unauthenticatedVote, 0, len(accounts))
 	proposals := make([]proposal, 0, len(accounts))
 	for _, acc := range accounts {
-		payload, proposal, err := proposalForBlock(acc.Account, acc.VRF, ve, period, n.ledger)
+		payload, proposal, err := proposalForBlock(traceCtx, acc.Account, acc.VRF, ve, period, n.ledger)
 		if err != nil {
 			n.log.Errorf("pseudonode.makeProposals: could not create proposal for block (address %v): %v", acc.Account, err)
 			continue
@@ -491,12 +500,15 @@ verifiedVotesLoop:
 func (t pseudonodeProposalsTask) execute(verifier *AsyncVoteVerifier, quit chan struct{}) {
 	defer t.close()
 
+	traceCtx, span := otTracer.Start(t.context, "pseudonodeProposalsTask.execute")
+	defer span.End()
+
 	// check to see if task already expired.
 	if t.context.Err() != nil {
 		return
 	}
 
-	payloads, votes := t.node.makeProposals(t.round, t.period, t.participation)
+	payloads, votes := t.node.makeProposals(traceCtx, t.round, t.period, t.participation)
 	fields := logging.Fields{
 		"Type":         logspec.ProposalAssembled.String(),
 		"ObjectRound":  t.round,
@@ -514,7 +526,7 @@ func (t pseudonodeProposalsTask) execute(verifier *AsyncVoteVerifier, quit chan 
 	cryptoOutputs := make([]asyncVerifyVoteResponse, len(votes))
 	asyncVerifyingVotes := len(votes)
 	for i, uv := range votes {
-		msg := message{Tag: protocol.AgreementVoteTag, UnauthenticatedVote: uv}
+		msg := message{Tag: protocol.AgreementVoteTag, UnauthenticatedVote: uv, traceCtx: traceCtx}
 		err := verifier.verifyVote(context.TODO(), t.node.ledger, uv, i, msg, results)
 		if err != nil {
 			cryptoOutputs[i].err = err
@@ -593,7 +605,7 @@ verifiedVotesLoop:
 
 verifiedPayloadsLoop:
 	for _, payload := range verifiedPayloads {
-		msg := message{Tag: protocol.ProposalPayloadTag, UnauthenticatedProposal: payload.u(), Proposal: payload}
+		msg := message{Tag: protocol.ProposalPayloadTag, UnauthenticatedProposal: payload.u(), Proposal: payload, traceCtx: traceCtx}
 		for {
 			select {
 			case t.out <- messageEvent{T: payloadVerified, Input: msg}:

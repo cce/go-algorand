@@ -23,6 +23,8 @@ import (
 	"github.com/algorand/go-algorand/logging/logspec"
 	"github.com/algorand/go-algorand/logging/telemetryspec"
 	"github.com/algorand/go-algorand/protocol"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 )
 
 //go:generate stringer -type=actionType
@@ -104,6 +106,8 @@ type networkAction struct {
 	UnauthenticatedVotes []unauthenticatedVote
 
 	Err serializableError
+
+	traceCtx context.Context
 }
 
 func (a networkAction) t() actionType {
@@ -121,11 +125,20 @@ func (a networkAction) String() string {
 }
 
 func (a networkAction) do(ctx context.Context, s *Service) {
+	var traceCtx context.Context
+	if a.traceCtx != nil {
+		var span trace.Span
+		traceCtx, span = otTracer.Start(a.traceCtx, "agreement.networkAction.do",
+			trace.WithAttributes(attribute.String("actionType", a.T.String())),
+			trace.WithAttributes(attribute.String("tag", string(a.Tag))))
+		defer span.End()
+	}
+
 	if a.T == broadcastVotes {
 		tag := protocol.AgreementVoteTag
 		for i, uv := range a.UnauthenticatedVotes {
 			data := protocol.Encode(&uv)
-			sendErr := s.Network.Broadcast(tag, data)
+			sendErr := s.Network.Broadcast(traceCtx, tag, data)
 			if sendErr != nil {
 				s.log.Warnf("Network was unable to queue votes for broadcast(%v). %d / %d votes for round %d period %d step %d were dropped.",
 					sendErr,
@@ -159,9 +172,9 @@ func (a networkAction) do(ctx context.Context, s *Service) {
 
 	switch a.T {
 	case broadcast:
-		s.Network.Broadcast(a.Tag, data)
+		s.Network.Broadcast(traceCtx, a.Tag, data)
 	case relay:
-		s.Network.Relay(a.h, a.Tag, data)
+		s.Network.Relay(traceCtx, a.h, a.Tag, data)
 	case disconnect:
 		s.Network.Disconnect(a.h)
 	case ignore:
@@ -336,6 +349,12 @@ func (a pseudonodeAction) do(ctx context.Context, s *Service) {
 	switch a.T {
 	// loopback
 	case assemble:
+		ctx, span := otTracer.Start(ctx, "pseudonodeAction.assemble",
+			trace.WithAttributes(attribute.Int64("round", int64(a.Round))),
+			trace.WithAttributes(attribute.Int64("period", int64(a.Period))),
+			trace.WithAttributes(attribute.Int64("step", int64(a.Step))),
+		)
+		defer span.End()
 		events, err := s.loopback.MakeProposals(ctx, a.Round, a.Period)
 		switch err {
 		case nil:
@@ -409,8 +428,8 @@ func disconnectAction(e messageEvent, err serializableError) action {
 	return networkAction{T: disconnect, Err: err, h: e.Input.MessageHandle}
 }
 
-func broadcastAction(tag protocol.Tag, o interface{}) action {
-	a := networkAction{T: broadcast, Tag: tag}
+func broadcastAction(traceCtx context.Context, tag protocol.Tag, o interface{}) action {
+	a := networkAction{T: broadcast, Tag: tag, traceCtx: traceCtx}
 	// TODO would be good to have compiler check this (and related) type switch
 	// by specializing one method per type
 	switch tag {
@@ -425,7 +444,7 @@ func broadcastAction(tag protocol.Tag, o interface{}) action {
 }
 
 func relayAction(e messageEvent, tag protocol.Tag, o interface{}) action {
-	a := networkAction{T: relay, h: e.Input.MessageHandle, Tag: tag}
+	a := networkAction{T: relay, h: e.Input.MessageHandle, Tag: tag, traceCtx: e.Input.traceCtx}
 	// TODO would be good to have compiler check this (and related) type switch
 	// by specializing one method per type
 	switch tag {

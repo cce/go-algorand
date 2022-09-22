@@ -17,6 +17,7 @@
 package agreement
 
 import (
+	"context"
 	"fmt"
 	"time"
 
@@ -535,6 +536,8 @@ type payloadProcessedEvent struct {
 	// Err is set to be the reason the proposal payload was rejected in
 	// payloadRejected.
 	Err serializableError
+
+	traceCtx context.Context
 }
 
 func (e payloadProcessedEvent) t() eventType {

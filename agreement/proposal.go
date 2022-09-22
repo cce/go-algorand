@@ -27,6 +27,7 @@ import (
 	"github.com/algorand/go-algorand/data/committee"
 	"github.com/algorand/go-algorand/logging"
 	"github.com/algorand/go-algorand/protocol"
+	"go.opentelemetry.io/otel/trace"
 )
 
 var bottom proposalValue
@@ -239,7 +240,9 @@ func verifyNewSeed(p unauthenticatedProposal, ledger LedgerReader) error {
 	return nil
 }
 
-func proposalForBlock(address basics.Address, vrf *crypto.VRFSecrets, ve ValidatedBlock, period period, ledger LedgerReader) (proposal, proposalValue, error) {
+func proposalForBlock(traceCtx context.Context, address basics.Address, vrf *crypto.VRFSecrets, ve ValidatedBlock, period period, ledger LedgerReader) (proposal, proposalValue, error) {
+	traceCtx, span := otTracer.Start(traceCtx, "proposalForBlock")
+	defer span.End()
 	rnd := ve.Block().Round()
 	newSeed, seedProof, err := deriveNewSeed(address, vrf, rnd, period, ledger)
 	if err != nil {
@@ -260,6 +263,10 @@ func proposalForBlock(address basics.Address, vrf *crypto.VRFSecrets, ve Validat
 // validate returns true if the proposal is valid.
 // It checks the proposal seed and then calls validator.Validate.
 func (p unauthenticatedProposal) validate(ctx context.Context, current round, ledger LedgerReader, validator BlockValidator) (proposal, error) {
+	var span trace.Span
+	ctx, span = otTracer.Start(ctx, "unauthenticatedProposal.validate")
+	defer span.End()
+
 	var invalid proposal
 	entry := p.Block
 

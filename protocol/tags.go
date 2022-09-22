@@ -41,4 +41,33 @@ const (
 	//UniEnsBlockResTag  Tag = "US" was used for wsfetcherservice
 	//UniCatchupResTag   Tag = "UT" was used for wsfetcherservice
 	VoteBundleTag Tag = "VB"
+
+	TracedProposalPayloadTag Tag = "tP"
+	TracedAgreementVoteTag   Tag = "tV"
 )
+
+// UnwrapTracedTag returns the underlying tag behind a "trace-enabled" version of
+// the tag.
+func UnwrapTracedTag(tag Tag) Tag {
+	switch tag {
+	case TracedProposalPayloadTag:
+		return ProposalPayloadTag
+	case TracedAgreementVoteTag:
+		return AgreementVoteTag
+	default:
+		return tag
+	}
+}
+
+// WrapTracedTag returns the "trace-enabled" version of the tag, and true if a tag
+// is traced. Otherwise it will return the provided tag and false.
+func WrapTracedTag(tag Tag) (Tag, bool) {
+	switch tag {
+	case ProposalPayloadTag:
+		return TracedProposalPayloadTag, true
+	case AgreementVoteTag:
+		return TracedAgreementVoteTag, true
+	default:
+		return tag, false
+	}
+}

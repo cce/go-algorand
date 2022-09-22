@@ -39,6 +39,8 @@ import (
 	"github.com/algorand/go-deadlock"
 	"github.com/algorand/websocket"
 	"github.com/gorilla/mux"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/algorand/go-algorand/config"
 	"github.com/algorand/go-algorand/crypto"
@@ -224,6 +226,9 @@ type IncomingMessage struct {
 
 	// Received is time.Time.UnixNano()
 	Received int64
+
+	// Context for tracing performance
+	TraceCtx context.Context
 
 	// processing is a channel that is used by messageHandlerThread
 	// to indicate that it has started processing this message.  It
@@ -1191,6 +1196,11 @@ func (wn *WebsocketNetwork) messageHandlerThread(peersConnectivityCheckCh <-chan
 		case <-wn.ctx.Done():
 			return
 		case msg := <-wn.readBuffer:
+			if msg.TraceCtx != nil {
+				ctx, span := tracer.Start(msg.TraceCtx, "network.messageHandlerThread")
+				msg.TraceCtx = ctx
+				defer span.End()
+			}
 			if msg.processing != nil {
 				// The channel send should never block, but just in case..
 				select {
@@ -1424,6 +1434,16 @@ func (wn *WebsocketNetwork) innerBroadcast(request broadcastRequest, prio bool, 
 		defer close(request.done)
 	}
 
+	var traceCtx context.Context
+	if sc := trace.SpanContextFromContext(request.ctx); sc.IsValid() {
+		var span trace.Span
+		traceCtx, span = tracer.Start(request.ctx, "wsNetwork.innerBroadcast",
+			trace.WithAttributes(attribute.String("tag", string(request.tags[0]))),
+			trace.WithAttributes(attribute.Int("len", len(request.data[0]))))
+		defer span.End()
+
+	}
+
 	broadcastQueueDuration := time.Now().Sub(request.enqueueTime)
 	networkBroadcastQueueMicros.AddUint64(uint64(broadcastQueueDuration.Nanoseconds()/1000), nil)
 	if broadcastQueueDuration > maxMessageQueueDuration {
@@ -1436,10 +1456,16 @@ func (wn *WebsocketNetwork) innerBroadcast(request broadcastRequest, prio bool, 
 	digests := make([]crypto.Digest, len(request.data), len(request.data))
 	data := make([][]byte, len(request.data), len(request.data))
 	for i, d := range request.data {
-		tbytes := []byte(request.tags[i])
-		mbytes := make([]byte, len(tbytes)+len(d))
+		tag, addTraceMD := protocol.WrapTracedTag(request.tags[i])
+		var traceMD traceMetadata
+		if addTraceMD {
+			traceMD = traceMetadataFromContext(traceCtx)
+		}
+		tbytes := []byte(tag)
+		mbytes := make([]byte, len(tbytes)+len(traceMD)+len(d))
 		copy(mbytes, tbytes)
-		copy(mbytes[len(tbytes):], d)
+		copy(mbytes[len(tbytes):], traceMD[:])
+		copy(mbytes[len(tbytes)+len(traceMD):], d)
 		data[i] = mbytes
 		if request.tags[i] != protocol.MsgDigestSkipTag && len(d) >= messageFilterSize {
 			digests[i] = crypto.Hash(mbytes)

@@ -53,7 +53,7 @@ type entryFactoryImpl struct {
 }
 
 // AssembleBlock implements Ledger.AssembleBlock.
-func (i entryFactoryImpl) AssembleBlock(round basics.Round) (agreement.ValidatedBlock, error) {
+func (i entryFactoryImpl) AssembleBlock(_ context.Context, round basics.Round) (agreement.ValidatedBlock, error) {
 	prev, err := i.l.BlockHdr(round - 1)
 	if err != nil {
 		return nil, fmt.Errorf("could not make proposals: could not read block from ledger at round %v: %v", round, err)

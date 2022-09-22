@@ -21,6 +21,8 @@ import (
 
 	"github.com/algorand/go-algorand/config"
 	"github.com/algorand/go-algorand/protocol"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // The player implements the top-level state machine functionality of the
@@ -391,7 +393,7 @@ func (p *player) enterRound(r routerHandle, source event, target round) []action
 
 	if e.t() == payloadPipelined {
 		e := e.(payloadProcessedEvent)
-		msg := message{MessageHandle: 0, Tag: protocol.ProposalPayloadTag, UnauthenticatedProposal: e.UnauthenticatedPayload} // TODO do we want to keep around the original handle?
+		msg := message{MessageHandle: 0, Tag: protocol.ProposalPayloadTag, UnauthenticatedProposal: e.UnauthenticatedPayload, traceCtx: e.traceCtx} // TODO do we want to keep around the original handle?
 		a := verifyPayloadAction(messageEvent{T: payloadPresent, Input: msg}, p.Round, e.Period, e.Pinned)
 		actions = append(actions, a)
 	}
@@ -425,7 +427,7 @@ func (p *player) partitionPolicy(r routerHandle) (actions []action) {
 		// TODO do we want to authenticate our own bundles?
 		b := bundleResponse.Event.Bundle
 		r.t.logBundleBroadcast(*p, b)
-		a0 := broadcastAction(protocol.VoteBundleTag, b)
+		a0 := broadcastAction(nil, protocol.VoteBundleTag, b)
 		actions = append(actions, a0)
 	}
 
@@ -455,7 +457,7 @@ func (p *player) partitionPolicy(r routerHandle) (actions []action) {
 		if resStaged.Committable {
 			transmit := compoundMessage{Proposal: resStaged.Payload.u()}
 			r.t.logProposalRepropagate(resStaged.Proposal, bundleRound, bundlePeriod)
-			a1 := broadcastAction(protocol.ProposalPayloadTag, transmit)
+			a1 := broadcastAction(nil, protocol.ProposalPayloadTag, transmit)
 			actions = append(actions, a1)
 		} else {
 			// even if there is no staged value, there may be a pinned value
@@ -463,7 +465,7 @@ func (p *player) partitionPolicy(r routerHandle) (actions []action) {
 			if resPinned.PayloadOK {
 				transmit := compoundMessage{Proposal: resPinned.Payload.u()}
 				r.t.logProposalRepropagate(resPinned.Proposal, bundleRound, bundlePeriod)
-				a1 := broadcastAction(protocol.ProposalPayloadTag, transmit)
+				a1 := broadcastAction(nil, protocol.ProposalPayloadTag, transmit)
 				actions = append(actions, a1)
 			}
 		}
@@ -477,6 +479,13 @@ func (p *player) partitioned() bool {
 }
 
 func (p *player) handleMessageEvent(r routerHandle, e messageEvent) (actions []action) {
+	if e.Input.traceCtx != nil {
+		var span trace.Span
+		e.Input.traceCtx, span = otTracer.Start(e.Input.traceCtx, "agreement.handleMessageEvent",
+			trace.WithAttributes(attribute.String("eventType", e.t().String())))
+		defer span.End()
+	}
+
 	// is it a proposal-vote? (i.e., vote where step = 0)
 	proposalVote := false
 	switch e.t() {
@@ -538,7 +547,7 @@ func (p *player) handleMessageEvent(r routerHandle, e messageEvent) (actions []a
 				Proposal: ep.Payload.u(),
 				Vote:     v.u(),
 			}
-			a = broadcastAction(protocol.ProposalPayloadTag, transmit)
+			a = broadcastAction(e.Input.traceCtx, protocol.ProposalPayloadTag, transmit)
 		}
 		return append(actions, a)
 	}

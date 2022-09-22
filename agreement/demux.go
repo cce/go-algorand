@@ -25,6 +25,8 @@ import (
 	"github.com/algorand/go-algorand/logging"
 	"github.com/algorand/go-algorand/logging/logspec"
 	"github.com/algorand/go-algorand/protocol"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/trace"
 )
 
 const (
@@ -105,6 +107,8 @@ func (d *demux) UpdateEventsQueue(queueName string, queueLength int) {
 	d.processingMonitor.UpdateEventsQueue(queueName, queueLength)
 }
 
+var otTracer = otel.Tracer("algod-agreement")
+
 // tokenizeMessages tokenizes a raw message stream
 func (d *demux) tokenizeMessages(ctx context.Context, net Network, tag protocol.Tag, tokenize streamTokenizer) <-chan message {
 	networkMessages := net.Messages(tag)
@@ -121,7 +125,15 @@ func (d *demux) tokenizeMessages(ctx context.Context, net Network, tag protocol.
 				}
 				d.UpdateEventsQueue(eventQueueTokenizing[tag], 1)
 
+				var span trace.Span
+				if raw.TraceCtx != nil {
+					raw.TraceCtx, span = otTracer.Start(raw.TraceCtx, "agreement.tokenize")
+				}
+
 				o, err := tokenize(raw.Data)
+				if raw.TraceCtx != nil {
+					span.End()
+				}
 				if err != nil {
 					warnMsg := fmt.Sprintf("disconnecting from peer: error decoding message tagged %v: %v", tag, err)
 					// check protocol version
@@ -140,11 +152,11 @@ func (d *demux) tokenizeMessages(ctx context.Context, net Network, tag protocol.
 				var msg message
 				switch tag {
 				case protocol.AgreementVoteTag:
-					msg = message{MessageHandle: raw.MessageHandle, Tag: tag, UnauthenticatedVote: o.(unauthenticatedVote)}
+					msg = message{MessageHandle: raw.MessageHandle, Tag: tag, UnauthenticatedVote: o.(unauthenticatedVote), traceCtx: raw.TraceCtx}
 				case protocol.VoteBundleTag:
-					msg = message{MessageHandle: raw.MessageHandle, Tag: tag, UnauthenticatedBundle: o.(unauthenticatedBundle)}
+					msg = message{MessageHandle: raw.MessageHandle, Tag: tag, UnauthenticatedBundle: o.(unauthenticatedBundle), traceCtx: raw.TraceCtx}
 				case protocol.ProposalPayloadTag:
-					msg = message{MessageHandle: raw.MessageHandle, Tag: tag, CompoundMessage: o.(compoundMessage)}
+					msg = message{MessageHandle: raw.MessageHandle, Tag: tag, CompoundMessage: o.(compoundMessage), traceCtx: raw.TraceCtx}
 				default:
 					err := fmt.Errorf("bad message tag: %v", tag)
 					d.UpdateEventsQueue(fmt.Sprintf("Tokenizing-%s", tag), 0)
@@ -364,7 +376,7 @@ func setupCompoundMessage(l LedgerReader, m message) (res externalEvent) {
 		return
 	}
 
-	tailmsg := message{MessageHandle: m.MessageHandle, Tag: protocol.ProposalPayloadTag, UnauthenticatedProposal: compound.Proposal}
+	tailmsg := message{MessageHandle: m.MessageHandle, Tag: protocol.ProposalPayloadTag, UnauthenticatedProposal: compound.Proposal, traceCtx: m.traceCtx}
 	synthetic := messageEvent{T: payloadPresent, Input: tailmsg}
 	proto, err := l.ConsensusVersion(ParamsRound(synthetic.ConsensusRound()))
 	synthetic = synthetic.AttachConsensusVersion(ConsensusVersionView{Err: makeSerErr(err), Version: proto}).(messageEvent)

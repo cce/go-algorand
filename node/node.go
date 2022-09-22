@@ -54,6 +54,7 @@ import (
 	"github.com/algorand/go-algorand/util/metrics"
 	"github.com/algorand/go-algorand/util/timers"
 	"github.com/algorand/go-deadlock"
+	"go.opentelemetry.io/otel"
 )
 
 const (
@@ -1239,8 +1240,13 @@ func (vb validatedBlock) Block() bookkeeping.Block {
 	return blk
 }
 
+var tracer = otel.Tracer("algod-node")
+
 // AssembleBlock implements Ledger.AssembleBlock.
-func (node *AlgorandFullNode) AssembleBlock(round basics.Round) (agreement.ValidatedBlock, error) {
+func (node *AlgorandFullNode) AssembleBlock(ctx context.Context, round basics.Round) (agreement.ValidatedBlock, error) {
+	_, span := tracer.Start(ctx, "node.AssembleBlock")
+	defer span.End()
+
 	deadline := time.Now().Add(node.config.ProposalAssemblyTime)
 	lvb, err := node.transactionPool.AssembleBlock(round, deadline)
 	if err != nil {
@@ -1259,6 +1265,7 @@ func (node *AlgorandFullNode) AssembleBlock(round basics.Round) (agreement.Valid
 			// the case where ledgerNextRound > round was not implemented here on purpose. This is the "normal case" where the
 			// ledger was advancing faster then the agreement by the catchup.
 		}
+		span.RecordError(err)
 		return nil, err
 	}
 	return validatedBlock{vb: lvb}, nil

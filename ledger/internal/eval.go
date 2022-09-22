@@ -35,6 +35,7 @@ import (
 	"github.com/algorand/go-algorand/logging"
 	"github.com/algorand/go-algorand/protocol"
 	"github.com/algorand/go-algorand/util/execpool"
+	"go.opentelemetry.io/otel"
 )
 
 // LedgerForCowBase represents subset of Ledger functionality needed for cow business
@@ -1484,6 +1485,8 @@ func (validator *evalTxValidator) run() {
 	}
 }
 
+var tracer = otel.Tracer("algod-ledger-internal")
+
 // Eval is the main evaluator entrypoint (in addition to StartEvaluator)
 // used by Ledger.Validate() Ledger.AddBlock() Ledger.trackerEvalVerified()(accountUpdates.loadFromDisk())
 //
@@ -1491,6 +1494,9 @@ func (validator *evalTxValidator) run() {
 // AddBlock: Eval(context.Background(), l, blk, false, txcache, nil)
 // tracker:  Eval(context.Background(), l, blk, false, txcache, nil)
 func Eval(ctx context.Context, l LedgerForEvaluator, blk bookkeeping.Block, validate bool, txcache verify.VerifiedTransactionCache, executionPool execpool.BacklogPool) (ledgercore.StateDelta, error) {
+	ctx, span := tracer.Start(ctx, "internal.Eval")
+	defer span.End()
+
 	eval, err := StartEvaluator(l, blk.BlockHeader,
 		EvaluatorOptions{
 			PaysetHint: len(blk.Payset),
@@ -1509,7 +1515,9 @@ func Eval(ctx context.Context, l LedgerForEvaluator, blk bookkeeping.Block, vali
 	}()
 
 	// Next, transactions
+	_, dpgSpan := tracer.Start(ctx, "blk.DecodePaysetGroups")
 	paysetgroups, err := blk.DecodePaysetGroups()
+	dpgSpan.End()
 	if err != nil {
 		return ledgercore.StateDelta{}, err
 	}
@@ -1606,7 +1614,9 @@ transactionGroupLoop:
 	}
 
 	// Finally, process any pending end-of-block state changes.
+	_, eobSpan := tracer.Start(ctx, "eval.endOfBlock")
 	err = eval.endOfBlock()
+	eobSpan.End()
 	if err != nil {
 		return ledgercore.StateDelta{}, err
 	}

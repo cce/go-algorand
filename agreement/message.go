@@ -17,6 +17,8 @@
 package agreement
 
 import (
+	"context"
+
 	"github.com/algorand/go-algorand/protocol"
 )
 
@@ -38,6 +40,8 @@ type message struct {
 	UnauthenticatedBundle   unauthenticatedBundle
 
 	CompoundMessage compoundMessage
+
+	traceCtx context.Context
 }
 
 // A compoundMessage represents the concatenation of a proposal-vote and a

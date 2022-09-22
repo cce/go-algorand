@@ -17,6 +17,7 @@
 package agreement
 
 import (
+	"context"
 	"fmt"
 )
 
@@ -40,6 +41,8 @@ type blockAssembler struct {
 	Payload proposal
 	// Assembled is set if the blockAssembler has seen a valid proposal.
 	Assembled bool
+
+	traceCtx context.Context
 
 	// Authenticators caches the set of proposal-votes which have been seen
 	// for a given proposal-value.  When a proposal payload is relayed by
@@ -212,6 +215,7 @@ func (store *proposalStore) handle(r routerHandle, p player, e event) event {
 
 	case payloadPresent:
 		up := e.(messageEvent).Input.UnauthenticatedProposal
+		traceCtx := e.(messageEvent).Input.traceCtx
 		pv := up.value()
 		ea, ok := store.Assemblers[pv]
 		if !ok {
@@ -220,6 +224,7 @@ func (store *proposalStore) handle(r routerHandle, p player, e event) event {
 				Err: makeSerErrStr("proposalStore: no accepting blockAssembler found on payloadPresent"),
 			}
 		}
+		ea.traceCtx = traceCtx
 
 		var err error
 		store.Assemblers[pv], err = ea.pipeline(up)
@@ -236,6 +241,7 @@ func (store *proposalStore) handle(r routerHandle, p player, e event) event {
 			Pinned:                 pinned,
 			Proposal:               pv,
 			UnauthenticatedPayload: up,
+			traceCtx:               traceCtx,
 		}
 
 	case payloadVerified:
@@ -264,6 +270,7 @@ func (store *proposalStore) handle(r routerHandle, p player, e event) event {
 			T:        payloadAccepted,
 			Vote:     authVote,
 			Proposal: pv,
+			traceCtx: ea.traceCtx,
 		}
 
 	case newPeriod:
@@ -300,6 +307,7 @@ func (store *proposalStore) handle(r routerHandle, p player, e event) event {
 					Pinned:                 pinned,
 					Proposal:               pv,
 					UnauthenticatedPayload: ea.Pipeline,
+					traceCtx:               ea.traceCtx,
 				}
 			}
 		}

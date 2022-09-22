@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/algorand/go-deadlock"
+	"go.opentelemetry.io/otel"
 
 	"github.com/algorand/go-algorand/agreement"
 	"github.com/algorand/go-algorand/config"
@@ -795,11 +796,16 @@ func (l *Ledger) StartEvaluator(hdr bookkeeping.BlockHeader, paysetHint, maxTxnB
 		})
 }
 
+var tracer = otel.Tracer("algod-ledger")
+
 // Validate uses the ledger to validate block blk as a candidate next block.
 // It returns an error if blk is not the expected next block, or if blk is
 // not a valid block (e.g., it has duplicate transactions, overspends some
 // account, etc).
 func (l *Ledger) Validate(ctx context.Context, blk bookkeeping.Block, executionPool execpool.BacklogPool) (*ledgercore.ValidatedBlock, error) {
+	ctx, span := tracer.Start(ctx, "Ledger.Validate")
+	defer span.End()
+
 	delta, err := internal.Eval(ctx, l, blk, true, l.verifiedTxnCache, executionPool)
 	if err != nil {
 		return nil, err

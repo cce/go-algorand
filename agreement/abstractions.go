@@ -84,7 +84,7 @@ type BlockFactory interface {
 	// produce a ValidatedBlock for the given round. If an insufficient number of
 	// nodes on the network can assemble entries, the agreement protocol may
 	// lose liveness.
-	AssembleBlock(basics.Round) (ValidatedBlock, error)
+	AssembleBlock(context.Context, basics.Round) (ValidatedBlock, error)
 }
 
 // A Ledger represents the sequence of Entries agreed upon by the protocol.
@@ -257,7 +257,7 @@ type Network interface {
 	// If the broadcasting of the message have failed or is not possible, the
 	// method returns a non-nil error describing the underlaying error.
 	// otherwise, a nil is returned.
-	Broadcast(protocol.Tag, []byte) error
+	Broadcast(context.Context, protocol.Tag, []byte) error
 
 	// Relay attempts to send a slice of bytes under some protocol.Tag to
 	// all neighbors, except for the neighbor associated with the given
@@ -273,7 +273,7 @@ type Network interface {
 	// If the relaying of the message have failed or is not possible, the
 	// method returns a non-nil error describing the underlaying error.
 	// otherwise, a nil is returned.
-	Relay(MessageHandle, protocol.Tag, []byte) error
+	Relay(context.Context, MessageHandle, protocol.Tag, []byte) error
 
 	// Disconnect sends the Network a hint to disconnect to the peer
 	// associated with the given MessageHandle.
@@ -296,6 +296,8 @@ type RandomSource interface {
 type Message struct {
 	MessageHandle
 	Data []byte
+
+	TraceCtx context.Context
 }
 
 // EventsProcessingMonitor is an abstraction over the

@@ -29,6 +29,7 @@ import (
 	"github.com/algorand/go-algorand/network/messagetracer"
 	"github.com/algorand/go-algorand/protocol"
 	"github.com/algorand/go-algorand/util/metrics"
+	"go.opentelemetry.io/otel"
 )
 
 var messagesHandledTotal = metrics.MakeCounter(metrics.AgreementMessagesHandled)
@@ -96,6 +97,8 @@ func messageMetadataFromHandle(h agreement.MessageHandle) *messageMetadata {
 	return nil
 }
 
+var tracer = otel.Tracer("algod-agreement-gossip")
+
 func (i *networkImpl) processVoteMessage(raw network.IncomingMessage) network.OutgoingMessage {
 	return i.processMessage(raw, i.voteCh, agreementVoteMessageType)
 }
@@ -113,10 +116,15 @@ func (i *networkImpl) processBundleMessage(raw network.IncomingMessage) network.
 
 // i.e. process<Type>Message
 func (i *networkImpl) processMessage(raw network.IncomingMessage, submit chan<- agreement.Message, msgType string) network.OutgoingMessage {
+	if raw.TraceCtx != nil {
+		ctx, span := tracer.Start(raw.TraceCtx, "agreement.processMessage")
+		raw.TraceCtx = ctx
+		defer span.End()
+	}
 	metadata := &messageMetadata{raw: raw}
 
 	select {
-	case submit <- agreement.Message{MessageHandle: agreement.MessageHandle(metadata), Data: raw.Data}:
+	case submit <- agreement.Message{MessageHandle: agreement.MessageHandle(metadata), Data: raw.Data, TraceCtx: raw.TraceCtx}:
 		// It would be slightly better to measure at de-queue
 		// time, but that happens in many places in code and
 		// this is much easier.
@@ -145,23 +153,23 @@ func (i *networkImpl) Messages(t protocol.Tag) <-chan agreement.Message {
 	}
 }
 
-func (i *networkImpl) Broadcast(t protocol.Tag, data []byte) (err error) {
-	err = i.net.Broadcast(context.Background(), t, data, false, nil)
+func (i *networkImpl) Broadcast(traceCtx context.Context, t protocol.Tag, data []byte) (err error) {
+	err = i.net.Broadcast(traceCtx, t, data, false, nil)
 	if err != nil {
 		i.log.Infof("agreement: could not broadcast message with tag %v: %v", t, err)
 	}
 	return
 }
 
-func (i *networkImpl) Relay(h agreement.MessageHandle, t protocol.Tag, data []byte) (err error) {
+func (i *networkImpl) Relay(traceCtx context.Context, h agreement.MessageHandle, t protocol.Tag, data []byte) (err error) {
 	metadata := messageMetadataFromHandle(h)
 	if metadata == nil { // synthentic loopback
-		err = i.net.Broadcast(context.Background(), t, data, false, nil)
+		err = i.net.Broadcast(traceCtx, t, data, false, nil)
 		if err != nil {
 			i.log.Infof("agreement: could not (pseudo)relay message with tag %v: %v", t, err)
 		}
 	} else {
-		err = i.net.Relay(context.Background(), t, data, false, metadata.raw.Sender)
+		err = i.net.Relay(traceCtx, t, data, false, metadata.raw.Sender)
 		if err != nil {
 			i.log.Infof("agreement: could not relay message from %v with tag %v: %v", metadata.raw.Sender, t, err)
 		}
