@@ -29,6 +29,7 @@ import (
 	"github.com/algorand/go-algorand/network/messagetracer"
 	"github.com/algorand/go-algorand/protocol"
 	"github.com/algorand/go-algorand/util/metrics"
+	"github.com/algorand/go-algorand/util/tracing"
 	"go.opentelemetry.io/otel"
 )
 
@@ -117,7 +118,7 @@ func (i *networkImpl) processBundleMessage(raw network.IncomingMessage) network.
 // i.e. process<Type>Message
 func (i *networkImpl) processMessage(raw network.IncomingMessage, submit chan<- agreement.Message, msgType string) network.OutgoingMessage {
 	if raw.TraceCtx != nil {
-		ctx, span := tracer.Start(raw.TraceCtx, "agreement.processMessage")
+		ctx, span := tracing.StartSpan(raw.TraceCtx, "agreement.processMessage")
 		raw.TraceCtx = ctx
 		defer span.End()
 	}

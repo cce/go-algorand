@@ -23,6 +23,7 @@ import (
 	"github.com/algorand/go-algorand/logging"
 	"github.com/algorand/go-algorand/protocol"
 	"github.com/algorand/go-algorand/util/metrics"
+	"github.com/algorand/go-algorand/util/tracing"
 	"go.opentelemetry.io/otel/trace"
 )
 
@@ -372,7 +373,7 @@ func (c *poolCryptoVerifier) verifyProposalPayload(request cryptoProposalRequest
 	m := request.message
 	up := request.UnauthenticatedProposal
 
-	traceCtx, span := otTracer.Start(m.traceCtx, "poolCryptoVerifier.verifyProposalPayload")
+	traceCtx, span := tracing.StartSpan(m.traceCtx, "poolCryptoVerifier.verifyProposalPayload")
 	defer span.End()
 	// merge request.ctx with span context
 	ctx := trace.ContextWithSpanContext(request.ctx, trace.SpanContextFromContext(traceCtx))

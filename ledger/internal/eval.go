@@ -35,6 +35,7 @@ import (
 	"github.com/algorand/go-algorand/logging"
 	"github.com/algorand/go-algorand/protocol"
 	"github.com/algorand/go-algorand/util/execpool"
+	"github.com/algorand/go-algorand/util/tracing"
 	"go.opentelemetry.io/otel"
 )
 
@@ -1494,7 +1495,7 @@ var tracer = otel.Tracer("algod-ledger-internal")
 // AddBlock: Eval(context.Background(), l, blk, false, txcache, nil)
 // tracker:  Eval(context.Background(), l, blk, false, txcache, nil)
 func Eval(ctx context.Context, l LedgerForEvaluator, blk bookkeeping.Block, validate bool, txcache verify.VerifiedTransactionCache, executionPool execpool.BacklogPool) (ledgercore.StateDelta, error) {
-	ctx, span := tracer.Start(ctx, "internal.Eval")
+	ctx, span := tracing.StartSpan(ctx, "internal.Eval")
 	defer span.End()
 
 	eval, err := StartEvaluator(l, blk.BlockHeader,
@@ -1515,7 +1516,7 @@ func Eval(ctx context.Context, l LedgerForEvaluator, blk bookkeeping.Block, vali
 	}()
 
 	// Next, transactions
-	_, dpgSpan := tracer.Start(ctx, "blk.DecodePaysetGroups")
+	_, dpgSpan := tracing.StartSpan(ctx, "blk.DecodePaysetGroups")
 	paysetgroups, err := blk.DecodePaysetGroups()
 	dpgSpan.End()
 	if err != nil {
@@ -1614,7 +1615,7 @@ transactionGroupLoop:
 	}
 
 	// Finally, process any pending end-of-block state changes.
-	_, eobSpan := tracer.Start(ctx, "eval.endOfBlock")
+	_, eobSpan := tracing.StartSpan(ctx, "eval.endOfBlock")
 	err = eval.endOfBlock()
 	eobSpan.End()
 	if err != nil {

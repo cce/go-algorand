@@ -25,6 +25,7 @@ import (
 	"github.com/algorand/go-algorand/logging"
 	"github.com/algorand/go-algorand/logging/logspec"
 	"github.com/algorand/go-algorand/protocol"
+	"github.com/algorand/go-algorand/util/tracing"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/trace"
 )
@@ -127,7 +128,7 @@ func (d *demux) tokenizeMessages(ctx context.Context, net Network, tag protocol.
 
 				var span trace.Span
 				if raw.TraceCtx != nil {
-					raw.TraceCtx, span = otTracer.Start(raw.TraceCtx, "agreement.tokenize")
+					raw.TraceCtx, span = tracing.StartSpan(raw.TraceCtx, "agreement.tokenize")
 				}
 
 				o, err := tokenize(raw.Data)

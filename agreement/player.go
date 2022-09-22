@@ -21,6 +21,7 @@ import (
 
 	"github.com/algorand/go-algorand/config"
 	"github.com/algorand/go-algorand/protocol"
+	"github.com/algorand/go-algorand/util/tracing"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 )
@@ -481,7 +482,7 @@ func (p *player) partitioned() bool {
 func (p *player) handleMessageEvent(r routerHandle, e messageEvent) (actions []action) {
 	if e.Input.traceCtx != nil {
 		var span trace.Span
-		e.Input.traceCtx, span = otTracer.Start(e.Input.traceCtx, "agreement.handleMessageEvent",
+		e.Input.traceCtx, span = tracing.StartSpan(e.Input.traceCtx, "agreement.handleMessageEvent",
 			trace.WithAttributes(attribute.String("eventType", e.t().String())))
 		defer span.End()
 	}

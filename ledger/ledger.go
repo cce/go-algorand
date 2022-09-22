@@ -41,6 +41,7 @@ import (
 	"github.com/algorand/go-algorand/util/db"
 	"github.com/algorand/go-algorand/util/execpool"
 	"github.com/algorand/go-algorand/util/metrics"
+	"github.com/algorand/go-algorand/util/tracing"
 )
 
 // Ledger is a database storing the contents of the ledger.
@@ -803,7 +804,7 @@ var tracer = otel.Tracer("algod-ledger")
 // not a valid block (e.g., it has duplicate transactions, overspends some
 // account, etc).
 func (l *Ledger) Validate(ctx context.Context, blk bookkeeping.Block, executionPool execpool.BacklogPool) (*ledgercore.ValidatedBlock, error) {
-	ctx, span := tracer.Start(ctx, "Ledger.Validate")
+	ctx, span := tracing.StartSpan(ctx, "Ledger.Validate")
 	defer span.End()
 
 	delta, err := internal.Eval(ctx, l, blk, true, l.verifiedTxnCache, executionPool)

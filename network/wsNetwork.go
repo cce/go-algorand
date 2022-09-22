@@ -52,6 +52,7 @@ import (
 	"github.com/algorand/go-algorand/tools/network/dnssec"
 	"github.com/algorand/go-algorand/util"
 	"github.com/algorand/go-algorand/util/metrics"
+	"github.com/algorand/go-algorand/util/tracing"
 )
 
 const incomingThreads = 20
@@ -1197,7 +1198,7 @@ func (wn *WebsocketNetwork) messageHandlerThread(peersConnectivityCheckCh <-chan
 			return
 		case msg := <-wn.readBuffer:
 			if msg.TraceCtx != nil {
-				ctx, span := tracer.Start(msg.TraceCtx, "network.messageHandlerThread")
+				ctx, span := tracing.StartSpan(msg.TraceCtx, "network.messageHandlerThread")
 				msg.TraceCtx = ctx
 				defer span.End()
 			}
@@ -1437,7 +1438,7 @@ func (wn *WebsocketNetwork) innerBroadcast(request broadcastRequest, prio bool, 
 	var traceCtx context.Context
 	if sc := trace.SpanContextFromContext(request.ctx); sc.IsValid() {
 		var span trace.Span
-		traceCtx, span = tracer.Start(request.ctx, "wsNetwork.innerBroadcast",
+		traceCtx, span = tracing.StartSpan(request.ctx, "wsNetwork.innerBroadcast",
 			trace.WithAttributes(attribute.String("tag", string(request.tags[0]))),
 			trace.WithAttributes(attribute.Int("len", len(request.data[0]))))
 		defer span.End()

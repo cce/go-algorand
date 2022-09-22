@@ -30,6 +30,7 @@ import (
 	"github.com/algorand/go-algorand/logging/telemetryspec"
 	"github.com/algorand/go-algorand/protocol"
 	"github.com/algorand/go-algorand/util/metrics"
+	"github.com/algorand/go-algorand/util/tracing"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 )
@@ -249,7 +250,7 @@ func (n asyncPseudonode) makeProposalsTask(ctx context.Context, r round, p perio
 		round:  r,
 		period: p,
 	}
-	_, span := otTracer.Start(ctx, "makeProposalsTask.populateParticipationKeys")
+	_, span := tracing.StartSpan(ctx, "makeProposalsTask.populateParticipationKeys")
 	defer span.End()
 	if !pt.populateParticipationKeys(r) {
 		close(pt.out)
@@ -270,7 +271,7 @@ func (n asyncPseudonode) makeVotesTask(ctx context.Context, r round, p period, s
 		prop:             prop,
 		persistStateDone: persistStateDone,
 	}
-	_, span := otTracer.Start(ctx, "makeVotesTask.populateParticipationKeys")
+	_, span := tracing.StartSpan(ctx, "makeVotesTask.populateParticipationKeys")
 	defer span.End()
 	if !pvt.populateParticipationKeys(r) {
 		close(pvt.out)
@@ -290,7 +291,7 @@ func (n asyncPseudonode) makePseudonodeVerifier(voteVerifier *AsyncVoteVerifier)
 
 // makeProposals creates a slice of block proposals for the given round and period.
 func (n asyncPseudonode) makeProposals(traceCtx context.Context, round basics.Round, period period, accounts []account.ParticipationRecordForRound) ([]proposal, []unauthenticatedVote) {
-	traceCtx, span := otTracer.Start(traceCtx, "asyncPseudonode.makeProposals",
+	traceCtx, span := tracing.StartSpan(traceCtx, "asyncPseudonode.makeProposals",
 		trace.WithAttributes(attribute.Int("numAccounts", len(accounts))),
 	)
 	defer span.End()
@@ -331,7 +332,7 @@ func (n asyncPseudonode) makeProposals(traceCtx context.Context, round basics.Ro
 // makeVotes creates a slice of votes for a given proposal value in a given
 // round, period, and step.
 func (n asyncPseudonode) makeVotes(traceCtx context.Context, round basics.Round, period period, step step, proposal proposalValue, participation []account.ParticipationRecordForRound) []unauthenticatedVote {
-	traceCtx, span := otTracer.Start(traceCtx, "asyncPseudonode.makeVotes",
+	traceCtx, span := tracing.StartSpan(traceCtx, "asyncPseudonode.makeVotes",
 		trace.WithAttributes(attribute.Int("numAccounts", len(participation))),
 	)
 	defer span.End()
@@ -390,7 +391,7 @@ func (t pseudonodeBaseTask) close() {
 func (t pseudonodeVotesTask) execute(verifier *AsyncVoteVerifier, quit chan struct{}) {
 	defer t.close()
 
-	traceCtx, span := otTracer.Start(t.context, "pseudonodeVotesTask.execute")
+	traceCtx, span := tracing.StartSpan(t.context, "pseudonodeVotesTask.execute")
 	defer span.End()
 
 	// check to see if task already expired.
@@ -509,7 +510,7 @@ verifiedVotesLoop:
 func (t pseudonodeProposalsTask) execute(verifier *AsyncVoteVerifier, quit chan struct{}) {
 	defer t.close()
 
-	traceCtx, span := otTracer.Start(t.context, "pseudonodeProposalsTask.execute")
+	traceCtx, span := tracing.StartSpan(t.context, "pseudonodeProposalsTask.execute")
 	defer span.End()
 
 	// check to see if task already expired.

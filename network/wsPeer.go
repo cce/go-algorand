@@ -38,6 +38,7 @@ import (
 	"github.com/algorand/go-algorand/data/basics"
 	"github.com/algorand/go-algorand/protocol"
 	"github.com/algorand/go-algorand/util/metrics"
+	"github.com/algorand/go-algorand/util/tracing"
 )
 
 const maxMessageLength = 6 * 1024 * 1024 // Currently the biggest message is VB vote bundles. TODO: per message type size limit?
@@ -429,7 +430,7 @@ func (wp *wsPeer) readLoop() {
 				return
 			}
 			// start span and add context to IncomingMessage
-			msg.TraceCtx, span = tracer.Start(contextFromTraceMetadata(context.Background(), traceMD), "wsPeer.readLoop")
+			msg.TraceCtx, span = tracing.StartSpan(contextFromTraceMetadata(context.Background(), traceMD), "wsPeer.readLoop")
 			defer span.End()
 		} else {
 			msg.Tag = Tag(string(tag[:]))

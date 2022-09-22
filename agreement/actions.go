@@ -23,6 +23,7 @@ import (
 	"github.com/algorand/go-algorand/logging/logspec"
 	"github.com/algorand/go-algorand/logging/telemetryspec"
 	"github.com/algorand/go-algorand/protocol"
+	"github.com/algorand/go-algorand/util/tracing"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 )
@@ -128,7 +129,7 @@ func (a networkAction) do(ctx context.Context, s *Service) {
 	var traceCtx context.Context
 	if a.traceCtx != nil {
 		var span trace.Span
-		traceCtx, span = otTracer.Start(a.traceCtx, "agreement.networkAction.do",
+		traceCtx, span = tracing.StartSpan(a.traceCtx, "agreement.networkAction.do",
 			trace.WithAttributes(attribute.String("actionType", a.T.String())),
 			trace.WithAttributes(attribute.String("tag", string(a.Tag))))
 		defer span.End()
@@ -352,7 +353,7 @@ func (a pseudonodeAction) do(ctx context.Context, s *Service) {
 	// loopback
 	case assemble:
 		// this starts a trace -- parent ctx has no trace context
-		ctx, span := otTracer.Start(ctx, "pseudonodeAction.assemble",
+		ctx, span := tracing.StartSpan(ctx, "pseudonodeAction.assemble",
 			trace.WithAttributes(attribute.Int64("round", int64(a.Round))),
 			trace.WithAttributes(attribute.Int64("period", int64(a.Period))),
 			trace.WithAttributes(attribute.Int64("step", int64(a.Step))),
@@ -402,7 +403,7 @@ func (a pseudonodeAction) do(ctx context.Context, s *Service) {
 		s.log.with(logEvent).Infof("attested to %v at (%v, %v, %v)", a.Proposal, a.Round, a.Period, a.Step)
 		// join pseudonode traceCtx with this func's ctx
 		ctx = trace.ContextWithSpanContext(ctx, trace.SpanContextFromContext(a.traceCtx))
-		ctx, span := otTracer.Start(ctx, "pseudonodeAction.attest",
+		ctx, span := tracing.StartSpan(ctx, "pseudonodeAction.attest",
 			trace.WithAttributes(attribute.Int64("round", int64(a.Round))),
 			trace.WithAttributes(attribute.Int64("period", int64(a.Period))),
 			trace.WithAttributes(attribute.Int64("step", int64(a.Step))),

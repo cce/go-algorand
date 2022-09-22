@@ -53,6 +53,7 @@ import (
 	"github.com/algorand/go-algorand/util/execpool"
 	"github.com/algorand/go-algorand/util/metrics"
 	"github.com/algorand/go-algorand/util/timers"
+	"github.com/algorand/go-algorand/util/tracing"
 	"github.com/algorand/go-deadlock"
 	"go.opentelemetry.io/otel"
 )
@@ -1244,7 +1245,7 @@ var tracer = otel.Tracer("algod-node")
 
 // AssembleBlock implements Ledger.AssembleBlock.
 func (node *AlgorandFullNode) AssembleBlock(ctx context.Context, round basics.Round) (agreement.ValidatedBlock, error) {
-	_, span := tracer.Start(ctx, "node.AssembleBlock")
+	_, span := tracing.StartSpan(ctx, "node.AssembleBlock")
 	defer span.End()
 
 	deadline := time.Now().Add(node.config.ProposalAssemblyTime)
