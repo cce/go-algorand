@@ -32,6 +32,9 @@ require (
 	github.com/sirupsen/logrus v1.8.1
 	github.com/spf13/cobra v0.0.3
 	github.com/stretchr/testify v1.7.1
+	go.opentelemetry.io/otel v1.10.0
+	go.opentelemetry.io/otel/sdk v1.10.0
+	go.opentelemetry.io/otel/trace v1.10.0
 	golang.org/x/crypto v0.0.0-20220321153916-2c7772ba3064
 	golang.org/x/sys v0.0.0-20220319134239-a9b59b0215f8
 	golang.org/x/text v0.3.7
@@ -68,8 +71,6 @@ require (
 	github.com/spf13/pflag v1.0.5 // indirect
 	github.com/valyala/bytebufferpool v1.0.0 // indirect
 	github.com/valyala/fasttemplate v1.2.1 // indirect
-	go.opentelemetry.io/otel v1.9.0 // indirect
-	go.opentelemetry.io/otel/trace v1.9.0 // indirect
 	golang.org/x/net v0.0.0-20211112202133-69e39bad7dc2 // indirect
 	golang.org/x/term v0.0.0-20201126162022-7de9c90e9dd1 // indirect
 	google.golang.org/appengine v1.6.7 // indirect

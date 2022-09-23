@@ -36,6 +36,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/algorand/go-deadlock"
 
@@ -254,6 +256,71 @@ func TestWebsocketNetworkBasic(t *testing.T) {
 
 	netA.Broadcast(context.Background(), protocol.TxnTag, []byte("foo"), false, nil)
 	netA.Broadcast(context.Background(), protocol.TxnTag, []byte("bar"), false, nil)
+
+	select {
+	case <-counterDone:
+	case <-time.After(2 * time.Second):
+		t.Errorf("timeout, count=%d, wanted 2", counter.count)
+	}
+}
+
+// Set up two nodes, test that a.Broadcast is received by B with tracing
+func TestWebsocketNetworkTracing(t *testing.T) {
+	partitiontest.PartitionTest(t)
+
+	netA := makeTestWebsocketNode(t)
+	netA.config.GossipFanout = 1
+	netA.Start()
+	defer netStop(t, netA, "A")
+	netB := makeTestWebsocketNode(t)
+	netB.config.GossipFanout = 1
+	addrA, postListen := netA.Address()
+	require.True(t, postListen)
+	t.Log(addrA)
+	netB.phonebook.ReplacePeerList([]string{addrA}, "default", PhoneBookEntryRelayRole)
+	netB.Start()
+	defer netStop(t, netB, "B")
+	counter := newMessageCounter(t, 2)
+	counterDone := counter.done
+	msgHandler := func(msg IncomingMessage) (out OutgoingMessage) {
+		assert.Equal(t, protocol.ProposalPayloadTag, msg.Tag)
+		sc := trace.SpanContextFromContext(msg.TraceCtx)
+		t.Logf("Received trace %s span %s", sc.TraceID(), sc.SpanID())
+		assert.True(t, sc.IsValid())
+		return counter.Handle(msg)
+	}
+	netB.RegisterHandlers([]TaggedMessageHandler{{Tag: protocol.ProposalPayloadTag, MessageHandler: HandlerFunc(msgHandler)}})
+
+	readyTimeout := time.NewTimer(2 * time.Second)
+	waitReady(t, netA, readyTimeout.C)
+	t.Log("a ready")
+	waitReady(t, netB, readyTimeout.C)
+	t.Log("b ready")
+
+	// testExporter, err := stdouttrace.New(
+	// 	stdouttrace.WithWriter(os.Stdout),
+	// 	stdouttrace.WithPrettyPrint(),
+	// )
+	//require.NoError(t, err)
+	tp := sdktrace.NewTracerProvider(
+		sdktrace.WithSampler(sdktrace.AlwaysSample()),
+		//sdktrace.WithBatcher(testExporter),
+	)
+	testTracer := tp.Tracer("testTracer")
+
+	ctx, span := testTracer.Start(context.Background(), "testSpan")
+	sc := trace.SpanContextFromContext(ctx)
+	t.Logf("Sending trace %s span %s", sc.TraceID(), sc.SpanID())
+	assert.True(t, sc.IsValid())
+	netA.Broadcast(ctx, protocol.ProposalPayloadTag, []byte("foo"), false, nil)
+	span.End()
+
+	ctx, span = testTracer.Start(context.Background(), "testSpan2")
+	sc = trace.SpanContextFromContext(ctx)
+	t.Logf("Sending trace %s span %s", sc.TraceID(), sc.SpanID())
+	assert.True(t, sc.IsValid())
+	netA.Broadcast(ctx, protocol.ProposalPayloadTag, []byte("bar"), false, nil)
+	span.End()
 
 	select {
 	case <-counterDone:
