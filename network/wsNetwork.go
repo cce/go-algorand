@@ -1442,7 +1442,6 @@ func (wn *WebsocketNetwork) innerBroadcast(request broadcastRequest, prio bool, 
 			trace.WithAttributes(attribute.String("tag", string(request.tags[0]))),
 			trace.WithAttributes(attribute.Int("len", len(request.data[0]))))
 		defer span.End()
-
 	}
 
 	broadcastQueueDuration := time.Now().Sub(request.enqueueTime)
@@ -1458,15 +1457,19 @@ func (wn *WebsocketNetwork) innerBroadcast(request broadcastRequest, prio bool, 
 	data := make([][]byte, len(request.data), len(request.data))
 	for i, d := range request.data {
 		tag, addTraceMD := protocol.WrapTracedTag(request.tags[i])
-		var traceMD traceMetadata
-		if addTraceMD {
-			traceMD = traceMetadataFromContext(traceCtx)
-		}
 		tbytes := []byte(tag)
-		mbytes := make([]byte, len(tbytes)+len(traceMD)+len(d))
-		copy(mbytes, tbytes)
-		copy(mbytes[len(tbytes):], traceMD[:])
-		copy(mbytes[len(tbytes)+len(traceMD):], d)
+		var mbytes []byte
+		if addTraceMD {
+			traceMD := traceMetadataFromContext(traceCtx)
+			mbytes = make([]byte, len(tbytes)+len(traceMD)+len(d))
+			copy(mbytes, tbytes)
+			copy(mbytes[len(tbytes):], traceMD[:])
+			copy(mbytes[len(tbytes)+len(traceMD):], d)
+		} else {
+			mbytes = make([]byte, len(tbytes)+len(d))
+			copy(mbytes, tbytes)
+			copy(mbytes[len(tbytes):], d)
+		}
 		data[i] = mbytes
 		if request.tags[i] != protocol.MsgDigestSkipTag && len(d) >= messageFilterSize {
 			digests[i] = crypto.Hash(mbytes)

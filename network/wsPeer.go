@@ -83,6 +83,9 @@ var defaultSendMessageTags = map[protocol.Tag]bool{
 	protocol.UniCatchupReqTag:   true,
 	protocol.UniEnsBlockReqTag:  true,
 	protocol.VoteBundleTag:      true,
+
+	protocol.TracedProposalPayloadTag: true,
+	protocol.TracedAgreementVoteTag:   true,
 }
 
 // interface allows substituting debug implementation for *websocket.Conn
@@ -422,8 +425,9 @@ func (wp *wsPeer) readLoop() {
 
 		// if this message is trace-enabled, read trace propagation information and make a span
 		var span trace.Span
-		if tag[0] == 't' {
-			msg.Tag = protocol.UnwrapTracedTag(Tag(string(tag[:])))
+		var traced bool
+		msg.Tag, traced = protocol.UnwrapTracedTag(Tag(string(tag[:])))
+		if traced {
 			var traceMD traceMetadata
 			if _, err := io.ReadFull(reader, traceMD[:]); err != nil {
 				wp.reportReadErr(err)
@@ -432,8 +436,6 @@ func (wp *wsPeer) readLoop() {
 			// start span and add context to IncomingMessage
 			msg.TraceCtx, span = tracing.StartSpan(contextFromTraceMetadata(context.Background(), traceMD), "wsPeer.readLoop")
 			defer span.End()
-		} else {
-			msg.Tag = Tag(string(tag[:]))
 		}
 
 		slurper.Reset()
@@ -442,7 +444,9 @@ func (wp *wsPeer) readLoop() {
 			wp.reportReadErr(err)
 			return
 		}
-		span.AddEvent("finished-read")
+		if span != nil {
+			span.AddEvent("finished-read")
+		}
 
 		msg.processing = wp.processed
 		msg.Received = time.Now().UnixNano()
@@ -518,7 +522,9 @@ func (wp *wsPeer) readLoop() {
 			return
 		}
 
-		span.AddEvent("enqueue-readBuffer")
+		if span != nil {
+			span.AddEvent("enqueue-readBuffer")
+		}
 		select {
 		case wp.net.readBuffer <- msg:
 		case <-wp.closing:

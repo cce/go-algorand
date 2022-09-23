@@ -47,15 +47,15 @@ const (
 )
 
 // UnwrapTracedTag returns the underlying tag behind a "trace-enabled" version of
-// the tag.
-func UnwrapTracedTag(tag Tag) Tag {
+// the tag, and true if a tag is traced. Otherwise it will return the tag and false.
+func UnwrapTracedTag(tag Tag) (Tag, bool) {
 	switch tag {
 	case TracedProposalPayloadTag:
-		return ProposalPayloadTag
+		return ProposalPayloadTag, true
 	case TracedAgreementVoteTag:
-		return AgreementVoteTag
+		return AgreementVoteTag, true
 	default:
-		return tag
+		return tag, false
 	}
 }
 
