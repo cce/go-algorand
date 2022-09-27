@@ -254,66 +254,6 @@ func BenchmarkUnmarshalequivocationVoteAuthenticator(b *testing.B) {
 	}
 }
 
-func TestMarshalUnmarshalproposal(t *testing.T) {
-	partitiontest.PartitionTest(t)
-	v := proposal{}
-	bts := v.MarshalMsg(nil)
-	left, err := v.UnmarshalMsg(bts)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(left) > 0 {
-		t.Errorf("%d bytes left over after UnmarshalMsg(): %q", len(left), left)
-	}
-
-	left, err = msgp.Skip(bts)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(left) > 0 {
-		t.Errorf("%d bytes left over after Skip(): %q", len(left), left)
-	}
-}
-
-func TestRandomizedEncodingproposal(t *testing.T) {
-	protocol.RunEncodingTest(t, &proposal{})
-}
-
-func BenchmarkMarshalMsgproposal(b *testing.B) {
-	v := proposal{}
-	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		v.MarshalMsg(nil)
-	}
-}
-
-func BenchmarkAppendMsgproposal(b *testing.B) {
-	v := proposal{}
-	bts := make([]byte, 0, v.Msgsize())
-	bts = v.MarshalMsg(bts[0:0])
-	b.SetBytes(int64(len(bts)))
-	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		bts = v.MarshalMsg(bts[0:0])
-	}
-}
-
-func BenchmarkUnmarshalproposal(b *testing.B) {
-	v := proposal{}
-	bts := v.MarshalMsg(nil)
-	b.ReportAllocs()
-	b.SetBytes(int64(len(bts)))
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		_, err := v.UnmarshalMsg(bts)
-		if err != nil {
-			b.Fatal(err)
-		}
-	}
-}
-
 func TestMarshalUnmarshalproposalValue(t *testing.T) {
 	partitiontest.PartitionTest(t)
 	v := proposalValue{}
@@ -674,6 +614,66 @@ func BenchmarkUnmarshaltransmittedPayload(b *testing.B) {
 	}
 }
 
+func TestMarshalUnmarshaltransmittedProposal(t *testing.T) {
+	partitiontest.PartitionTest(t)
+	v := transmittedProposal{}
+	bts := v.MarshalMsg(nil)
+	left, err := v.UnmarshalMsg(bts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(left) > 0 {
+		t.Errorf("%d bytes left over after UnmarshalMsg(): %q", len(left), left)
+	}
+
+	left, err = msgp.Skip(bts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(left) > 0 {
+		t.Errorf("%d bytes left over after Skip(): %q", len(left), left)
+	}
+}
+
+func TestRandomizedEncodingtransmittedProposal(t *testing.T) {
+	protocol.RunEncodingTest(t, &transmittedProposal{})
+}
+
+func BenchmarkMarshalMsgtransmittedProposal(b *testing.B) {
+	v := transmittedProposal{}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		v.MarshalMsg(nil)
+	}
+}
+
+func BenchmarkAppendMsgtransmittedProposal(b *testing.B) {
+	v := transmittedProposal{}
+	bts := make([]byte, 0, v.Msgsize())
+	bts = v.MarshalMsg(bts[0:0])
+	b.SetBytes(int64(len(bts)))
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		bts = v.MarshalMsg(bts[0:0])
+	}
+}
+
+func BenchmarkUnmarshaltransmittedProposal(b *testing.B) {
+	v := transmittedProposal{}
+	bts := v.MarshalMsg(nil)
+	b.ReportAllocs()
+	b.SetBytes(int64(len(bts)))
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, err := v.UnmarshalMsg(bts)
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
 func TestMarshalUnmarshalunauthenticatedBundle(t *testing.T) {
 	partitiontest.PartitionTest(t)
 	v := unauthenticatedBundle{}
@@ -782,66 +782,6 @@ func BenchmarkAppendMsgunauthenticatedEquivocationVote(b *testing.B) {
 
 func BenchmarkUnmarshalunauthenticatedEquivocationVote(b *testing.B) {
 	v := unauthenticatedEquivocationVote{}
-	bts := v.MarshalMsg(nil)
-	b.ReportAllocs()
-	b.SetBytes(int64(len(bts)))
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		_, err := v.UnmarshalMsg(bts)
-		if err != nil {
-			b.Fatal(err)
-		}
-	}
-}
-
-func TestMarshalUnmarshalunauthenticatedProposal(t *testing.T) {
-	partitiontest.PartitionTest(t)
-	v := unauthenticatedProposal{}
-	bts := v.MarshalMsg(nil)
-	left, err := v.UnmarshalMsg(bts)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(left) > 0 {
-		t.Errorf("%d bytes left over after UnmarshalMsg(): %q", len(left), left)
-	}
-
-	left, err = msgp.Skip(bts)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(left) > 0 {
-		t.Errorf("%d bytes left over after Skip(): %q", len(left), left)
-	}
-}
-
-func TestRandomizedEncodingunauthenticatedProposal(t *testing.T) {
-	protocol.RunEncodingTest(t, &unauthenticatedProposal{})
-}
-
-func BenchmarkMarshalMsgunauthenticatedProposal(b *testing.B) {
-	v := unauthenticatedProposal{}
-	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		v.MarshalMsg(nil)
-	}
-}
-
-func BenchmarkAppendMsgunauthenticatedProposal(b *testing.B) {
-	v := unauthenticatedProposal{}
-	bts := make([]byte, 0, v.Msgsize())
-	bts = v.MarshalMsg(bts[0:0])
-	b.SetBytes(int64(len(bts)))
-	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		bts = v.MarshalMsg(bts[0:0])
-	}
-}
-
-func BenchmarkUnmarshalunauthenticatedProposal(b *testing.B) {
-	v := unauthenticatedProposal{}
 	bts := v.MarshalMsg(nil)
 	b.ReportAllocs()
 	b.SetBytes(int64(len(bts)))

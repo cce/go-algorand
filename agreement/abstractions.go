@@ -50,6 +50,23 @@ type BlockValidator interface {
 	Validate(context.Context, bookkeeping.Block) (ValidatedBlock, error)
 }
 
+// An UnvalidatedBlock defines the method agreement uses when handling
+// blocks that have not yet been validated (that appear in proposals).
+type UnvalidatedBlock interface {
+	// Digest returns a cryptographic digest summarizing the Block.
+	// It is the hash of the block header.
+	Digest() crypto.Digest
+
+	// Round returns the Round for which the Block is relevant
+	Round() basics.Round
+
+	// Seed returns the Block's random seed.
+	Seed() committee.Seed
+
+	// UnvalidatedBlock returns the underlying block.
+	UnvalidatedBlock() bookkeeping.Block
+}
+
 // A ValidatedBlock represents an Block that has been successfully validated
 // and can now be recorded in the ledger.  This is an optimized version of
 // calling EnsureBlock() on the Ledger.
@@ -195,7 +212,7 @@ type LedgerWriter interface {
 	//
 	// EnsureBlock does not wait until the block is written to disk; use
 	// Wait() for that.
-	EnsureBlock(bookkeeping.Block, Certificate)
+	EnsureBlock(UnvalidatedBlock, Certificate)
 
 	// EnsureValidatedBlock is an optimized version of EnsureBlock that
 	// works on a ValidatedBlock, but otherwise has the same semantics

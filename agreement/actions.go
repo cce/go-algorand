@@ -151,8 +151,8 @@ func (a networkAction) do(ctx context.Context, s *Service) {
 	case protocol.ProposalPayloadTag:
 		msg := a.CompoundMessage
 		payload := transmittedPayload{
-			unauthenticatedProposal: msg.Proposal,
-			PriorVote:               msg.Vote,
+			transmittedProposal: msg.Proposal.transmittedProposal(),
+			PriorVote:           msg.Vote,
 		}
 		data = protocol.Encode(&payload)
 	}
@@ -217,7 +217,7 @@ func (a ensureAction) t() actionType {
 }
 
 func (a ensureAction) String() string {
-	return fmt.Sprintf("%s: %.5s: %v, %v, %.5s", a.t().String(), a.Payload.Digest().String(), a.Certificate.Round, a.Certificate.Period, a.Certificate.Proposal.BlockDigest.String())
+	return fmt.Sprintf("%s: %.5s: %v, %v, %.5s", a.t().String(), a.Payload.Block.Digest().String(), a.Certificate.Round, a.Certificate.Period, a.Certificate.Proposal.BlockDigest.String())
 }
 
 func (a ensureAction) do(ctx context.Context, s *Service) {

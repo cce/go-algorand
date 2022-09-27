@@ -46,12 +46,12 @@ type proposalValue struct {
 type transmittedPayload struct {
 	_struct struct{} `codec:",omitempty,omitemptyarray"`
 
-	unauthenticatedProposal
+	transmittedProposal
 	PriorVote unauthenticatedVote `codec:"pv"`
 }
 
-// A unauthenticatedProposal is an Block along with everything needed to validate it.
-type unauthenticatedProposal struct {
+// A transmittedProposal is the encoding of an unauthenticatedProposal.
+type transmittedProposal struct {
 	_struct struct{} `codec:",omitempty,omitemptyarray"`
 
 	bookkeeping.Block
@@ -59,15 +59,70 @@ type unauthenticatedProposal struct {
 
 	OriginalPeriod   period         `codec:"oper"`
 	OriginalProposer basics.Address `codec:"oprop"`
+
+	// If FullEncodingDigest is included, then this the first frame of the proposal,
+	// and more transactions will be provided in future frames. The "encdig" field
+	// is the hash of the entire encoded proposal, after all the transactions are
+	// added to the block's Payset.
+	FullEncodingDigest crypto.Digest `codec:"encdig"`
+}
+
+// A unauthenticatedProposal is an Block along with everything needed to validate it.
+type unauthenticatedProposal struct {
+	Block     UnvalidatedBlock
+	SeedProof crypto.VrfProof
+
+	OriginalPeriod   period
+	OriginalProposer basics.Address
+	EncodingDigest   crypto.Digest
 }
 
 // TransmittedPayload exported for dumping textual versions of messages
 type TransmittedPayload = transmittedPayload
 
 // ToBeHashed implements the Hashable interface.
-func (p unauthenticatedProposal) ToBeHashed() (protocol.HashID, []byte) {
+func (p transmittedProposal) ToBeHashed() (protocol.HashID, []byte) {
 	return protocol.Payload, protocol.Encode(&p)
 }
+
+// ToBeHashed implements the Hashable interface.
+func (p transmittedProposal) EncodingDigest() crypto.Digest {
+	// if this is the first frame of the message, provide the first digest.
+	if p.FullEncodingDigest != (crypto.Digest{}) {
+		return p.FullEncodingDigest
+	}
+	// this is the full proposal; return its hash.
+	return crypto.HashObj(p)
+}
+
+type unvalidatedBlock struct {
+	Block *bookkeeping.Block
+}
+
+func (ub unvalidatedBlock) UnvalidatedBlock() bookkeeping.Block { return *ub.Block }
+func (ub unvalidatedBlock) Seed() committee.Seed                { return ub.Block.Seed() }
+func (ub unvalidatedBlock) Round() basics.Round                 { return ub.Block.Round() }
+func (ub unvalidatedBlock) Digest() crypto.Digest               { return ub.Block.Digest() }
+
+func (p transmittedProposal) unauthenticatedProposal() unauthenticatedProposal {
+	return unauthenticatedProposal{
+		Block:            unvalidatedBlock{Block: &p.Block},
+		SeedProof:        p.SeedProof,
+		OriginalPeriod:   p.OriginalPeriod,
+		OriginalProposer: p.OriginalProposer,
+		EncodingDigest:   p.EncodingDigest(),
+	}
+}
+
+func (p unauthenticatedProposal) transmittedProposal() transmittedProposal {
+	return transmittedProposal{
+		Block: p.Block.UnvalidatedBlock(),
+	}
+}
+
+func (p unauthenticatedProposal) Digest() crypto.Digest { return p.Block.Digest() }
+func (p unauthenticatedProposal) Round() basics.Round   { return p.Block.Round() }
+func (p unauthenticatedProposal) Seed() committee.Seed  { return p.Block.Seed() }
 
 // value returns the proposal-value associated with this proposal.
 func (p unauthenticatedProposal) value() proposalValue {
@@ -75,7 +130,7 @@ func (p unauthenticatedProposal) value() proposalValue {
 		OriginalPeriod:   p.OriginalPeriod,
 		OriginalProposer: p.OriginalProposer,
 		BlockDigest:      p.Digest(),
-		EncodingDigest:   crypto.HashObj(p),
+		EncodingDigest:   p.EncodingDigest,
 	}
 }
 
@@ -104,7 +159,7 @@ type proposal struct {
 func makeProposal(ve ValidatedBlock, pf crypto.VrfProof, origPer period, origProp basics.Address) proposal {
 	e := ve.Block()
 	var payload unauthenticatedProposal
-	payload.Block = e
+	payload.Block = unvalidatedBlock{Block: &e}
 	payload.SeedProof = pf
 	payload.OriginalPeriod = origPer
 	payload.OriginalProposer = origProp
@@ -257,7 +312,7 @@ func proposalForBlock(address basics.Address, vrf *crypto.VRFSecrets, ve Validat
 		OriginalPeriod:   period,
 		OriginalProposer: address,
 		BlockDigest:      proposal.Block.Digest(),
-		EncodingDigest:   crypto.HashObj(proposal),
+		EncodingDigest:   crypto.HashObj(proposal.transmittedProposal()),
 	}
 	return proposal, value, nil
 }
@@ -277,7 +332,7 @@ func (p unauthenticatedProposal) validate(ctx context.Context, current round, le
 		return invalid, fmt.Errorf("proposal has bad seed: %v", err)
 	}
 
-	ve, err := validator.Validate(ctx, entry)
+	ve, err := validator.Validate(ctx, entry.UnvalidatedBlock())
 	if err != nil {
 		return invalid, fmt.Errorf("EntryValidator rejected entry: %v", err)
 	}

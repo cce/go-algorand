@@ -90,6 +90,6 @@ func decodeProposal(data []byte) (interface{}, error) {
 
 	return compoundMessage{
 		Vote:     p.PriorVote,
-		Proposal: p.unauthenticatedProposal,
+		Proposal: p.transmittedProposal.unauthenticatedProposal(),
 	}, nil
 }
