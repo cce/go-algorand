@@ -833,7 +833,7 @@ func (c *onlineAccountDelta) append(acctDelta ledgercore.AccountData, deltaRound
 // makeCompactAccountDeltas takes an array of account AccountDeltas ( one array entry per round ), and compacts the arrays into a single
 // data structure that contains all the account deltas changes. While doing that, the function eliminate any intermediate account changes.
 // It counts the number of changes each account get modified across the round range by specifying it in the nAcctDeltas field of the accountDeltaCount/modifiedCreatable.
-func makeCompactOnlineAccountDeltas(accountDeltas []ledgercore.AccountDeltas, baseRound basics.Round, baseOnlineAccounts lruOnlineAccounts) (outAccountDeltas compactOnlineAccountDeltas) {
+func makeCompactOnlineAccountDeltas(accountDeltas []ledgercore.AccountDeltas, baseRound basics.Round) (outAccountDeltas compactOnlineAccountDeltas) {
 	if len(accountDeltas) == 0 {
 		return
 	}
@@ -861,14 +861,7 @@ func makeCompactOnlineAccountDeltas(accountDeltas []ledgercore.AccountDeltas, ba
 					address:           addr,
 				}
 				newEntry.append(acctDelta, deltaRound)
-				// the cache always has the most recent data,
-				// including deleted/expired online accounts with empty voting data
-				if baseOnlineAccountData, has := baseOnlineAccounts.read(addr); has {
-					newEntry.oldAcct = baseOnlineAccountData
-					outAccountDeltas.insert(newEntry)
-				} else {
-					outAccountDeltas.insertMissing(newEntry)
-				}
+				outAccountDeltas.insertMissing(newEntry)
 			}
 		}
 	}
@@ -4756,12 +4749,6 @@ func (pac *persistedAccountData) before(other *persistedAccountData) bool {
 // happened before the other.
 func (prd *persistedResourcesData) before(other *persistedResourcesData) bool {
 	return prd.round < other.round
-}
-
-// before compares the round numbers of two persistedAccountData and determines if the current persistedAccountData
-// happened before the other.
-func (pac *persistedOnlineAccountData) before(other *persistedOnlineAccountData) bool {
-	return pac.round < other.round
 }
 
 // txTailRoundLease is used as part of txTailRound for storing

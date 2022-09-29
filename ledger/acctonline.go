@@ -101,9 +101,6 @@ type onlineAccounts struct {
 	// voters keeps track of Merkle trees of online accounts, used for compact certificates.
 	voters votersTracker
 
-	// baseAccounts stores the most recently used accounts, at exactly dbRound
-	baseOnlineAccounts lruOnlineAccounts
-
 	// onlineAccountsCache contains up to onlineAccountsCacheMaxSize accounts with their complete history
 	// for the range [Lastest - MaxBalLookback - X, Latest - lookback], where X = [0, commit range]
 	// and alway containing an entry for Lastest - MaxBalLookback + 1 if some account is cached.
@@ -181,7 +178,6 @@ func (ao *onlineAccounts) initializeFromDisk(l ledgerForTracker, lastBalancesRou
 	ao.accounts = make(map[basics.Address]modifiedOnlineAccount)
 	ao.deltasAccum = []int{0}
 
-	ao.baseOnlineAccounts.init(ao.log, baseAccountsPendingAccountsBufferSize, baseAccountsPendingAccountsWarnThreshold)
 	return
 }
 
@@ -198,8 +194,6 @@ func (ao *onlineAccounts) close() {
 	}
 
 	ao.voters.close()
-
-	ao.baseOnlineAccounts.prune(0)
 }
 
 // newBlock is the accountUpdates implementation of the ledgerTracker interface. This is the "external" facing function
@@ -227,8 +221,6 @@ func (ao *onlineAccounts) newBlockImpl(blk bookkeeping.Block, delta ledgercore.S
 	ao.deltas = append(ao.deltas, delta.Accts)
 	ao.deltasAccum = append(ao.deltasAccum, delta.Accts.Len()+ao.deltasAccum[len(ao.deltasAccum)-1])
 
-	ao.baseOnlineAccounts.flushPendingWrites()
-
 	for i := 0; i < delta.Accts.Len(); i++ {
 		addr, data := delta.Accts.GetByIdx(i)
 		macct := ao.accounts[addr]
@@ -243,12 +235,7 @@ func (ao *onlineAccounts) newBlockImpl(blk bookkeeping.Block, delta ledgercore.S
 		CurrentProtocol: blk.CurrentProtocol,
 	})
 
-	// calling prune would drop old entries from the base accounts.
-	newBaseAccountSize := (len(ao.accounts) + 1) + baseAccountsPendingAccountsBufferSize
-	ao.baseOnlineAccounts.prune(newBaseAccountSize)
-
 	ao.voters.newBlock(blk.BlockHeader)
-
 }
 
 // committedUpTo implements the ledgerTracker interface for accountUpdates.
@@ -371,7 +358,7 @@ func (ao *onlineAccounts) prepareCommit(dcc *deferredCommitContext) error {
 
 	// compact all the deltas - when we're trying to persist multiple rounds, we might have the same account
 	// being updated multiple times. When that happen, we can safely omit the intermediate updates.
-	dcc.compactOnlineAccountDeltas = makeCompactOnlineAccountDeltas(deltas, dcc.oldBase, ao.baseOnlineAccounts)
+	dcc.compactOnlineAccountDeltas = makeCompactOnlineAccountDeltas(deltas, dcc.oldBase)
 
 	dcc.genesisProto = ao.ledger.GenesisProto()
 
@@ -461,7 +448,6 @@ func (ao *onlineAccounts) postCommit(ctx context.Context, dcc *deferredCommitCon
 	}
 
 	for _, persistedAcct := range dcc.updatedPersistedOnlineAccounts {
-		ao.baseOnlineAccounts.write(persistedAcct)
 		ao.onlineAccountsCache.writeFrontIfExist(
 			persistedAcct.addr,
 			cachedOnlineAccount{

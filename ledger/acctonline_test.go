@@ -226,11 +226,6 @@ func TestAcctOnline(t *testing.T) {
 			require.Equal(t, oa.cachedDBRoundOnline, data.round)
 			require.Empty(t, data.accountData)
 
-			data, has := oa.baseOnlineAccounts.read(bal.Addr)
-			require.True(t, has)
-			require.NotEmpty(t, data.rowid)
-			require.Empty(t, data.accountData)
-
 			oad, err := oa.lookupOnlineAccountData(rnd, bal.Addr)
 			require.NoError(t, err)
 			require.Empty(t, oad)
@@ -259,11 +254,6 @@ func TestAcctOnline(t *testing.T) {
 			require.Equal(t, oa.cachedDBRoundOnline, data.round)
 			require.Empty(t, data.accountData)
 
-			data, has := oa.baseOnlineAccounts.read(bal.Addr)
-			require.True(t, has)
-			require.NotEmpty(t, data.rowid) // TODO: FIXME: set rowid to empty for these items
-			require.Empty(t, data.accountData)
-
 			// committed round i => dbRound = i - maxDeltaLookback (= 13 for the account 0)
 			// dbRound - maxBalLookback (= 1) is the "set offline" round for account 0
 			// lookup should correctly return empty data round dbRound - maxBalLookback + 1 (simulate the latest +1)
@@ -284,12 +274,6 @@ func TestAcctOnline(t *testing.T) {
 				require.Equal(t, oa.cachedDBRoundOnline, data.round)
 				require.NotEmpty(t, data.accountData)
 
-				// the most recent value is empty because the account is scheduled for removal
-				data, has := oa.baseOnlineAccounts.read(bal.Addr)
-				require.True(t, has)
-				require.NotEmpty(t, data.rowid) // TODO: FIXME: set rowid to empty for these items
-				require.Empty(t, data.accountData)
-
 				// account 1 went offline at round 2 => it offline at requested round 1+1=2
 				oad, err := oa.lookupOnlineAccountData(rnd+1, bal.Addr)
 				require.NoError(t, err)
@@ -307,12 +291,6 @@ func TestAcctOnline(t *testing.T) {
 				require.NotEmpty(t, data.rowid)
 				require.Equal(t, oa.cachedDBRoundOnline, data.round)
 				require.NotEmpty(t, data.accountData)
-
-				// the most recent value is empty because the account is scheduled for removal
-				data, has := oa.baseOnlineAccounts.read(bal.Addr)
-				require.True(t, has)
-				require.NotEmpty(t, data.rowid) // TODO: FIXME: set rowid to empty for these items
-				require.Empty(t, data.accountData)
 
 				// account 2 went offline at round 3 => it online at requested round 1+1=2
 				oad, err := oa.lookupOnlineAccountData(rnd+1, bal.Addr)
@@ -336,11 +314,6 @@ func TestAcctOnline(t *testing.T) {
 		require.Equal(t, bal.Addr, data.addr)
 		require.NotEmpty(t, data.rowid)
 		require.Equal(t, oa.cachedDBRoundOnline, data.round)
-		require.Empty(t, data.accountData)
-
-		data, has := oa.baseOnlineAccounts.read(bal.Addr)
-		require.True(t, has)
-		require.NotEmpty(t, data.rowid)
 		require.Empty(t, data.accountData)
 
 		oad, err := oa.lookupOnlineAccountData(basics.Round(i+1), bal.Addr)
@@ -370,11 +343,6 @@ func TestAcctOnline(t *testing.T) {
 		require.NotEmpty(t, data.rowid)
 		require.Equal(t, oa.cachedDBRoundOnline, data.round)
 		require.NotEmpty(t, data.accountData)
-
-		// the base cache also does not have such entires
-		data, has := oa.baseOnlineAccounts.read(bal.Addr)
-		require.False(t, has)
-		require.Empty(t, data)
 	}
 
 	// not take some account and modify its stake.
