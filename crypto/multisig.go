@@ -219,7 +219,7 @@ func MultisigAssemble(unisig []MultisigSig) (msig MultisigSig, err error) {
 func MultisigVerify(msg Hashable, addr Digest, sig MultisigSig) (err error) {
 	batchVerifier := MakeBatchVerifier()
 
-	if err = MultisigBatchPrep(msg, addr, sig, batchVerifier); err != nil {
+	if err = MultisigBatchPrep(BatchSignatureID(0), msg, addr, sig, batchVerifier); err != nil {
 		return
 	}
 	err = batchVerifier.Verify()
@@ -228,7 +228,7 @@ func MultisigVerify(msg Hashable, addr Digest, sig MultisigSig) (err error) {
 
 // MultisigBatchPrep performs checks on the assembled MultisigSig and adds to the batch.
 // The caller must call batchVerifier.verify() to verify it.
-func MultisigBatchPrep(msg Hashable, addr Digest, sig MultisigSig, batchVerifier *BatchVerifier) (err error) {
+func MultisigBatchPrep(sigID BatchSignatureID, msg Hashable, addr Digest, sig MultisigSig, batchVerifier *BatchVerifier) (err error) {
 	// short circuit: if msig doesn't have subsigs or if Subsigs are empty
 	// then terminate (the upper layer should now verify the unisig)
 	if (len(sig.Subsigs) == 0 || sig.Subsigs[0] == MultisigSubsig{}) {
@@ -269,7 +269,7 @@ func MultisigBatchPrep(msg Hashable, addr Digest, sig MultisigSig, batchVerifier
 	var sigCount int
 	for _, subsigi := range sig.Subsigs {
 		if (subsigi.Sig != Signature{}) {
-			batchVerifier.EnqueueSignature(subsigi.Key, msg, subsigi.Sig)
+			batchVerifier.EnqueueSignatureWithID(sigID, subsigi.Key, msg, subsigi.Sig)
 			sigCount++
 		}
 	}

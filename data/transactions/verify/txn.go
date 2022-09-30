@@ -102,7 +102,7 @@ func (g *GroupContext) Equal(other *GroupContext) bool {
 // txnBatchPrep verifies a SignedTxn having no obviously inconsistent data.
 // Block-assembly time checks of LogicSig and accounting rules may still block the txn.
 // it is the caller responsibility to call batchVerifier.Verify()
-func txnBatchPrep(s *transactions.SignedTxn, txnIdx int, groupCtx *GroupContext, verifier *crypto.BatchVerifier) error {
+func txnBatchPrep(sigID crypto.BatchSignatureID, s *transactions.SignedTxn, txnIdx int, groupCtx *GroupContext, verifier *crypto.BatchVerifier) error {
 	if !groupCtx.consensusParams.SupportRekeying && (s.AuthAddr != basics.Address{}) {
 		return errors.New("nonempty AuthAddr but rekeying is not supported")
 	}
@@ -111,14 +111,14 @@ func txnBatchPrep(s *transactions.SignedTxn, txnIdx int, groupCtx *GroupContext,
 		return err
 	}
 
-	return stxnCoreChecks(s, txnIdx, groupCtx, verifier)
+	return stxnCoreChecks(sigID, s, txnIdx, groupCtx, verifier)
 }
 
 // TxnGroup verifies a []SignedTxn as being signed and having no obviously inconsistent data.
 func TxnGroup(stxs []transactions.SignedTxn, contextHdr bookkeeping.BlockHeader, cache VerifiedTransactionCache, ledger logic.LedgerForSignature) (groupCtx *GroupContext, err error) {
 	batchVerifier := crypto.MakeBatchVerifier()
 
-	if groupCtx, err = txnGroupBatchPrep(stxs, contextHdr, ledger, batchVerifier); err != nil {
+	if groupCtx, err = txnGroupBatchPrep(crypto.BatchSignatureID(0), stxs, contextHdr, ledger, batchVerifier); err != nil {
 		return nil, err
 	}
 
@@ -133,9 +133,50 @@ func TxnGroup(stxs []transactions.SignedTxn, contextHdr bookkeeping.BlockHeader,
 	return
 }
 
+// TxnGroups verifies the provided list of txgroups and returns nil, nil on success.
+// On failure, it returns a non-nil error and a slice of indexes into the txgroups slice
+// of the transactions that failed.
+func TxnGroups(txgroups [][]transactions.SignedTxn, contextHdr bookkeeping.BlockHeader, cache VerifiedTransactionCache, ledger logic.LedgerForSignature) (failedTxGroupIndexes []int, err error) {
+	var totalSigs int
+	for i := range txgroups {
+		totalSigs += txnGroupSignatureHint(txgroups[i])
+	}
+	batchVerifier := crypto.MakeBatchVerifierWithHint(totalSigs)
+	for i := range txgroups {
+		_, txgErr := txnGroupBatchPrep(crypto.BatchSignatureID(i), txgroups[i], contextHdr, ledger, batchVerifier)
+		if txgErr != nil {
+			// this transaction failed. Record that it failed and dequeue it from the BatchVerifier
+			failedTxGroupIndexes = append(failedTxGroupIndexes, i)
+			// it is OK to ignore an error that this BatchSigID never was used to enqueue signatures
+			_ = batchVerifier.DequeueSignature(crypto.BatchSignatureID(i))
+		}
+	}
+
+	if failed, err := batchVerifier.VerifyWithIDs(); err != nil {
+		// batch verification failed. Add the failed txn group indexes to the returned list
+		for _, sigID := range failed {
+			failedTxGroupIndexes = append(failedTxGroupIndexes, int(sigID))
+		}
+		return failedTxGroupIndexes, err
+	}
+
+	return nil, nil
+}
+
+func txnGroupSignatureHint(stxs []transactions.SignedTxn) (count int) {
+	for i := range stxs {
+		if stxs[i].Sig != (crypto.Signature{}) {
+			count++
+		} else if !stxs[i].Msig.Blank() {
+			count += len(stxs[i].Msig.Subsigs)
+		}
+	}
+	return
+}
+
 // txnGroupBatchPrep verifies a []SignedTxn having no obviously inconsistent data.
 // it is the caller responsibility to call batchVerifier.Verify()
-func txnGroupBatchPrep(stxs []transactions.SignedTxn, contextHdr bookkeeping.BlockHeader, ledger logic.LedgerForSignature, verifier *crypto.BatchVerifier) (groupCtx *GroupContext, err error) {
+func txnGroupBatchPrep(sigID crypto.BatchSignatureID, stxs []transactions.SignedTxn, contextHdr bookkeeping.BlockHeader, ledger logic.LedgerForSignature, verifier *crypto.BatchVerifier) (groupCtx *GroupContext, err error) {
 	groupCtx, err = PrepareGroupContext(stxs, contextHdr, ledger)
 	if err != nil {
 		return nil, err
@@ -144,7 +185,7 @@ func txnGroupBatchPrep(stxs []transactions.SignedTxn, contextHdr bookkeeping.Blo
 	minFeeCount := uint64(0)
 	feesPaid := uint64(0)
 	for i, stxn := range stxs {
-		err = txnBatchPrep(&stxn, i, groupCtx, verifier)
+		err = txnBatchPrep(sigID, &stxn, i, groupCtx, verifier)
 		if err != nil {
 			err = fmt.Errorf("transaction %+v invalid : %w", stxn, err)
 			return
@@ -171,7 +212,7 @@ func txnGroupBatchPrep(stxs []transactions.SignedTxn, contextHdr bookkeeping.Blo
 	return
 }
 
-func stxnCoreChecks(s *transactions.SignedTxn, txnIdx int, groupCtx *GroupContext, batchVerifier *crypto.BatchVerifier) error {
+func stxnCoreChecks(sigID crypto.BatchSignatureID, s *transactions.SignedTxn, txnIdx int, groupCtx *GroupContext, batchVerifier *crypto.BatchVerifier) error {
 	numSigs := 0
 	hasSig := false
 	hasMsig := false
@@ -204,11 +245,11 @@ func stxnCoreChecks(s *transactions.SignedTxn, txnIdx int, groupCtx *GroupContex
 	}
 
 	if hasSig {
-		batchVerifier.EnqueueSignature(crypto.SignatureVerifier(s.Authorizer()), s.Txn, s.Sig)
+		batchVerifier.EnqueueSignatureWithID(sigID, crypto.SignatureVerifier(s.Authorizer()), s.Txn, s.Sig)
 		return nil
 	}
 	if hasMsig {
-		if err := crypto.MultisigBatchPrep(s.Txn, crypto.Digest(s.Authorizer()), s.Msig, batchVerifier); err != nil {
+		if err := crypto.MultisigBatchPrep(sigID, s.Txn, crypto.Digest(s.Authorizer()), s.Msig, batchVerifier); err != nil {
 			return fmt.Errorf("multisig validation failed: %w", err)
 		}
 		return nil
@@ -295,7 +336,7 @@ func logicSigSanityCheckBatchPrep(txn *transactions.SignedTxn, groupIndex int, g
 		batchVerifier.EnqueueSignature(crypto.PublicKey(txn.Authorizer()), &program, lsig.Sig)
 	} else {
 		program := logic.Program(lsig.Logic)
-		if err := crypto.MultisigBatchPrep(&program, crypto.Digest(txn.Authorizer()), lsig.Msig, batchVerifier); err != nil {
+		if err := crypto.MultisigBatchPrep(crypto.BatchSignatureID(0), &program, crypto.Digest(txn.Authorizer()), lsig.Msig, batchVerifier); err != nil {
 			return fmt.Errorf("logic multisig validation failed: %w", err)
 		}
 	}
@@ -375,7 +416,7 @@ func PaysetGroups(ctx context.Context, payset [][]transactions.SignedTxn, blkHea
 
 					batchVerifier := crypto.MakeBatchVerifierWithHint(len(payset))
 					for i, signTxnsGrp := range txnGroups {
-						groupCtxs[i], grpErr = txnGroupBatchPrep(signTxnsGrp, blkHeader, ledger, batchVerifier)
+						groupCtxs[i], grpErr = txnGroupBatchPrep(crypto.BatchSignatureID(0), signTxnsGrp, blkHeader, ledger, batchVerifier)
 						// abort only if it's a non-cache error.
 						if grpErr != nil {
 							return grpErr

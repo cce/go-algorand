@@ -141,7 +141,7 @@ func TestMultisig(t *testing.T) {
 
 	//test3: use the batch verification
 	br := MakeBatchVerifier()
-	err = MultisigBatchPrep(txid, addr, msig, br)
+	err = MultisigBatchPrep(BatchSignatureID(0), txid, addr, msig, br)
 	require.NoError(t, err, "Multisig: unexpected verification failure with err")
 	res := br.Verify()
 	require.NoError(t, res, "Multisig: batch verification failed")
@@ -252,7 +252,7 @@ func TestEmptyMultisig(t *testing.T) {
 	err = MultisigVerify(txid, addr, emptyMutliSig)
 	require.Error(t, err, "Multisig: did not return error as expected")
 	br := MakeBatchVerifier()
-	err = MultisigBatchPrep(txid, addr, emptyMutliSig, br)
+	err = MultisigBatchPrep(BatchSignatureID(0), txid, addr, emptyMutliSig, br)
 	require.Error(t, err, "Multisig: did not return error as expected")
 }
 
@@ -278,7 +278,7 @@ func TestIncorrectAddrresInMultisig(t *testing.T) {
 	err = MultisigVerify(txid, addr, MutliSig)
 	require.Error(t, err, "Multisig: did not return error as expected")
 	br := MakeBatchVerifier()
-	err = MultisigBatchPrep(txid, addr, MutliSig, br)
+	err = MultisigBatchPrep(BatchSignatureID(0), txid, addr, MutliSig, br)
 	require.Error(t, err, "Multisig: did not return error as expected")
 
 }
@@ -315,7 +315,7 @@ func TestMoreThanMaxSigsInMultisig(t *testing.T) {
 	err = MultisigVerify(txid, addr, msig)
 	require.Error(t, err, "Multisig: did not return error as expected")
 	br := MakeBatchVerifier()
-	err = MultisigBatchPrep(txid, addr, msig, br)
+	err = MultisigBatchPrep(BatchSignatureID(0), txid, addr, msig, br)
 	require.Error(t, err, "Multisig: did not return error as expected")
 }
 
@@ -352,7 +352,7 @@ func TestOneSignatureIsEmpty(t *testing.T) {
 	err = MultisigVerify(txid, addr, msig)
 	require.Error(t, err, "Multisig: did not return error as expected")
 	br := MakeBatchVerifier()
-	err = MultisigBatchPrep(txid, addr, msig, br)
+	err = MultisigBatchPrep(BatchSignatureID(0), txid, addr, msig, br)
 	require.Error(t, err, "Multisig: did not return error as expected")
 }
 
@@ -391,7 +391,7 @@ func TestOneSignatureIsInvalid(t *testing.T) {
 	err = MultisigVerify(txid, addr, msig)
 	require.Error(t, err, "Multisig: did not return error as expected")
 	br := MakeBatchVerifier()
-	err = MultisigBatchPrep(txid, addr, msig, br)
+	err = MultisigBatchPrep(BatchSignatureID(0), txid, addr, msig, br)
 	require.NoError(t, err, "Multisig: did not return error as expected")
 	res := br.Verify()
 	require.Error(t, res, "Multisig: batch verification passed on broken signature")
