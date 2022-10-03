@@ -33,10 +33,12 @@ import (
 
 // diskState represents the state required by the agreement protocol to be persistent.
 type diskState struct {
+	_struct struct{} `codec:",omitempty,omitemptyarray"`
+
 	Router, Player, Clock []byte
 
-	ActionTypes []actionType
-	Actions     [][]byte
+	ActionTypes []actionType `codec:",allocbound=-"`
+	Actions     [][]byte     `codec:",allocbound=-"`
 }
 
 func persistent(as []action) bool {
@@ -177,14 +179,18 @@ func restore(log logging.Logger, crash db.Accessor) (raw []byte, err error) {
 // decode process the incoming raw bytes array and attempt to reconstruct the agreement state objects.
 //
 // In all decoding errors, it returns the error code in err
-func decode(raw []byte, t0 timers.Clock, log serviceLogger) (t timers.Clock, rr rootRouter, p player, a []action, err error) {
+func decode(raw []byte, t0 timers.Clock, log serviceLogger, reflect bool) (t timers.Clock, rr rootRouter, p player, a []action, err error) {
 	var t2 timers.Clock
 	var rr2 rootRouter
 	var p2 player
 	a2 := []action{}
 	var s diskState
 
-	err = protocol.DecodeReflect(raw, &s)
+	if reflect {
+		err = protocol.DecodeReflect(raw, &s)
+	} else {
+		err = protocol.Decode(raw, &s)
+	}
 	if err != nil {
 		log.Errorf("decode (agreement): error decoding retrieved state (len = %v): %v", len(raw), err)
 		return
@@ -195,7 +201,11 @@ func decode(raw []byte, t0 timers.Clock, log serviceLogger) (t timers.Clock, rr 
 		return
 	}
 
-	err = protocol.DecodeReflect(s.Player, &p2)
+	if reflect {
+		err = protocol.DecodeReflect(s.Player, &p2)
+	} else {
+		err = protocol.Decode(s.Player, &p2)
+	}
 	if err != nil {
 		return
 	}
@@ -208,7 +218,11 @@ func decode(raw []byte, t0 timers.Clock, log serviceLogger) (t timers.Clock, rr 
 
 	for i := range s.Actions {
 		act := zeroAction(s.ActionTypes[i])
-		err = protocol.DecodeReflect(s.Actions[i], &act)
+		if reflect {
+			err = protocol.DecodeReflect(s.Actions[i], &act)
+		} else {
+			err = protocol.Decode(s.Actions[i], &act)
+		}
 		if err != nil {
 			return
 		}
