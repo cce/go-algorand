@@ -100,9 +100,9 @@ func (ed EvalDelta) Equal(o EvalDelta) bool {
 // tedious) field comparisons. == is not defined on almost any of the
 // subfields because of slices.
 func (stx SignedTxn) equal(o SignedTxn) bool {
-	stxenc := stx.MarshalMsg(protocol.GetEncodingBuf())
-	defer protocol.PutEncodingBuf(stxenc)
-	oenc := o.MarshalMsg(protocol.GetEncodingBuf())
-	defer protocol.PutEncodingBuf(oenc)
+	stxenc := stx.MarshalMsg(*protocol.GetEncodingBuf())
+	defer protocol.PutEncodingBuf(&stxenc)
+	oenc := o.MarshalMsg(*protocol.GetEncodingBuf())
+	defer protocol.PutEncodingBuf(&oenc)
 	return bytes.Equal(stxenc, oenc)
 }

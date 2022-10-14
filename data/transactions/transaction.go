@@ -178,28 +178,28 @@ func (tx Transaction) ToBeHashed() (protocol.HashID, []byte) {
 
 // ID returns the Txid (i.e., hash) of the transaction.
 func (tx Transaction) ID() Txid {
-	enc := tx.MarshalMsg(append(protocol.GetEncodingBuf(), []byte(protocol.Transaction)...))
-	defer protocol.PutEncodingBuf(enc)
+	enc := tx.MarshalMsg(append(*protocol.GetEncodingBuf(), []byte(protocol.Transaction)...))
+	defer protocol.PutEncodingBuf(&enc)
 	return Txid(crypto.Hash(enc))
 }
 
 // IDSha256 returns the digest (i.e., hash) of the transaction.
 func (tx Transaction) IDSha256() crypto.Digest {
-	enc := tx.MarshalMsg(append(protocol.GetEncodingBuf(), []byte(protocol.Transaction)...))
-	defer protocol.PutEncodingBuf(enc)
+	enc := tx.MarshalMsg(append(*protocol.GetEncodingBuf(), []byte(protocol.Transaction)...))
+	defer protocol.PutEncodingBuf(&enc)
 	return sha256.Sum256(enc)
 }
 
 // InnerID returns something akin to Txid, but folds in the parent Txid and the
 // index of the inner call.
 func (tx Transaction) InnerID(parent Txid, index int) Txid {
-	input := append(protocol.GetEncodingBuf(), []byte(protocol.Transaction)...)
+	input := append(*protocol.GetEncodingBuf(), []byte(protocol.Transaction)...)
 	input = append(input, parent[:]...)
 	buf := make([]byte, 8)
 	binary.BigEndian.PutUint64(buf, uint64(index))
 	input = append(input, buf...)
 	enc := tx.MarshalMsg(input)
-	defer protocol.PutEncodingBuf(enc)
+	defer protocol.PutEncodingBuf(&enc)
 	return Txid(crypto.Hash(enc))
 }
 

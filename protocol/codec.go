@@ -286,13 +286,14 @@ var encodingPool = sync.Pool{
 // temporary message.  The byte slice has zero length but potentially
 // non-zero capacity.  The caller gets full ownership of the byte slice,
 // but is encouraged to return it using PutEncodingBuf().
-func GetEncodingBuf() []byte {
-	return (*encodingPool.Get().(*[]byte))[:0]
+func GetEncodingBuf() *[]byte {
+	return encodingPool.Get().(*[]byte)
 }
 
 // PutEncodingBuf places a byte slice into the pool of temporary buffers
 // for encoding.  The caller gives up ownership of the byte slice when
 // passing it to PutEncodingBuf().
-func PutEncodingBuf(s []byte) {
-	encodingPool.Put(&s)
+func PutEncodingBuf(s *[]byte) {
+	zs := (*s)[:0]
+	encodingPool.Put(&zs)
 }
