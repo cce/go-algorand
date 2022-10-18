@@ -352,6 +352,9 @@ func (c *CatchpointCatchupAccessorImpl) processStagingBalances(ctx context.Conte
 		normalizedAccountBalances, err = prepareNormalizedBalancesV6(balances.Balances, c.ledger.GenesisProto())
 		expectingMoreEntries = make([]bool, len(balances.Balances))
 		for i, balance := range balances.Balances {
+			if balance.Address.String() == "X6MNR4AVJQEMJRHAPZ6F4O4SVDIYN67ZRMD2O3ULPY4QFMANQNZOEYHODE" {
+				c.log.Warnf("saw account X6MNR4AVJQEMJRHAPZ6F4O4SVDIYN67ZRMD2O3ULPY4QFMANQNZOEYHODE with %d resources ExpectingMoreEntries %v", len(balance.Resources), balance.ExpectingMoreEntries)
+			}
 			expectingMoreEntries[i] = balance.ExpectingMoreEntries
 		}
 	}
