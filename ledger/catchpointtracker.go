@@ -18,6 +18,7 @@ package ledger
 
 import (
 	"archive/tar"
+	"bytes"
 	"compress/gzip"
 	"context"
 	"database/sql"
@@ -28,6 +29,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -1357,6 +1359,16 @@ func removeSingleCatchpointFileFromDisk(dbDirectory, fileToDelete string) (err e
 	return nil
 }
 
+var badHash []byte
+
+func init() {
+	var err error
+	badHash, err = hex.DecodeString("017168ea00196f0562e8003053ed06f49b14fddfaeb1be8adade8126d577d260b2f61d16")
+	if err != nil {
+		panic(err)
+	}
+}
+
 // accountHashBuilderV6 calculates the hash key used for the trie by combining the account address and the account data
 func accountHashBuilderV6(addr basics.Address, accountData *baseAccountData, encodedAccountData []byte) []byte {
 	hash := make([]byte, 4+crypto.DigestSize)
@@ -1377,6 +1389,9 @@ func accountHashBuilderV6(addr basics.Address, accountData *baseAccountData, enc
 	copy(prehash[crypto.DigestSize:], encodedAccountData[:])
 	entryHash := crypto.Hash(prehash)
 	copy(hash[5:], entryHash[1:])
+	if bytes.Equal(hash, badHash) {
+		logging.Base().Warnf("accountHashBuilderV6 saw bad hash for addr %s hashIntPrefix %d: %s", addr, hashIntPrefix, string(debug.Stack()))
+	}
 	return hash[:]
 }
 
@@ -1397,6 +1412,9 @@ func resourcesHashBuilderV6(addr basics.Address, cidx basics.CreatableIndex, cty
 	copy(prehash[crypto.DigestSize+8:], encodedResourceData[:])
 	entryHash := crypto.Hash(prehash)
 	copy(hash[5:], entryHash[1:])
+	if bytes.Equal(hash, badHash) {
+		logging.Base().Warnf("resourcesHashBuilderV6 saw bad hash for addr %s cidx %d updateRound %d: %s", addr, cidx, updateRound, string(debug.Stack()))
+	}
 	return hash[:]
 }
 
