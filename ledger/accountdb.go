@@ -4589,8 +4589,12 @@ func (iterator *orderedAccountsIter) Next(ctx context.Context) (acct []accountAd
 
 		// make sure the resource iterator has no more entries.
 		if iterator.resourcesRows.Next() {
+			var buf []byte
+			var addrid int64
+			var aidx basics.CreatableIndex
+			resErr := iterator.resourcesRows.Scan(&addrid, &aidx, &buf)
+			err = fmt.Errorf("resource table entries exceed the ones specified in the accountbase table, addrid %d aidx %d buflen %d resErr %v", addrid, aidx, len(buf), resErr)
 			iterator.Close(ctx)
-			err = errors.New("resource table entries exceed the ones specified in the accountbase table")
 			return
 		}
 
