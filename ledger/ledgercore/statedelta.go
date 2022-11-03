@@ -98,7 +98,7 @@ type StateDelta struct {
 	PrevTimestamp int64
 
 	// initial hint for allocating data structures for StateDelta
-	initialTransactionsCount int
+	initialHint int
 
 	// The account totals reflecting the changes in this StateDelta object.
 	Totals AccountTotals
@@ -181,11 +181,11 @@ func MakeStateDelta(hdr *bookkeeping.BlockHeader, prevTimestamp int64, hint int,
 		Txids:    make(map[transactions.Txid]IncludedTransactions, hint),
 		Txleases: make(map[Txlease]basics.Round),
 		// asset or application creation are considered as rare events so do not pre-allocate space for them
-		Creatables:               make(map[basics.CreatableIndex]ModifiedCreatable),
-		Hdr:                      hdr,
-		StateProofNext:           stateProofNext,
-		PrevTimestamp:            prevTimestamp,
-		initialTransactionsCount: hint,
+		Creatables:     make(map[basics.CreatableIndex]ModifiedCreatable),
+		Hdr:            hdr,
+		StateProofNext: stateProofNext,
+		PrevTimestamp:  prevTimestamp,
+		initialHint:    hint,
 	}
 }
 
@@ -197,6 +197,40 @@ func MakeAccountDeltas(hint int) AccountDeltas {
 
 		appResourcesCache:   make(map[AccountApp]int),
 		assetResourcesCache: make(map[AccountAsset]int),
+	}
+}
+
+// Reset clears the data in StateDelta.
+func (sd *StateDelta) Reset() {
+	sd.Accts.Reset()
+	for k := range sd.Txids {
+		delete(sd.Txids, k)
+	}
+	for k := range sd.Txleases {
+		delete(sd.Txleases, k)
+	}
+	for k := range sd.Creatables {
+		delete(sd.Creatables, k)
+	}
+	sd.Hdr = nil
+	sd.StateProofNext = basics.Round(0)
+	sd.PrevTimestamp = 0
+	sd.Totals = AccountTotals{}
+}
+
+// Reset clears the data in AccountDeltas.
+func (ad *AccountDeltas) Reset() {
+	ad.Accts = ad.Accts[:0]
+	for k := range ad.acctsCache {
+		delete(ad.acctsCache, k)
+	}
+	ad.AppResources = ad.AppResources[:0]
+	for k := range ad.appResourcesCache {
+		delete(ad.appResourcesCache, k)
+	}
+	ad.AssetResources = ad.AssetResources[:0]
+	for k := range ad.assetResourcesCache {
+		delete(ad.assetResourcesCache, k)
 	}
 }
 
@@ -401,8 +435,8 @@ func (sd *StateDelta) OptimizeAllocatedMemory(maxBalLookback uint64) {
 
 	// acctsCache takes up 64 bytes per entry, and is saved for 320 rounds
 	// realloc if original allocation capacity greater than length of data, and space difference is significant
-	if 2*sd.initialTransactionsCount > len(sd.Accts.acctsCache) &&
-		uint64(2*sd.initialTransactionsCount-len(sd.Accts.acctsCache))*accountMapCacheEntrySize*maxBalLookback > stateDeltaTargetOptimizationThreshold {
+	if 2*sd.initialHint > len(sd.Accts.acctsCache) &&
+		uint64(2*sd.initialHint-len(sd.Accts.acctsCache))*accountMapCacheEntrySize*maxBalLookback > stateDeltaTargetOptimizationThreshold {
 		acctsCache := make(map[basics.Address]int, len(sd.Accts.acctsCache))
 		for k, v := range sd.Accts.acctsCache {
 			acctsCache[k] = v

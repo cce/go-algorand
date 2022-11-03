@@ -473,7 +473,7 @@ func (cs *roundCowState) Get(addr basics.Address, withPendingRewards bool) (ledg
 		return ledgercore.AccountData{}, err
 	}
 	if withPendingRewards {
-		acct = acct.WithUpdatedRewards(cs.proto, cs.rewardsLevel())
+		acct = acct.WithUpdatedRewards(*cs.proto, cs.rewardsLevel())
 	}
 	return acct, nil
 }
@@ -510,7 +510,7 @@ func (cs *roundCowState) Move(from basics.Address, to basics.Address, amt basics
 	if err != nil {
 		return err
 	}
-	fromBalNew := fromBal.WithUpdatedRewards(cs.proto, rewardlvl)
+	fromBalNew := fromBal.WithUpdatedRewards(*cs.proto, rewardlvl)
 
 	if fromRewards != nil {
 		var ot basics.OverflowTracker
@@ -522,7 +522,7 @@ func (cs *roundCowState) Move(from basics.Address, to basics.Address, amt basics
 	}
 
 	// Only write the change if it's meaningful (or required by old code).
-	if !amt.IsZero() || fromBal.MicroAlgos.RewardUnits(cs.proto) > 0 || !cs.proto.UnfundedSenders {
+	if !amt.IsZero() || fromBal.MicroAlgos.RewardUnits(*cs.proto) > 0 || !cs.proto.UnfundedSenders {
 		var overflowed bool
 		fromBalNew.MicroAlgos, overflowed = basics.OSubA(fromBalNew.MicroAlgos, amt)
 		if overflowed {
@@ -538,7 +538,7 @@ func (cs *roundCowState) Move(from basics.Address, to basics.Address, amt basics
 	if err != nil {
 		return err
 	}
-	toBalNew := toBal.WithUpdatedRewards(cs.proto, rewardlvl)
+	toBalNew := toBal.WithUpdatedRewards(*cs.proto, rewardlvl)
 
 	if toRewards != nil {
 		var ot basics.OverflowTracker
@@ -550,7 +550,7 @@ func (cs *roundCowState) Move(from basics.Address, to basics.Address, amt basics
 	}
 
 	// Only write the change if it's meaningful (or required by old code).
-	if !amt.IsZero() || toBal.MicroAlgos.RewardUnits(cs.proto) > 0 || !cs.proto.UnfundedSenders {
+	if !amt.IsZero() || toBal.MicroAlgos.RewardUnits(*cs.proto) > 0 || !cs.proto.UnfundedSenders {
 		var overflowed bool
 		toBalNew.MicroAlgos, overflowed = basics.OAddA(toBalNew.MicroAlgos, amt)
 		if overflowed {
@@ -566,7 +566,7 @@ func (cs *roundCowState) Move(from basics.Address, to basics.Address, amt basics
 }
 
 func (cs *roundCowState) ConsensusParams() config.ConsensusParams {
-	return cs.proto
+	return *cs.proto
 }
 
 // BlockEvaluator represents an in-progress evaluation of a block
@@ -716,7 +716,7 @@ func StartEvaluator(l LedgerForEvaluator, hdr bookkeeping.BlockHeader, evalOpts 
 		eval.block.BlockHeader.RewardsState = eval.prevHeader.NextRewardsState(hdr.Round, proto, incentivePoolData.MicroAlgos, prevTotals.RewardUnits(), logging.Base())
 	}
 	// set the eval state with the current header
-	eval.state = makeRoundCowState(base, eval.block.BlockHeader, proto, eval.prevHeader.TimeStamp, prevTotals, evalOpts.PaysetHint)
+	eval.state = makeRoundCowState(base, eval.block.BlockHeader, &proto, eval.prevHeader.TimeStamp, prevTotals, evalOpts.PaysetHint)
 
 	if evalOpts.Validate {
 		err := eval.block.BlockHeader.PreCheck(eval.prevHeader)
@@ -978,6 +978,7 @@ func (eval *BlockEvaluator) transactionGroup(txgroup []transactions.SignedTxnWit
 	eval.block.Payset = append(eval.block.Payset, txibs...)
 	eval.blockTxBytes += groupTxBytes
 	cow.commitToParent()
+	cow.recycle()
 
 	return nil
 }
@@ -1438,7 +1439,7 @@ func (eval *BlockEvaluator) GenerateBlock() (*ledgercore.ValidatedBlock, error) 
 			"unknown consensus version: %s", eval.block.BlockHeader.CurrentProtocol)
 	}
 	eval.state = makeRoundCowState(
-		eval.state, eval.block.BlockHeader, proto, eval.prevHeader.TimeStamp, eval.state.mods.Totals,
+		eval.state, eval.block.BlockHeader, &proto, eval.prevHeader.TimeStamp, eval.state.mods.Totals,
 		len(eval.block.Payset))
 	return &vb, nil
 }

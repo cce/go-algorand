@@ -19,6 +19,7 @@ package internal
 import (
 	"errors"
 	"fmt"
+	"sync"
 
 	"github.com/algorand/go-algorand/config"
 	"github.com/algorand/go-algorand/data/basics"
@@ -67,7 +68,7 @@ type roundCowParent interface {
 type roundCowState struct {
 	lookupParent roundCowParent
 	commitParent *roundCowState
-	proto        config.ConsensusParams
+	proto        *config.ConsensusParams
 	mods         ledgercore.StateDelta
 
 	// count of transactions. Formerly, we used len(cb.mods), but that
@@ -91,7 +92,7 @@ type roundCowState struct {
 	prevTotals ledgercore.AccountTotals
 }
 
-func makeRoundCowState(b roundCowParent, hdr bookkeeping.BlockHeader, proto config.ConsensusParams, prevTimestamp int64, prevTotals ledgercore.AccountTotals, hint int) *roundCowState {
+func makeRoundCowState(b roundCowParent, hdr bookkeeping.BlockHeader, proto *config.ConsensusParams, prevTimestamp int64, prevTotals ledgercore.AccountTotals, hint int) *roundCowState {
 	cb := roundCowState{
 		lookupParent: b,
 		commitParent: nil,
@@ -248,20 +249,53 @@ func (cb *roundCowState) SetStateProofNextRound(rnd basics.Round) {
 	cb.mods.StateProofNext = rnd
 }
 
+var cowPool = sync.Pool{
+	New: func() interface{} {
+		return new(roundCowState)
+	},
+}
+
 func (cb *roundCowState) child(hint int) *roundCowState {
-	ch := roundCowState{
-		lookupParent: cb,
-		commitParent: cb,
-		proto:        cb.proto,
-		mods:         ledgercore.MakeStateDelta(cb.mods.Hdr, cb.mods.PrevTimestamp, hint, cb.mods.StateProofNext),
-		sdeltas:      make(map[basics.Address]map[storagePtr]*storageDelta),
+	ch := cowPool.Get().(*roundCowState)
+	ch.lookupParent = cb
+	ch.commitParent = cb
+	ch.proto = cb.proto
+	if ch.mods.Accts.Accts == nil { // new object, AccountDeltas has not been allocated
+		ch.mods = ledgercore.MakeStateDelta(cb.mods.Hdr, cb.mods.PrevTimestamp, hint, cb.mods.StateProofNext) // XXX always use 16 for hint?
+	} else {
+		ch.mods.Hdr = cb.mods.Hdr
+		ch.mods.PrevTimestamp = cb.mods.PrevTimestamp
+		ch.mods.StateProofNext = cb.mods.StateProofNext
+	}
+	if ch.sdeltas == nil {
+		ch.sdeltas = make(map[basics.Address]map[storagePtr]*storageDelta)
 	}
 
 	if cb.compatibilityMode {
 		ch.compatibilityMode = cb.compatibilityMode
-		ch.compatibilityGetKeyCache = make(map[basics.Address]map[storagePtr]uint64)
+		if ch.compatibilityGetKeyCache == nil {
+			ch.compatibilityGetKeyCache = make(map[basics.Address]map[storagePtr]uint64)
+		}
 	}
-	return &ch
+	return ch
+}
+
+// recycle resets and returns this child cow to the pool
+func (cb *roundCowState) recycle() {
+	// cb.lookupParent = nil // will be set right after cowPool.Get
+	// cb.commitParent = nil // will be set right after cowPool.Get
+	// cb.proto = nil        // will be set right after cowPool.Get
+	cb.mods.Reset()
+	cb.txnCount = 0
+	for k := range cb.sdeltas {
+		delete(cb.sdeltas, k)
+	}
+	// cb.compatibilityMode = false // will be set right after cowPool.Get
+	for k := range cb.compatibilityGetKeyCache {
+		delete(cb.compatibilityGetKeyCache, k)
+	}
+	// cb.prevTotals = ledgercore.AccountTotals{} // prevTotals is never set for child() cows
+	cowPool.Put(cb)
 }
 
 func (cb *roundCowState) commitToParent() {
@@ -321,8 +355,8 @@ func (cb *roundCowState) CalculateTotals() error {
 		if lookupError != nil {
 			return fmt.Errorf("roundCowState.CalculateTotals unable to load account data for address %v", accountAddr)
 		}
-		totals.DelAccount(cb.proto, previousAccountData, &ot)
-		totals.AddAccount(cb.proto, updatedAccountData, &ot)
+		totals.DelAccount(*cb.proto, previousAccountData, &ot)
+		totals.AddAccount(*cb.proto, updatedAccountData, &ot)
 	}
 
 	if ot.Overflowed {
