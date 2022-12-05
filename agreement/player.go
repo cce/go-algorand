@@ -628,6 +628,13 @@ func (p *player) handleMessageEvent(r routerHandle, e messageEvent) (actions []a
 			actions = append(actions, a)
 		}
 
+		// A validated proposal was accepted and stored, and the speculationTimeout already fired.
+		// Tell the ledger this might be a good time to start speculative assembly, since we probably did not have a validated
+		// payload when the speculationTimeout event fired.
+		if ef.t() == payloadAccepted && p.SpeculativeAssemblyDeadline == 0 {
+			p.startSpeculativeBlockAsm(r, e.Input.Proposal.ve)
+		}
+
 		// If the payload is valid, check it against any received cert threshold.
 		// Of course, this should only trigger for payloadVerified case.
 		// This allows us to handle late payloads (relative to cert-bundles, i.e., certificates) without resorting to catchup.
