@@ -593,6 +593,9 @@ func (pool *TransactionPool) OnNewSpeculativeBlock(ctx context.Context, vb *ledg
 		return
 	}
 
+	// XXX speculativePool's BlockEvaluator is not merged back to the underlying pool -- if this
+	// speculative block is certified and passed to OnNewBlock(), we should not have to do redundant evaluation
+
 	select {
 	case outchan <- speculativePool.assemblyResults.blk:
 	default:
@@ -647,6 +650,8 @@ func (pool *TransactionPool) onNewBlock(block bookkeeping.Block, delta ledgercor
 	defer pool.cond.Broadcast()
 
 	if !stopReprocessingAtFirstAsmBlock && pool.cancelSpeculativeAssembly != nil {
+		// XXX onNewBlock does not benefit from any of the work already done by the speculativePool
+		// that could be claimed if this OnNewBlock(block) is the same as the OnNewSpeculativeBlock(block)
 		pool.cancelSpeculativeAssembly()
 	}
 
