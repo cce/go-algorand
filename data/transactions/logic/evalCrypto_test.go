@@ -31,6 +31,8 @@ import (
 
 	"github.com/consensys/gnark-crypto/ecc/bn254"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/crypto/cryptobyte"
+	"golang.org/x/crypto/cryptobyte/asn1"
 
 	"github.com/algorand/go-algorand/crypto"
 	"github.com/algorand/go-algorand/crypto/secp256k1"
@@ -1248,40 +1250,29 @@ func TestEcdsaVectors(t *testing.T) {
 		"3028022100ffffffff00000001000000000000000000000001000000000000000000000000090380fe01",
 	}
 
-	/**
-	 * Extract the integer r from an ECDSA signature. This method implicitely assumes that the ECDSA
-	 * signature is DER encoded. and that the order of the curve is smaller than 2^1024.
-	 */
-	extractR := func(signature []byte) *big.Int {
-		var startR int
-		// if (signature[1] & 0x80) != 0 {
-		// 	startR = 3
-		// } else {
-		startR = 2
-		//}
-		lengthR := int(signature[startR+1])
-		return new(big.Int).SetBytes(signature[startR+2 : startR+2+lengthR])
-	}
-
-	extractS := func(signature []byte) *big.Int {
-		var startR int
-		// if (signature[1] & 0x80) != 0 {
-		// 	startR = 3
-		// } else {
-		startR = 2
-		//		}
-		lengthR := int(signature[startR+1])
-		startS := startR + 2 + lengthR
-		lengthS := int(signature[startS+1])
-		return new(big.Int).SetBytes(signature[startS+2 : startS+2+lengthS])
+	// from ecdsa.VerifyASN1
+	extractRS := func(signature []byte) (*big.Int, *big.Int, bool) {
+		var (
+			r, s  = &big.Int{}, &big.Int{}
+			inner cryptobyte.String
+		)
+		input := cryptobyte.String(signature)
+		if !input.ReadASN1(&inner, asn1.SEQUENCE) ||
+			!input.Empty() ||
+			!inner.ReadASN1Integer(r) ||
+			!inner.ReadASN1Integer(s) ||
+			!inner.Empty() {
+			return nil, nil, false
+		}
+		return r, s, true
 	}
 
 	t.Run("valid", func(t *testing.T) {
 		for _, sig := range validSignatures {
 			sigBytes, err := hex.DecodeString(sig)
 			require.NoError(t, err)
-			r := extractR(sigBytes)
-			s := extractS(sigBytes)
+			r, s, ok := extractRS(sigBytes)
+			require.True(t, ok)
 			pubkey := ecdsa.PublicKey{
 				Curve: elliptic.P256(),
 				X:     PubX,
@@ -1297,8 +1288,11 @@ func TestEcdsaVectors(t *testing.T) {
 		for i, sig := range invalidSignatures {
 			sigBytes, err := hex.DecodeString(sig)
 			require.NoError(t, err)
-			r := extractR(sigBytes)
-			s := extractS(sigBytes)
+			r, s, ok := extractRS(sigBytes)
+			if !ok {
+				t.Logf("skipping bad ASN data r %v s %v %s", r, s, sig)
+				continue
+			}
 			pubkey := ecdsa.PublicKey{
 				Curve: elliptic.P256(),
 				X:     PubX,
