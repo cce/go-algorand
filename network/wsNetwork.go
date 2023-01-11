@@ -1108,6 +1108,11 @@ func (wn *WebsocketNetwork) GetHTTPRequestConnection(request *http.Request) (con
 func (wn *WebsocketNetwork) ServeHTTP(response http.ResponseWriter, request *http.Request) {
 	trackedRequest := wn.requestsTracker.GetTrackedRequest(request)
 
+	if wn.checkIncomingConnectionVariables(response, request) != http.StatusOK {
+		// we've already logged and written all response(s).
+		return
+	}
+
 	if wn.checkIncomingConnectionLimits(response, request, trackedRequest.remoteHost, trackedRequest.otherTelemetryGUID, trackedRequest.otherInstanceName) != http.StatusOK {
 		// we've already logged and written all response(s).
 		return
@@ -1123,11 +1128,6 @@ func (wn *WebsocketNetwork) ServeHTTP(response http.ResponseWriter, request *htt
 		if err != nil {
 			wn.log.Warnf("ws failed to write response '%s' : n = %d err = %v", message, n, err)
 		}
-		return
-	}
-
-	if wn.checkIncomingConnectionVariables(response, request) != http.StatusOK {
-		// we've already logged and written all response(s).
 		return
 	}
 
