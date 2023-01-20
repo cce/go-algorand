@@ -346,7 +346,7 @@ type WebsocketNetwork struct {
 
 	peersLock          deadlock.RWMutex
 	peers              []*wsPeer
-	peersByID          map[crypto.PublicKey]*wsPeer
+	identityTracker    *identityTracker
 	peersChangeCounter int32 // peersChangeCounter is an atomic variable that increases on each change to the peers. It helps avoiding taking the peersLock when checking if the peers list was modified.
 
 	broadcastQueueHighPrio chan broadcastRequest
@@ -612,27 +612,13 @@ func (wn *WebsocketNetwork) MarkVerified(p *wsPeer) {
 		return
 	}
 	// if the identity could not be claimed by this peer, it means the identity is in use
-	if !wn.setPeersByID(p) {
+	wn.peersLock.Lock()
+	duplicate := wn.identityTracker.setIdentity(p)
+	wn.peersLock.Unlock()
+	if duplicate {
 		networkPeerDisconnectDupeIdentity.Inc(nil)
 		wn.Disconnect(p)
 	}
-}
-
-// setPeersByID will attempt to store a peer at its identity.
-// returns false if it was unable to load the peer into the given identity
-// or true otherwise (if the peer was already there, or if it was added)
-func (wn *WebsocketNetwork) setPeersByID(p *wsPeer) bool {
-	wn.peersLock.Lock()
-	defer wn.peersLock.Unlock()
-	existingPeer, exists := wn.peersByID[p.identity]
-	if !exists {
-		// the identity is not occupied, so set it and return true
-		wn.peersByID[p.identity] = p
-		return true
-	}
-	// the identity is occupied, so return false if it is occupied by some *other* peer
-	// or true if it is occupied by this peer
-	return existingPeer == p
 }
 
 // DisconnectPeers shuts down all connections
@@ -798,6 +784,7 @@ func (wn *WebsocketNetwork) setup() {
 	wn.tryConnectAddrs = make(map[string]int64)
 	wn.eventualReadyDelay = time.Minute
 	wn.prioTracker = newPrioTracker(wn)
+	wn.identityTracker = newIdentityTracker()
 	if wn.slowWritingPeerMonitorInterval == 0 {
 		wn.slowWritingPeerMonitorInterval = slowWritingPeerMonitorInterval
 	}
@@ -886,7 +873,6 @@ func (wn *WebsocketNetwork) startListener() bool {
 		wn.scheme = "http"
 	}
 
-	wn.peersByID = map[crypto.PublicKey]*wsPeer{}
 	// if we are set up for connection deduplication, attach the handlers for ID Verification
 	if wn.config.ConnectionDeduplicationName != "" {
 		wn.RegisterHandlers(identityHandlers)
@@ -2323,29 +2309,12 @@ func (wn *WebsocketNetwork) tryConnect(addr, gossipAddr string) {
 		features:                    decodePeerFeatures(matchingVersion, response.Header.Get(PeerFeaturesHeader)),
 	}
 
-	// if the identity is verified, check for an existing connection before initializing and adding
-	if identityVerified == 1 {
-		// take the peersLock to check the peersByID map and call addPeerLockless if the identity is available
-		// we hold the lock on behalf of addPeerLockless so that the peersByID check is consistent
-		wn.peersLock.Lock()
-		_, exists := wn.peersByID[peerPublicKey]
-		if !exists {
-			peer.TelemetryGUID, peer.InstanceName, _ = getCommonHeaders(response.Header)
-			peer.init(wn.config, wn.outgoingMessagesBufferSize)
-			wn.addPeerLockless(peer)
-		}
-		wn.peersLock.Unlock()
-		if exists {
-			networkPeeringStopDupeIdentity.Inc(nil)
-			wn.log.Warnf("peer connection (%s) deduplicated because the identity is already known: %s", gossipAddr, peerPublicKey)
-			return
-		}
-		// if the peer doesn't have a verifiable identity, just call the regular addPeers,
-		// which manages the lock for us
-	} else {
-		peer.TelemetryGUID, peer.InstanceName, _ = getCommonHeaders(response.Header)
-		peer.init(wn.config, wn.outgoingMessagesBufferSize)
-		wn.addPeer(peer)
+	peer.TelemetryGUID, peer.InstanceName, _ = getCommonHeaders(response.Header)
+	peer.init(wn.config, wn.outgoingMessagesBufferSize)
+	if !wn.addPeer(peer) {
+		networkPeeringStopDupeIdentity.Inc(nil)
+		wn.log.Warnf("peer connection (%s) deduplicated because the identity is already known: %s", gossipAddr, peerPublicKey)
+		return
 	}
 	localAddr, _ := wn.Address()
 	wn.log.With("event", "ConnectedOut").With("remote", addr).With("local", localAddr).Infof("Made outgoing connection to peer %v", addr)
@@ -2497,10 +2466,7 @@ func (wn *WebsocketNetwork) removePeer(peer *wsPeer, reason disconnectReason) {
 	if peer.peerIndex < len(wn.peers) && wn.peers[peer.peerIndex] == peer {
 		heap.Remove(peersHeap{wn}, peer.peerIndex)
 		wn.prioTracker.removePeer(peer)
-		// remove this peer from the identity map if it is there
-		if wn.peersByID[peer.identity] == peer {
-			delete(wn.peersByID, peer.identity)
-		}
+		wn.identityTracker.removePeer(peer)
 		if peer.throttledOutgoingConnection {
 			atomic.AddInt32(&wn.throttledOutgoingConnections, int32(1))
 		}
@@ -2509,27 +2475,21 @@ func (wn *WebsocketNetwork) removePeer(peer *wsPeer, reason disconnectReason) {
 	wn.countPeersSetGauges()
 }
 
-func (wn *WebsocketNetwork) addPeer(peer *wsPeer) {
+// addPeer returns true if the peer was successfully added, false if the connection was a duplciate
+func (wn *WebsocketNetwork) addPeer(peer *wsPeer) bool {
 	wn.peersLock.Lock()
 	defer wn.peersLock.Unlock()
-	wn.addPeerLockless(peer)
-}
-
-// addPeerLockless does the work of addPer, but assumes no locks.
-// callers should use addPeer instead or should take the wn.peersLock before calling
-func (wn *WebsocketNetwork) addPeerLockless(peer *wsPeer) {
 	// simple duplicate *pointer* check. should never trigger given the callers to addPeer
 	// TODO: remove this after making sure it is safe to do so
 	for _, p := range wn.peers {
 		if p == peer {
 			wn.log.Errorf("dup peer added %#v", peer)
-			return
+			return false
 		}
 	}
 
-	// if the peer has an identity and is verified, load it into the peersByID map
-	if peer.identity != [32]byte{} && atomic.LoadUint32(&peer.identityVerified) == 1 {
-		wn.peersByID[peer.identity] = peer
+	if duplicate := wn.identityTracker.setIdentity(peer); duplicate {
+		return false
 	}
 	heap.Push(peersHeap{wn}, peer)
 	wn.prioTracker.setPriority(peer, peer.prioAddress, peer.prioWeight)
@@ -2546,6 +2506,7 @@ func (wn *WebsocketNetwork) addPeerLockless(peer *wsPeer) {
 		wn.wg.Add(1)
 		go wn.eventualReady()
 	}
+	return true
 }
 
 func (wn *WebsocketNetwork) eventualReady() {

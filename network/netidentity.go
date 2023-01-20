@@ -58,6 +58,40 @@ type identityChallengeResponse struct {
 	Signature         crypto.Signature `codec:"s"`
 }
 
+// The identityTracker allows for ensuring there's only one peer for a given
+// public key, to prevent duplicate connections between a pair of peers.
+// The data structure is not thread-safe and is protected by wn.peersLock.
+type identityTracker struct {
+	// If a peer has successfully verified its identity it will be present
+	// in this map by its public key.
+	peersByID map[crypto.PublicKey]*wsPeer
+}
+
+func newIdentityTracker() *identityTracker {
+	return &identityTracker{
+		peersByID: make(map[crypto.PublicKey]*wsPeer),
+	}
+}
+
+// setIdentity returns true if a peer by this identity already exists
+func (it *identityTracker) setIdentity(peer *wsPeer) bool {
+	// if the identity is verified, check for an existing connection before initializing and adding
+	if peer.identity != [32]byte{} && atomic.LoadUint32(&peer.identityVerified) == 1 {
+		if _, exists := it.peersByID[peer.identity]; exists {
+			return true
+		}
+		it.peersByID[peer.identity] = peer
+	}
+	return false
+}
+
+func (it *identityTracker) removePeer(peer *wsPeer) {
+	// remove this peer from the identity map if it is there
+	if it.peersByID[peer.identity] == peer {
+		delete(it.peersByID, peer.identity)
+	}
+}
+
 // NewIdentityChallengeAndHeader will create an identityChallenge, and will return the underlying 32 byte challenge itself,
 // and the Signed and B64 encoded header of the challenge object
 func NewIdentityChallengeAndHeader(keys *crypto.SignatureSecrets, addr string) ([32]byte, string) {
