@@ -346,7 +346,6 @@ type WebsocketNetwork struct {
 
 	peersLock          deadlock.RWMutex
 	peers              []*wsPeer
-	identityTracker    *identityTracker
 	peersChangeCounter int32 // peersChangeCounter is an atomic variable that increases on each change to the peers. It helps avoiding taking the peersLock when checking if the peers list was modified.
 
 	broadcastQueueHighPrio chan broadcastRequest
@@ -380,8 +379,8 @@ type WebsocketNetwork struct {
 	prioTracker      *prioTracker
 	prioResponseChan chan *wsPeer
 
-	// identityKeys is the keypair used for identity challenges
-	identityKeys *crypto.SignatureSecrets
+	identityTracker *identityTracker
+	identityScheme  *identityScheme
 
 	// outgoingMessagesBufferSize is the size used for outgoing messages.
 	outgoingMessagesBufferSize int
@@ -669,7 +668,7 @@ func (wn *WebsocketNetwork) RequestConnectOutgoing(replace bool, quit <-chan str
 func (wn *WebsocketNetwork) GetPeersByID() map[crypto.PublicKey]*wsPeer {
 	pbid := map[crypto.PublicKey]*wsPeer{}
 	wn.peersLock.RLock()
-	for k, v := range wn.peersByID {
+	for k, v := range wn.identityTracker.peersByID {
 		pbid[k] = v
 	}
 	wn.peersLock.RUnlock()
@@ -785,6 +784,7 @@ func (wn *WebsocketNetwork) setup() {
 	wn.eventualReadyDelay = time.Minute
 	wn.prioTracker = newPrioTracker(wn)
 	wn.identityTracker = newIdentityTracker()
+	wn.identityScheme = newIdentityScheme(wn.config.ConnectionDeduplicationName)
 	if wn.slowWritingPeerMonitorInterval == 0 {
 		wn.slowWritingPeerMonitorInterval = slowWritingPeerMonitorInterval
 	}
@@ -830,18 +830,6 @@ func (wn *WebsocketNetwork) setup() {
 func (wn *WebsocketNetwork) Start() {
 	wn.messagesOfInterestMu.Lock()
 	defer wn.messagesOfInterestMu.Unlock()
-	if ok := wn.startListener(); !ok {
-		return
-	}
-	wn.startRoutines()
-}
-
-// startListener starts the wsNetwork up to the point where it is ready to start its threads
-// will return true if it was able to fully setup listeners and handlers
-// or false if it does not finish
-// this function assumes the wn.messagesOfInterestMu Lock is held when calling
-// Start() will manage the lock and call startListener and startRoutines
-func (wn *WebsocketNetwork) startListener() bool {
 	wn.messagesOfInterestEncoded = true
 	if wn.messagesOfInterest != nil {
 		wn.messagesOfInterestEnc = MarshallMessageOfInterestMap(wn.messagesOfInterest)
@@ -851,7 +839,7 @@ func (wn *WebsocketNetwork) startListener() bool {
 		listener, err := net.Listen("tcp", wn.config.NetAddress)
 		if err != nil {
 			wn.log.Errorf("network could not listen %v: %s", wn.config.NetAddress, err)
-			return false
+			return
 		}
 		// wrap the original listener with a limited connection listener
 		listener = limitlistener.RejectingLimitListener(
@@ -874,24 +862,14 @@ func (wn *WebsocketNetwork) startListener() bool {
 	}
 
 	// if we are set up for connection deduplication, attach the handlers for ID Verification
-	if wn.config.ConnectionDeduplicationName != "" {
+	if wn.identityScheme != nil {
 		wn.RegisterHandlers(identityHandlers)
-		var seed crypto.Seed
-		crypto.RandBytes(seed[:])
-		wn.identityKeys = crypto.GenerateSignatureSecrets(seed)
 	}
 
 	wn.meshUpdateRequests <- meshRequest{false, nil}
 	if wn.prioScheme != nil {
 		wn.RegisterHandlers(prioHandlers)
 	}
-	return true
-}
-
-// startRoutines will launch the Go Routines for this wsNetwork
-// this function assumes the wn.messagesOfInterestMu Lock is held when calling
-// Start() will manage the lock and call startListener and startRoutines
-func (wn *WebsocketNetwork) startRoutines() {
 	if wn.listener != nil {
 		wn.wg.Add(1)
 		go wn.httpdThread()
@@ -1213,14 +1191,10 @@ func (wn *WebsocketNetwork) ServeHTTP(response http.ResponseWriter, request *htt
 	var peerPublicKey crypto.PublicKey
 	var peerIDChallenge [32]byte
 	// if this host is set up for Connection Deduplication, attempt to participate in identity challenge exchange
-	if wn.config.ConnectionDeduplicationName != "" {
-		idChalB64 := request.Header.Get(ProtocolConectionIdentityChallengeHeader)
-		idChal := IdentityChallengeFromB64(idChalB64)
-		// if the challenge is correctly signed, and is addressed to this host, construct an identity response and attach
-		if idChal.Address == wn.config.ConnectionDeduplicationName && idChal.Verify() {
-			challengeResponse, idChalRespHeader := NewIdentityResponseChallengeAndHeader(wn.identityKeys, idChal)
-			peerPublicKey = idChal.Key
-			peerIDChallenge = challengeResponse
+	if wn.identityScheme != nil {
+		var idChalRespHeader string
+		peerPublicKey, peerIDChallenge, idChalRespHeader = wn.identityScheme.newIdentityChallenge(request.Header)
+		if idChalRespHeader != "" {
 			responseHeader.Set(ProtocolConectionIdentityChallengeHeader, idChalRespHeader)
 		}
 	}
@@ -2212,8 +2186,8 @@ func (wn *WebsocketNetwork) tryConnect(addr, gossipAddr string) {
 	idChallenge := [32]byte{}
 	idChallengeHeader := ""
 	// only attach connection deduplication headers if configured with a deduplication name
-	if wn.config.ConnectionDeduplicationName != "" {
-		idChallenge, idChallengeHeader = NewIdentityChallengeAndHeader(wn.identityKeys, gossipAddr)
+	if wn.identityScheme != nil {
+		idChallenge, idChallengeHeader = wn.identityScheme.newIdentityChallengeAndHeader(gossipAddr)
 		requestHeader.Add(ProtocolConectionIdentityChallengeHeader, idChallengeHeader)
 	}
 
@@ -2331,9 +2305,8 @@ func (wn *WebsocketNetwork) tryConnect(addr, gossipAddr string) {
 
 	// if the peer's response contained a verified identity challenge response, send identity verification to the peer
 	// this peer has not yet seen a round-trip of a challenge, so we sign and send the challenge from the response once WS connection is up
-	if identityVerified == 1 {
-		sig := wn.identityKeys.SignBytes(idChalResp.ResponseChallenge[:])
-		err = SendIdentityChallengeVerification(peer, sig)
+	if identityVerified == 1 && wn.identityScheme != nil {
+		err = wn.identityScheme.sendIdentityChallengeVerification(peer, idChalResp)
 		if err != nil {
 			wn.log.With("remote", addr).With("local", localAddr).Warnf(err.Error())
 		}

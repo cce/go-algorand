@@ -37,6 +37,7 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"net/http"
 	"sync/atomic"
 	"time"
 
@@ -73,6 +74,38 @@ func newIdentityTracker() *identityTracker {
 	}
 }
 
+type identityScheme struct {
+	connectionDeduplicationName string
+	// identityKeys is the keypair used for identity challenges
+	identityKeys *crypto.SignatureSecrets
+}
+
+// newIdentityScheme returns a nil implementation if no deduplication name was configured.
+func newIdentityScheme(name string) *identityScheme {
+	if name != "" {
+		var seed crypto.Seed
+		crypto.RandBytes(seed[:])
+		return &identityScheme{
+			connectionDeduplicationName: name,
+			identityKeys:                crypto.GenerateSignatureSecrets(seed),
+		}
+	}
+	return nil
+}
+
+func (is *identityScheme) newIdentityChallenge(requestHeader http.Header) (peerPublicKey crypto.PublicKey, peerIDChallenge [32]byte, idChalRespHeader string) {
+	if is.connectionDeduplicationName != "" {
+		idChalB64 := requestHeader.Get(ProtocolConectionIdentityChallengeHeader)
+		idChal := IdentityChallengeFromB64(idChalB64)
+		// if the challenge is correctly signed, and is addressed to this host, construct an identity response and attach
+		if idChal.Address == is.connectionDeduplicationName && idChal.Verify() {
+			peerIDChallenge, idChalRespHeader = NewIdentityResponseChallengeAndHeader(is.identityKeys, idChal)
+			peerPublicKey = idChal.Key
+		}
+	}
+	return
+}
+
 // setIdentity returns true if a peer by this identity already exists
 func (it *identityTracker) setIdentity(peer *wsPeer) bool {
 	// if the identity is verified, check for an existing connection before initializing and adding
@@ -94,14 +127,14 @@ func (it *identityTracker) removePeer(peer *wsPeer) {
 
 // NewIdentityChallengeAndHeader will create an identityChallenge, and will return the underlying 32 byte challenge itself,
 // and the Signed and B64 encoded header of the challenge object
-func NewIdentityChallengeAndHeader(keys *crypto.SignatureSecrets, addr string) ([32]byte, string) {
+func (is *identityScheme) newIdentityChallengeAndHeader(addr string) ([32]byte, string) {
 	c := identityChallenge{
-		Key:       keys.SignatureVerifier,
+		Key:       is.identityKeys.SignatureVerifier,
 		Challenge: [32]byte{},
 		Address:   addr,
 	}
 	crypto.RandBytes(c.Challenge[:])
-	return c.Challenge, c.signAndEncodeB64(keys)
+	return c.Challenge, c.signAndEncodeB64(is.identityKeys)
 }
 
 func (i *identityChallenge) signAndEncodeB64(s *crypto.SignatureSecrets) string {
@@ -191,7 +224,8 @@ func (i identityChallengeResponse) Verify() bool {
 // SendIdentityChallengeVerification sends the 3rd (final) message for signature handshake between two peers.
 // it simply sends across a signature of a challenge which the potential peer has given it to sign.
 // at this stage in the peering process, the peer hasn't had an opportunity to verify our supposed identity
-func SendIdentityChallengeVerification(wp *wsPeer, sig crypto.Signature) error {
+func (is *identityScheme) sendIdentityChallengeVerification(wp *wsPeer, idChalResp identityChallengeResponse) error {
+	sig := is.identityKeys.SignBytes(idChalResp.ResponseChallenge[:])
 	mbytes := append([]byte(protocol.NetIDVerificationTag), sig[:]...)
 	sent := wp.writeNonBlock(context.Background(), mbytes, true, crypto.Digest{}, time.Now())
 	if !sent {
