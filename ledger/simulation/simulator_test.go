@@ -30,7 +30,7 @@ import (
 	"github.com/algorand/go-algorand/data/transactions/logic"
 
 	"github.com/algorand/go-algorand/ledger"
-	"github.com/algorand/go-algorand/ledger/internal"
+	"github.com/algorand/go-algorand/ledger/eval"
 	"github.com/algorand/go-algorand/ledger/simulation"
 	ledgertesting "github.com/algorand/go-algorand/ledger/testing"
 	"github.com/algorand/go-algorand/libgoal"
@@ -175,7 +175,7 @@ func TestNonOverridenDataLedgerMethodsUseRoundParameter(t *testing.T) {
 	}
 
 	methodExistsInEvalLedger := func(methodName string) bool {
-		evalLedgerType := reflect.TypeOf((*internal.LedgerForEvaluator)(nil)).Elem()
+		evalLedgerType := reflect.TypeOf((*eval.LedgerForEvaluator)(nil)).Elem()
 		for i := 0; i < evalLedgerType.NumMethod(); i++ {
 			if evalLedgerType.Method(i).Name == methodName {
 				return true
