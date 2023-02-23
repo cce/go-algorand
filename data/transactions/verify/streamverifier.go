@@ -20,14 +20,25 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"sync/atomic"
 	"time"
 
+	"github.com/algorand/go-algorand/crypto"
+	"github.com/algorand/go-algorand/data/basics"
+	"github.com/algorand/go-algorand/data/bookkeeping"
+	"github.com/algorand/go-algorand/data/transactions"
+	"github.com/algorand/go-algorand/data/transactions/logic"
+	"github.com/algorand/go-algorand/ledger/ledgercore"
 	"github.com/algorand/go-algorand/logging"
 	"github.com/algorand/go-algorand/util/execpool"
 )
 
 // ErrShuttingDownError is the error returned when a job is not processed because the service is shutting down
 var ErrShuttingDownError = errors.New("not processed, execpool service is shutting down")
+
+// batchSizeBlockLimit is the limit when the batch exceeds, will be added to the exec pool, even if the pool is saturated
+// and the stream  will be blocked until the exec pool accepts the batch
+const batchSizeBlockLimit = 1024
 
 // waitForNextJobDuration is the time to wait before sending the batch to the exec pool
 // If the incoming rate is low, an input job in the batch may wait no less than
@@ -38,9 +49,41 @@ var ErrShuttingDownError = errors.New("not processed, execpool service is shutti
 // for processing before waitForNextJobDuration.
 const waitForNextJobDuration = 2 * time.Millisecond
 
-// batchSizeBlockLimit is the limit when the batch exceeds, will be added to the exec pool, even if the pool is saturated
-// and the stream  will be blocked until the exec pool accepts the batch
-const batchSizeBlockLimit = 1024
+// UnverifiedTxnSigJob is the sig verification job passed to the Stream verifier
+// It represents an unverified txn whose signatures will be verified
+// BacklogMessage is a *txBacklogMsg from data/txHandler.go which needs to be
+// passed back to that context
+// Implements UnverifiedSigJob
+type UnverifiedTxnSigJob struct {
+	TxnGroup       []transactions.SignedTxn
+	BacklogMessage interface{}
+}
+
+// VerificationResult is the result of the txn group verification
+// BacklogMessage is the reference associated with the txn group which was
+// initially passed to the stream verifier
+type VerificationResult struct {
+	TxnGroup       []transactions.SignedTxn
+	BacklogMessage interface{}
+	Err            error
+}
+
+// StreamToBatch makes batches from incoming stream of jobs, and submits the batches to the exec pool
+type StreamToBatch struct {
+	inputChan      <-chan InputJob
+	executionPool  execpool.BacklogPool
+	ctx            context.Context
+	activeLoopWg   sync.WaitGroup
+	batchProcessor BatchProcessor
+}
+
+type txnSigBatchProcessor struct {
+	cache       VerifiedTransactionCache
+	nbw         *NewBlockWatcher
+	ledger      logic.LedgerForSignature
+	resultChan  chan<- *VerificationResult
+	droppedChan chan<- *UnverifiedTxnSigJob
+}
 
 // InputJob is the interface the incoming jobs need to implement
 type InputJob interface {
@@ -58,13 +101,83 @@ type BatchProcessor interface {
 	Cleanup(ue []InputJob, err error)
 }
 
-// StreamToBatch makes batches from incoming stream of jobs, and submits the batches to the exec pool
-type StreamToBatch struct {
-	inputChan      <-chan InputJob
-	executionPool  execpool.BacklogPool
-	ctx            context.Context
-	activeLoopWg   sync.WaitGroup
-	batchProcessor BatchProcessor
+// NewBlockWatcher is a struct used to provide a new block header to the
+// stream verifier
+type NewBlockWatcher struct {
+	blkHeader atomic.Value
+}
+
+// MakeNewBlockWatcher construct a new block watcher with the initial blkHdr
+func MakeNewBlockWatcher(blkHdr bookkeeping.BlockHeader) (nbw *NewBlockWatcher) {
+	nbw = &NewBlockWatcher{}
+	nbw.blkHeader.Store(&blkHdr)
+	return nbw
+}
+
+// OnNewBlock implements the interface to subscribe to new block notifications from the ledger
+func (nbw *NewBlockWatcher) OnNewBlock(block bookkeeping.Block, delta ledgercore.StateDelta) {
+	bh := nbw.blkHeader.Load().(*bookkeeping.BlockHeader)
+	if bh.Round >= block.BlockHeader.Round {
+		return
+	}
+	nbw.blkHeader.Store(&block.BlockHeader)
+}
+
+func (nbw *NewBlockWatcher) getBlockHeader() (bh *bookkeeping.BlockHeader) {
+	return nbw.blkHeader.Load().(*bookkeeping.BlockHeader)
+}
+
+type batchLoad struct {
+	txnGroups      [][]transactions.SignedTxn
+	groupCtxs      []*GroupContext
+	backlogMessage []interface{}
+	messagesForTxn []int
+}
+
+func makeBatchLoad(l int) (bl *batchLoad) {
+	return &batchLoad{
+		txnGroups:      make([][]transactions.SignedTxn, 0, l),
+		groupCtxs:      make([]*GroupContext, 0, l),
+		backlogMessage: make([]interface{}, 0, l),
+		messagesForTxn: make([]int, 0, l),
+	}
+}
+
+func (bl *batchLoad) addLoad(txngrp []transactions.SignedTxn, gctx *GroupContext, backlogMsg interface{}, numBatchableSigs int) {
+	bl.txnGroups = append(bl.txnGroups, txngrp)
+	bl.groupCtxs = append(bl.groupCtxs, gctx)
+	bl.backlogMessage = append(bl.backlogMessage, backlogMsg)
+	bl.messagesForTxn = append(bl.messagesForTxn, numBatchableSigs)
+
+}
+
+// LedgerForStreamVerifier defines the ledger methods used by the StreamVerifier.
+type LedgerForStreamVerifier interface {
+	logic.LedgerForSignature
+	RegisterBlockListeners([]ledgercore.BlockListener)
+	Latest() basics.Round
+	BlockHdr(rnd basics.Round) (blk bookkeeping.BlockHeader, err error)
+}
+
+// MakeSigVerifyJobProcessor returns the object implementing the stream verifier Helper interface
+func MakeSigVerifyJobProcessor(ledger LedgerForStreamVerifier, cache VerifiedTransactionCache,
+	resultChan chan<- *VerificationResult, droppedChan chan<- *UnverifiedTxnSigJob) (svp BatchProcessor, err error) {
+	latest := ledger.Latest()
+	latestHdr, err := ledger.BlockHdr(latest)
+	if err != nil {
+		return nil, errors.New("MakeStreamVerifier: Could not get header for previous block")
+	}
+
+	nbw := MakeNewBlockWatcher(latestHdr)
+	ledger.RegisterBlockListeners([]ledgercore.BlockListener{nbw})
+
+	return &txnSigBatchProcessor{
+		cache:       cache,
+		nbw:         nbw,
+		ledger:      ledger,
+		droppedChan: droppedChan,
+		resultChan:  resultChan,
+	}, nil
 }
 
 // MakeStreamToBatch creates a new stream to batch converter
@@ -89,6 +202,15 @@ func (sv *StreamToBatch) Start(ctx context.Context) {
 // WaitForStop waits until the batching loop terminates afer the ctx is canceled
 func (sv *StreamToBatch) WaitForStop() {
 	sv.activeLoopWg.Wait()
+}
+
+func (tbp *txnSigBatchProcessor) Cleanup(pending []InputJob, err error) {
+	// report an error for the unchecked txns
+	// drop the messages without reporting if the receiver does not consume
+	for _, ue := range pending {
+		uelt := ue.(*UnverifiedTxnSigJob)
+		tbp.sendResult(uelt.TxnGroup, uelt.BacklogMessage, err)
+	}
 }
 
 func (sv *StreamToBatch) batchingLoop() {
@@ -181,6 +303,20 @@ func (sv *StreamToBatch) batchingLoop() {
 	}
 }
 
+func (tbp txnSigBatchProcessor) sendResult(veTxnGroup []transactions.SignedTxn, veBacklogMessage interface{}, err error) {
+	// send the txn result out the pipe
+	select {
+	case tbp.resultChan <- &VerificationResult{
+		TxnGroup:       veTxnGroup,
+		BacklogMessage: veBacklogMessage,
+		Err:            err,
+	}:
+	default:
+		// we failed to write to the output queue, since the queue was full.
+		tbp.droppedChan <- &UnverifiedTxnSigJob{veTxnGroup, veBacklogMessage}
+	}
+}
+
 func (sv *StreamToBatch) tryAddBatchToThePool(uJobs []InputJob) (added bool, err error) {
 	// if the exec pool buffer is full, can go back and collect
 	// more jobs instead of waiting in the exec pool buffer
@@ -221,4 +357,111 @@ func (sv *StreamToBatch) addBatchToThePoolNow(unprocessed []InputJob) error {
 		logging.Base().Infof("addBatchToThePoolNow: EnqueueBacklog returned an error and StreamToBatch will stop: %v", err)
 	}
 	return err
+}
+
+func (tbp *txnSigBatchProcessor) preProcessUnverifiedTxns(uTxns []InputJob) (batchVerifier *crypto.BatchVerifier, ctx interface{}) {
+	batchVerifier = crypto.MakeBatchVerifier()
+	bl := makeBatchLoad(len(uTxns))
+	// TODO: separate operations here, and get the sig verification inside the LogicSig to the batch here
+	blockHeader := tbp.nbw.getBlockHeader()
+
+	for _, uTxn := range uTxns {
+		ut := uTxn.(*UnverifiedTxnSigJob)
+		groupCtx, err := txnGroupBatchPrep(ut.TxnGroup, blockHeader, tbp.ledger, batchVerifier, nil)
+		if err != nil {
+			// verification failed, no need to add the sig to the batch, report the error
+			tbp.sendResult(ut.TxnGroup, ut.BacklogMessage, err)
+			continue
+		}
+		totalBatchCount := batchVerifier.GetNumberOfEnqueuedSignatures()
+		bl.addLoad(ut.TxnGroup, groupCtx, ut.BacklogMessage, totalBatchCount)
+	}
+	return batchVerifier, bl
+}
+
+func (tbp *txnSigBatchProcessor) ProcessBatch(txns []InputJob) {
+	batchVerifier, ctx := tbp.preProcessUnverifiedTxns(txns)
+	failed, err := batchVerifier.VerifyWithFeedback()
+	// this error can only be crypto.ErrBatchHasFailedSigs
+	tbp.postProcessVerifiedJobs(ctx, failed, err)
+}
+
+func (tbp *txnSigBatchProcessor) postProcessVerifiedJobs(ctx interface{}, failed []bool, err error) {
+	bl := ctx.(*batchLoad)
+	if err == nil { // success, all signatures verified
+		for i := range bl.txnGroups {
+			tbp.sendResult(bl.txnGroups[i], bl.backlogMessage[i], nil)
+		}
+		tbp.cache.AddPayset(bl.txnGroups, bl.groupCtxs)
+		return
+	}
+
+	verifiedTxnGroups := make([][]transactions.SignedTxn, 0, len(bl.txnGroups))
+	verifiedGroupCtxs := make([]*GroupContext, 0, len(bl.groupCtxs))
+	failedSigIdx := 0
+	for txgIdx := range bl.txnGroups {
+		txGroupSigFailed := false
+		for failedSigIdx < bl.messagesForTxn[txgIdx] {
+			if failed[failedSigIdx] {
+				// if there is a failed sig check, then no need to check the rest of the
+				// sigs for this txnGroup
+				failedSigIdx = bl.messagesForTxn[txgIdx]
+				txGroupSigFailed = true
+			} else {
+				// proceed to check the next sig belonging to this txnGroup
+				failedSigIdx++
+			}
+		}
+		var result error
+		if !txGroupSigFailed {
+			verifiedTxnGroups = append(verifiedTxnGroups, bl.txnGroups[txgIdx])
+			verifiedGroupCtxs = append(verifiedGroupCtxs, bl.groupCtxs[txgIdx])
+		} else {
+			result = err
+		}
+		tbp.sendResult(bl.txnGroups[txgIdx], bl.backlogMessage[txgIdx], result)
+	}
+	// loading them all at once by locking the cache once
+	tbp.cache.AddPayset(verifiedTxnGroups, verifiedGroupCtxs)
+}
+
+// GetNumberOfBatchableItems returns the number of batchable signatures in the txn group
+func (ue UnverifiedTxnSigJob) GetNumberOfBatchableItems() (batchSigs uint64, err error) {
+	batchSigs = 0
+	for i := range ue.TxnGroup {
+		count, err := getNumberOfBatchableSigsInTxn(&ue.TxnGroup[i])
+		if err != nil {
+			return 0, err
+		}
+		batchSigs = batchSigs + count
+	}
+	return
+}
+
+func getNumberOfBatchableSigsInTxn(stx *transactions.SignedTxn) (uint64, error) {
+	sigType, err := checkTxnSigTypeCounts(stx)
+	if err != nil {
+		return 0, err
+	}
+	switch sigType {
+	case regularSig:
+		return 1, nil
+	case multiSig:
+		sig := stx.Msig
+		batchSigs := uint64(0)
+		for _, subsigi := range sig.Subsigs {
+			if (subsigi.Sig != crypto.Signature{}) {
+				batchSigs++
+			}
+		}
+		return batchSigs, nil
+	case logicSig:
+		// Currently the sigs in here are not batched. Something to consider later.
+		return 0, nil
+	case stateProofTxn:
+		return 0, nil
+	default:
+		// this case is impossible
+		return 0, nil
+	}
 }
