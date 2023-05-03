@@ -33,7 +33,7 @@ const (
 
 // ExecutionPool interface exposes the core functionality of the execution pool.
 type ExecutionPool interface {
-	Enqueue(enqueueCtx context.Context, t ExecFunc, arg interface{}, i Priority, out chan interface{}) error
+	Enqueue(enqueueCtx context.Context, t ExecFunc, arg interface{}, i Priority, out chan interface{}, outOK func() bool) error
 	GetOwner() interface{}
 	Shutdown()
 	GetParallelism() int
@@ -65,6 +65,9 @@ type enqueuedTask struct {
 	execFunc ExecFunc
 	arg      interface{}
 	out      chan interface{}
+	// outOK is a function that returns true if the out channel is available (not closed).
+	// If the outOK function is nil, it will be assumed that the channel is always available.
+	outOK func() bool
 }
 
 // MakePool creates a pool.
@@ -110,12 +113,13 @@ func (p *pool) GetOwner() interface{} {
 ///
 // Enqueue returns nil if task was enqueued successfully or the result of the
 // expired context error.
-func (p *pool) Enqueue(enqueueCtx context.Context, t ExecFunc, arg interface{}, i Priority, out chan interface{}) error {
+func (p *pool) Enqueue(enqueueCtx context.Context, t ExecFunc, arg interface{}, i Priority, out chan interface{}, outOK func() bool) error {
 	select {
 	case p.inputs[i] <- enqueuedTask{
 		execFunc: t,
 		arg:      arg,
 		out:      out,
+		outOK:    outOK,
 	}:
 		return nil
 	case <-enqueueCtx.Done():
@@ -158,7 +162,7 @@ func (p *pool) worker() {
 		}
 		res := t.execFunc(t.arg)
 
-		if t.out != nil {
+		if t.out != nil && (t.outOK != nil && t.outOK()) {
 			t.out <- res
 		}
 	}

@@ -42,7 +42,7 @@ type backlogItemTask struct {
 // BacklogPool supports all the ExecutionPool functions plus few more that tests the pending tasks.
 type BacklogPool interface {
 	ExecutionPool
-	EnqueueBacklog(enqueueCtx context.Context, t ExecFunc, arg interface{}, out chan interface{}) error
+	EnqueueBacklog(enqueueCtx context.Context, t ExecFunc, arg interface{}, out chan interface{}, outOK func() bool) error
 	BufferSize() (length, capacity int)
 }
 
@@ -77,13 +77,14 @@ func (b *backlog) GetParallelism() int {
 }
 
 // Enqueue enqueues a single task into the backlog
-func (b *backlog) Enqueue(enqueueCtx context.Context, t ExecFunc, arg interface{}, priority Priority, out chan interface{}) error {
+func (b *backlog) Enqueue(enqueueCtx context.Context, t ExecFunc, arg interface{}, priority Priority, out chan interface{}, outOK func() bool) error {
 	select {
 	case b.buffer <- backlogItemTask{
 		enqueuedTask: enqueuedTask{
 			execFunc: t,
 			arg:      arg,
 			out:      out,
+			outOK:    outOK,
 		},
 		priority: priority,
 	}:
@@ -101,13 +102,14 @@ func (b *backlog) BufferSize() (length, capacity int) {
 }
 
 // Enqueue enqueues a single task into the backlog
-func (b *backlog) EnqueueBacklog(enqueueCtx context.Context, t ExecFunc, arg interface{}, out chan interface{}) error {
+func (b *backlog) EnqueueBacklog(enqueueCtx context.Context, t ExecFunc, arg interface{}, out chan interface{}, outOK func() bool) error {
 	select {
 	case b.buffer <- backlogItemTask{
 		enqueuedTask: enqueuedTask{
 			execFunc: t,
 			arg:      arg,
 			out:      out,
+			outOK:    outOK,
 		},
 		priority: b.priority,
 	}:
@@ -146,7 +148,7 @@ func (b *backlog) worker() {
 			return
 		}
 
-		if b.pool.Enqueue(b.ctx, t.execFunc, t.arg, t.priority, t.out) != nil {
+		if b.pool.Enqueue(b.ctx, t.execFunc, t.arg, t.priority, t.out, t.outOK) != nil {
 			break
 		}
 	}

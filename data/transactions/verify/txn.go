@@ -517,7 +517,7 @@ func PaysetGroups(ctx context.Context, payset [][]transactions.SignedTxn, blkHea
 					}
 					cache.AddPayset(txnGroups, groupCtxs)
 					return nil
-				}, nextWorkset, worksDoneCh)
+				}, nextWorkset, worksDoneCh, nil)
 				if err != nil {
 					return err
 				}

@@ -217,7 +217,7 @@ func (sv *StreamToBatch) addBatchToThePoolNow(unprocessed []InputJob) error {
 	}
 
 	// EnqueueBacklog returns an error when the context is canceled
-	err := sv.executionPool.EnqueueBacklog(sv.ctx, function, unprocessed, nil)
+	err := sv.executionPool.EnqueueBacklog(sv.ctx, function, unprocessed, nil, nil)
 	if err != nil {
 		logging.Base().Infof("addBatchToThePoolNow: EnqueueBacklog returned an error and StreamToBatch will stop: %v", err)
 	}

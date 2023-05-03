@@ -20,6 +20,7 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"sync/atomic"
 
 	"github.com/algorand/go-algorand/util/execpool"
 )
@@ -57,6 +58,8 @@ type AsyncVoteVerifier struct {
 	execpoolOut     chan interface{}
 	ctx             context.Context
 	ctxCancel       context.CancelFunc
+	// execpoolOutClosed is an atomic value set to 1 if execpoolOut was closed.
+	execpoolOutClosed uint32
 }
 
 // MakeAsyncVoteVerifier creates an AsyncVoteVerifier with workers as the number of CPUs
@@ -140,7 +143,7 @@ func (avv *AsyncVoteVerifier) verifyVote(verctx context.Context, l LedgerReader,
 		// if we're done while waiting for room in the requests channel, don't queue the request
 		req := asyncVerifyVoteRequest{ctx: verctx, l: l, uv: &uv, index: index, message: message, out: out}
 		avv.wg.Add(1)
-		if err := avv.backlogExecPool.EnqueueBacklog(avv.ctx, avv.executeVoteVerification, req, avv.execpoolOut); err != nil {
+		if err := avv.backlogExecPool.EnqueueBacklog(avv.ctx, avv.executeVoteVerification, req, avv.execpoolOut, avv.execpoolOutOK); err != nil {
 			// we want to call "wg.Done()" here to "fix" the accounting of the number of pending tasks.
 			// if we got a non-nil, it means that our context has expired, which means that we won't see this task
 			// getting to the verification function.
@@ -160,7 +163,7 @@ func (avv *AsyncVoteVerifier) verifyEqVote(verctx context.Context, l LedgerReade
 		// if we're done while waiting for room in the requests channel, don't queue the request
 		req := asyncVerifyVoteRequest{ctx: verctx, l: l, uev: &uev, index: index, message: message, out: out}
 		avv.wg.Add(1)
-		if err := avv.backlogExecPool.EnqueueBacklog(avv.ctx, avv.executeEqVoteVerification, req, avv.execpoolOut); err != nil {
+		if err := avv.backlogExecPool.EnqueueBacklog(avv.ctx, avv.executeEqVoteVerification, req, avv.execpoolOut, avv.execpoolOutOK); err != nil {
 			// we want to call "wg.Done()" here to "fix" the accounting of the number of pending tasks.
 			// if we got a non-nil, it means that our context has expired, which means that we won't see this task
 			// getting to the verification function.
@@ -169,6 +172,10 @@ func (avv *AsyncVoteVerifier) verifyEqVote(verctx context.Context, l LedgerReade
 		}
 	}
 	return nil
+}
+
+func (avv *AsyncVoteVerifier) execpoolOutOK() bool {
+	return atomic.LoadUint32(&avv.execpoolOutClosed) == 0
 }
 
 // Quit tells the AsyncVoteVerifier to shutdown and waits until all workers terminate.
@@ -183,6 +190,7 @@ func (avv *AsyncVoteVerifier) Quit() {
 	}
 
 	// since no more tasks are coming, we can safely close the output pool channel.
+	atomic.StoreUint32(&avv.execpoolOutClosed, 1)
 	close(avv.execpoolOut)
 	// wait until the worker function exists.
 	<-avv.workerWaitCh

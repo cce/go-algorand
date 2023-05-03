@@ -379,7 +379,7 @@ func TestStreamToBatchPoolShutdown(t *testing.T) { //nolint:paralleltest // Not 
 	holdTasks := make(chan interface{})
 	for x := 0; x < buffLen+runtime.NumCPU(); x++ {
 		verificationPool.EnqueueBacklog(context.Background(),
-			func(arg interface{}) interface{} { <-holdTasks; return nil }, nil, nil)
+			func(arg interface{}) interface{} { <-holdTasks; return nil }, nil, nil, nil)
 	}
 	wg := sync.WaitGroup{}
 	wg.Add(1)
@@ -395,13 +395,13 @@ func TestStreamToBatchPoolShutdown(t *testing.T) { //nolint:paralleltest // Not 
 	// Send more tasks to fill the queueof the backlog worker after the consumer shuts down
 	for x := 0; x < 100; x++ {
 		verificationPool.EnqueueBacklog(context.Background(),
-			func(arg interface{}) interface{} { <-holdTasks; return nil }, nil, nil)
+			func(arg interface{}) interface{} { <-holdTasks; return nil }, nil, nil, nil)
 	}
 
 	// make sure the EnqueueBacklogis returning err
 	for x := 0; x < 10; x++ {
 		err := verificationPool.EnqueueBacklog(context.Background(),
-			func(arg interface{}) interface{} { return nil }, nil, nil)
+			func(arg interface{}) interface{} { return nil }, nil, nil, nil)
 		require.Error(t, err, fmt.Sprintf("x = %d", x))
 	}
 
@@ -571,7 +571,7 @@ func getSaturatedExecPool(t *testing.T) (execpool.BacklogPool, chan interface{})
 			func(arg interface{}) interface{} {
 				<-holdTasks
 				return nil
-			}, nil, nil)
+			}, nil, nil, nil)
 	}
 	return verificationPool, holdTasks
 }
