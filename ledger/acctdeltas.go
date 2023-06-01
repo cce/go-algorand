@@ -1008,7 +1008,7 @@ func onlineAccountsNewRoundImpl(
 						// create a new entry.
 						var ref trackerdb.OnlineAccountRef
 						normBalance := newAcct.NormalizedOnlineBalance(proto)
-						ref, err = writer.InsertOnlineAccount(data.address, normBalance, newAcct, updRound, uint64(newAcct.VoteLastValid))
+						ref, err = writer.InsertOnlineAccount(data.address, normBalance, newAcct, updRound)
 						if err != nil {
 							return nil, err
 						}
@@ -1035,7 +1035,7 @@ func onlineAccountsNewRoundImpl(
 						return nil, err
 					}
 					var ref trackerdb.OnlineAccountRef
-					ref, err = writer.InsertOnlineAccount(data.address, 0, trackerdb.BaseOnlineAccountData{}, updRound, 0)
+					ref, err = writer.InsertOnlineAccount(data.address, 0, trackerdb.BaseOnlineAccountData{}, updRound)
 					if err != nil {
 						return nil, err
 					}
@@ -1053,7 +1053,7 @@ func onlineAccountsNewRoundImpl(
 					if prevAcct.AccountData != newAcct {
 						var ref trackerdb.OnlineAccountRef
 						normBalance := newAcct.NormalizedOnlineBalance(proto)
-						ref, err = writer.InsertOnlineAccount(data.address, normBalance, newAcct, updRound, uint64(newAcct.VoteLastValid))
+						ref, err = writer.InsertOnlineAccount(data.address, normBalance, newAcct, updRound)
 						if err != nil {
 							return nil, err
 						}

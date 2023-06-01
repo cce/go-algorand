@@ -131,7 +131,7 @@ type AccountsReaderWriter interface {
 // OnlineAccountsWriter is the write interface for:
 // - online accounts
 type OnlineAccountsWriter interface {
-	InsertOnlineAccount(addr basics.Address, normBalance uint64, data BaseOnlineAccountData, updRound uint64, voteLastValid uint64) (ref OnlineAccountRef, err error)
+	InsertOnlineAccount(addr basics.Address, normBalance uint64, data BaseOnlineAccountData, updRound uint64) (ref OnlineAccountRef, err error)
 
 	Close()
 }

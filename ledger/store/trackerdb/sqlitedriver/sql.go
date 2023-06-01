@@ -746,8 +746,8 @@ func (w accountsSQLWriter) DeleteCreatable(cidx basics.CreatableIndex, ctype bas
 	return
 }
 
-func (w onlineAccountsSQLWriter) InsertOnlineAccount(addr basics.Address, normBalance uint64, data trackerdb.BaseOnlineAccountData, updRound uint64, voteLastValid uint64) (ref trackerdb.OnlineAccountRef, err error) {
-	result, err := w.insertStmt.Exec(addr[:], normBalance, protocol.Encode(&data), updRound, voteLastValid)
+func (w onlineAccountsSQLWriter) InsertOnlineAccount(addr basics.Address, normBalance uint64, data trackerdb.BaseOnlineAccountData, updRound uint64) (ref trackerdb.OnlineAccountRef, err error) {
+	result, err := w.insertStmt.Exec(addr[:], normBalance, protocol.Encode(&data), updRound, data.VoteLastValid)
 	if err != nil {
 		return
 	}

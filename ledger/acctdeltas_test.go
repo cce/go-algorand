@@ -2564,7 +2564,7 @@ type mockOnlineAccountsWriter struct {
 	rowid int64
 }
 
-func (w *mockOnlineAccountsWriter) InsertOnlineAccount(addr basics.Address, normBalance uint64, data trackerdb.BaseOnlineAccountData, updRound uint64, voteLastValid uint64) (ref trackerdb.OnlineAccountRef, err error) {
+func (w *mockOnlineAccountsWriter) InsertOnlineAccount(addr basics.Address, normBalance uint64, data trackerdb.BaseOnlineAccountData, updRound uint64) (ref trackerdb.OnlineAccountRef, err error) {
 	w.rowid++
 	return mockEntryRef{w.rowid}, nil
 }
@@ -2940,7 +2940,7 @@ type mockOnlineAccountsErrorWriter struct {
 
 var errMockOnlineAccountsErrorWriter = errors.New("synthetic err")
 
-func (w *mockOnlineAccountsErrorWriter) InsertOnlineAccount(addr basics.Address, normBalance uint64, data trackerdb.BaseOnlineAccountData, updRound uint64, voteLastValid uint64) (ref trackerdb.OnlineAccountRef, err error) {
+func (w *mockOnlineAccountsErrorWriter) InsertOnlineAccount(addr basics.Address, normBalance uint64, data trackerdb.BaseOnlineAccountData, updRound uint64) (ref trackerdb.OnlineAccountRef, err error) {
 	return nil, errMockOnlineAccountsErrorWriter
 }
 
