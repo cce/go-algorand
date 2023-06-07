@@ -29,6 +29,8 @@ import (
 type metricsTracker struct {
 	ledgerTransactionsTotal *metrics.Counter
 	ledgerRewardClaimsTotal *metrics.Counter
+	ledgerFlushes           *metrics.Counter
+	ledgerRoundsFlushed     *metrics.Counter
 	ledgerRound             *metrics.Gauge
 	ledgerDBRound           *metrics.Gauge
 }
@@ -36,6 +38,8 @@ type metricsTracker struct {
 func (mt *metricsTracker) loadFromDisk(l ledgerForTracker, _ basics.Round) error {
 	mt.ledgerTransactionsTotal = metrics.MakeCounter(metrics.LedgerTransactionsTotal)
 	mt.ledgerRewardClaimsTotal = metrics.MakeCounter(metrics.LedgerRewardClaimsTotal)
+	mt.ledgerFlushes = metrics.MakeCounter(metrics.LedgerFlushes)
+	mt.ledgerRoundsFlushed = metrics.MakeCounter(metrics.LedgerRoundsFlushed)
 	mt.ledgerRound = metrics.MakeGauge(metrics.LedgerRound)
 	mt.ledgerDBRound = metrics.MakeGauge(metrics.LedgerDBRound)
 	return nil
@@ -49,6 +53,14 @@ func (mt *metricsTracker) close() {
 	if mt.ledgerRewardClaimsTotal != nil {
 		mt.ledgerRewardClaimsTotal.Deregister(nil)
 		mt.ledgerRewardClaimsTotal = nil
+	}
+	if mt.ledgerFlushes != nil {
+		mt.ledgerFlushes.Deregister(nil)
+		mt.ledgerFlushes = nil
+	}
+	if mt.ledgerRoundsFlushed != nil {
+		mt.ledgerRoundsFlushed.Deregister(nil)
+		mt.ledgerRoundsFlushed = nil
 	}
 	if mt.ledgerRound != nil {
 		mt.ledgerRound.Deregister(nil)
@@ -81,6 +93,8 @@ func (mt *metricsTracker) commitRound(context.Context, trackerdb.TransactionScop
 }
 
 func (mt *metricsTracker) postCommit(ctx context.Context, dcc *deferredCommitContext) {
+	mt.ledgerFlushes.Inc(nil)
+	mt.ledgerRoundsFlushed.AddUint64(uint64(dcc.offset), nil)
 	mt.ledgerDBRound.Set(uint64(dcc.newBase()))
 }
 

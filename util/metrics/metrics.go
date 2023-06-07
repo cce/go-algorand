@@ -79,6 +79,10 @@ var (
 	LedgerTransactionsTotal = MetricName{Name: "algod_ledger_transactions_total", Description: "Total number of transactions written to the ledger"}
 	// LedgerRewardClaimsTotal Total number of reward claims written to the ledger
 	LedgerRewardClaimsTotal = MetricName{Name: "algod_ledger_reward_claims_total", Description: "Total number of reward claims written to the ledger"}
+	// LedgerFlushes Total number of times the ledger was flushed
+	LedgerFlushes = MetricName{Name: "algod_ledger_flushes_total", Description: "Total number of times the ledger was flushed"}
+	// LedgerRoundsFlushed Total number of rounds flushed to the ledger
+	LedgerRoundsFlushed = MetricName{Name: "algod_ledger_rounds_flushed_total", Description: "Total number of rounds flushed to the ledger"}
 	// LedgerRound Last round written to ledger
 	LedgerRound = MetricName{Name: "algod_ledger_round", Description: "Last round written to ledger"}
 	// LedgerDBRound Last round written to ledger
