@@ -1,19 +1,14 @@
-package pubsub
+package scorelimiter
 
 import (
 	"context"
 	"fmt"
+	"math"
 	"math/rand"
-	"sort"
 	"sync"
 	"time"
 
-	"github.com/libp2p/go-libp2p/core/host"
-	"github.com/libp2p/go-libp2p/core/network"
-	"github.com/libp2p/go-libp2p/core/peer"
-	"github.com/libp2p/go-libp2p/core/protocol"
-
-	manet "github.com/multiformats/go-multiaddr/net"
+	"github.com/algorand/go-algorand/logging"
 )
 
 var (
@@ -25,6 +20,52 @@ var (
 	DefaultPeerGaterThreshold       = 0.33
 	DefaultPeerGaterGlobalDecay     = ScoreParameterDecay(2 * time.Minute)
 	DefaultPeerGaterSourceDecay     = ScoreParameterDecay(time.Hour)
+)
+
+const (
+	DefaultDecayInterval = time.Second
+	DefaultDecayToZero   = 0.01
+)
+
+// ScoreParameterDecay computes the decay factor for a parameter, assuming the DecayInterval is 1s
+// and that the value decays to zero if it drops below 0.01
+func ScoreParameterDecay(decay time.Duration) float64 {
+	return ScoreParameterDecayWithBase(decay, DefaultDecayInterval, DefaultDecayToZero)
+}
+
+// ScoreParameterDecayWithBase computes the decay factor for a parameter using base as the DecayInterval
+func ScoreParameterDecayWithBase(decay time.Duration, base time.Duration, decayToZero float64) float64 {
+	// the decay is linear, so after n ticks the value is factor^n
+	// so factor^n = decayToZero => factor = decayToZero^(1/n)
+	ticks := float64(decay / base)
+	return math.Pow(decayToZero, 1/ticks)
+}
+
+type peerID interface {
+	GetIP() (string, error)
+}
+
+type hostHost interface{}
+
+type Message interface {
+	ReceivedFrom() peerID
+	GetTopic() string
+}
+type AcceptStatus int
+
+const (
+	// AcceptNone signals to drop the incoming RPC
+	AcceptNone AcceptStatus = iota
+	// AcceptControl signals to accept the incoming RPC only for control message processing by
+	// the router. Included payload messages will _not_ be pushed to the validation queue.
+	AcceptControl
+	// AcceptAll signals to accept the incoming RPC for full processing
+	AcceptAll
+
+	RejectValidationQueueFull = "validation queue full"
+	RejectValidationThrottled = "validation throttled"
+	RejectValidationFailed    = "validation failed"
+	RejectValidationIgnored   = "validation ignored"
 )
 
 // PeerGaterParams groups together parameters that control the operation of the peer gater
@@ -119,7 +160,9 @@ func DefaultPeerGaterParams() *PeerGaterParams {
 type peerGater struct {
 	sync.Mutex
 
-	host host.Host
+	log logging.Logger
+
+	host hostHost
 
 	// gater parameters
 	params *PeerGaterParams
@@ -130,14 +173,14 @@ type peerGater struct {
 	// time of last validation throttle
 	lastThrottle time.Time
 
-	// stats per peer.ID -- multiple peer IDs may share the same stats object if they are
+	// stats per peerID -- multiple peer IDs may share the same stats object if they are
 	// colocated in the same IP
-	peerStats map[peer.ID]*peerGaterStats
+	peerStats map[peerID]*peerGaterStats
 	// stats per IP
 	ipStats map[string]*peerGaterStats
 
 	// for unit tests
-	getIP func(peer.ID) string
+	getIP func(peerID) string
 }
 
 type peerGaterStats struct {
@@ -161,39 +204,40 @@ type peerGaterStats struct {
 // in the IP address of the gated peer.
 // The Gater deactivates if there is no validation throttlinc occurring for the specified quiet
 // interval.
-func WithPeerGater(params *PeerGaterParams) Option {
-	return func(ps *PubSub) error {
-		gs, ok := ps.rt.(*GossipSubRouter)
-		if !ok {
-			return fmt.Errorf("pubsub router is not gossipsub")
-		}
+// func WithPeerGater(params *PeerGaterParams) Option {
+// 	return func(ps *PubSub) error {
+// 		gs, ok := ps.rt.(*GossipSubRouter)
+// 		if !ok {
+// 			return fmt.Errorf("pubsub router is not gossipsub")
+// 		}
 
-		err := params.validate()
-		if err != nil {
-			return err
-		}
+// 		err := params.validate()
+// 		if err != nil {
+// 			return err
+// 		}
 
-		gs.gate = newPeerGater(ps.ctx, ps.host, params)
+// 		gs.gate = newPeerGater(ps.ctx, ps.host, params)
 
-		// hook the tracer
-		if ps.tracer != nil {
-			ps.tracer.raw = append(ps.tracer.raw, gs.gate)
-		} else {
-			ps.tracer = &pubsubTracer{
-				raw:   []RawTracer{gs.gate},
-				pid:   ps.host.ID(),
-				idGen: ps.idGen,
-			}
-		}
+// 		// hook the tracer
+// 		if ps.tracer != nil {
+// 			ps.tracer.raw = append(ps.tracer.raw, gs.gate)
+// 		} else {
+// 			ps.tracer = &pubsubTracer{
+// 				raw:   []RawTracer{gs.gate},
+// 				pid:   ps.host.ID(),
+// 				idGen: ps.idGen,
+// 			}
+// 		}
 
-		return nil
-	}
-}
+// 		return nil
+// 	}
+// }
 
-func newPeerGater(ctx context.Context, host host.Host, params *PeerGaterParams) *peerGater {
+func newPeerGater(ctx context.Context, log logging.Logger, host hostHost, params *PeerGaterParams) *peerGater {
 	pg := &peerGater{
+		log:       log,
 		params:    params,
-		peerStats: make(map[peer.ID]*peerGaterStats),
+		peerStats: make(map[peerID]*peerGaterStats),
 		ipStats:   make(map[string]*peerGaterStats),
 		host:      host,
 	}
@@ -258,7 +302,7 @@ func (pg *peerGater) decayStats() {
 	}
 }
 
-func (pg *peerGater) getPeerStats(p peer.ID) *peerGaterStats {
+func (pg *peerGater) getPeerStats(p peerID) *peerGaterStats {
 	st, ok := pg.peerStats[p]
 	if !ok {
 		st = pg.getIPStats(p)
@@ -267,7 +311,7 @@ func (pg *peerGater) getPeerStats(p peer.ID) *peerGaterStats {
 	return st
 }
 
-func (pg *peerGater) getIPStats(p peer.ID) *peerGaterStats {
+func (pg *peerGater) getIPStats(p peerID) *peerGaterStats {
 	ip := pg.getPeerIP(p)
 	st, ok := pg.ipStats[ip]
 	if !ok {
@@ -277,47 +321,17 @@ func (pg *peerGater) getIPStats(p peer.ID) *peerGaterStats {
 	return st
 }
 
-func (pg *peerGater) getPeerIP(p peer.ID) string {
-	if pg.getIP != nil {
-		return pg.getIP(p)
-	}
-
-	connToIP := func(c network.Conn) string {
-		remote := c.RemoteMultiaddr()
-		ip, err := manet.ToIP(remote)
-		if err != nil {
-			log.Warnf("error determining IP for remote peer in %s: %s", remote, err)
-			return "<unknown>"
-		}
-		return ip.String()
-	}
-
-	conns := pg.host.Network().ConnsToPeer(p)
-	switch len(conns) {
-	case 0:
+func (pg *peerGater) getPeerIP(p peerID) string {
+	ip, err := p.GetIP()
+	if err != nil {
+		pg.log.Warnf("error determining IP for remote peer in %s: %s", p, err)
 		return "<unknown>"
-	case 1:
-		return connToIP(conns[0])
-	default:
-		// we have multiple connections -- order by number of streams and use the one with the
-		// most streams; it's a nightmare to track multiple IPs per peer, so pick the best one.
-		streams := make(map[string]int)
-		for _, c := range conns {
-			if c.Stat().Transient {
-				// ignore transient
-				continue
-			}
-			streams[c.ID()] = len(c.GetStreams())
-		}
-		sort.Slice(conns, func(i, j int) bool {
-			return streams[conns[i].ID()] > streams[conns[j].ID()]
-		})
-		return connToIP(conns[0])
 	}
+	return ip
 }
 
 // router interface
-func (pg *peerGater) AcceptFrom(p peer.ID) AcceptStatus {
+func (pg *peerGater) AcceptFrom(p peerID) AcceptStatus {
 	if pg == nil {
 		return AcceptAll
 	}
@@ -358,15 +372,12 @@ func (pg *peerGater) AcceptFrom(p peer.ID) AcceptStatus {
 		return AcceptAll
 	}
 
-	log.Debugf("throttling peer %s with threshold %f", p, threshold)
+	pg.log.Debugf("throttling peer %s with threshold %f", p, threshold)
 	return AcceptControl
 }
 
-// -- RawTracer interface methods
-var _ RawTracer = (*peerGater)(nil)
-
 // tracer interface
-func (pg *peerGater) AddPeer(p peer.ID, proto protocol.ID) {
+func (pg *peerGater) AddPeer(p peerID) {
 	pg.Lock()
 	defer pg.Unlock()
 
@@ -374,7 +385,7 @@ func (pg *peerGater) AddPeer(p peer.ID, proto protocol.ID) {
 	st.connected++
 }
 
-func (pg *peerGater) RemovePeer(p peer.ID) {
+func (pg *peerGater) RemovePeer(p peerID) {
 	pg.Lock()
 	defer pg.Unlock()
 
@@ -385,23 +396,18 @@ func (pg *peerGater) RemovePeer(p peer.ID) {
 	delete(pg.peerStats, p)
 }
 
-func (pg *peerGater) Join(topic string)             {}
-func (pg *peerGater) Leave(topic string)            {}
-func (pg *peerGater) Graft(p peer.ID, topic string) {}
-func (pg *peerGater) Prune(p peer.ID, topic string) {}
-
-func (pg *peerGater) ValidateMessage(msg *Message) {
+func (pg *peerGater) ValidateMessage(msg Message) {
 	pg.Lock()
 	defer pg.Unlock()
 
 	pg.validate++
 }
 
-func (pg *peerGater) DeliverMessage(msg *Message) {
+func (pg *peerGater) DeliverMessage(msg Message) {
 	pg.Lock()
 	defer pg.Unlock()
 
-	st := pg.getPeerStats(msg.ReceivedFrom)
+	st := pg.getPeerStats(msg.ReceivedFrom())
 
 	topic := msg.GetTopic()
 	weight := pg.params.TopicDeliveryWeights[topic]
@@ -413,7 +419,7 @@ func (pg *peerGater) DeliverMessage(msg *Message) {
 	st.deliver += weight
 }
 
-func (pg *peerGater) RejectMessage(msg *Message, reason string) {
+func (pg *peerGater) RejectMessage(msg Message, reason string) {
 	pg.Lock()
 	defer pg.Unlock()
 
@@ -425,29 +431,19 @@ func (pg *peerGater) RejectMessage(msg *Message, reason string) {
 		pg.throttle++
 
 	case RejectValidationIgnored:
-		st := pg.getPeerStats(msg.ReceivedFrom)
+		st := pg.getPeerStats(msg.ReceivedFrom())
 		st.ignore++
 
 	default:
-		st := pg.getPeerStats(msg.ReceivedFrom)
+		st := pg.getPeerStats(msg.ReceivedFrom())
 		st.reject++
 	}
 }
 
-func (pg *peerGater) DuplicateMessage(msg *Message) {
+func (pg *peerGater) DuplicateMessage(msg Message) {
 	pg.Lock()
 	defer pg.Unlock()
 
-	st := pg.getPeerStats(msg.ReceivedFrom)
+	st := pg.getPeerStats(msg.ReceivedFrom())
 	st.duplicate++
 }
-
-func (pg *peerGater) ThrottlePeer(p peer.ID) {}
-
-func (pg *peerGater) RecvRPC(rpc *RPC) {}
-
-func (pg *peerGater) SendRPC(rpc *RPC, p peer.ID) {}
-
-func (pg *peerGater) DropRPC(rpc *RPC, p peer.ID) {}
-
-func (pg *peerGater) UndeliverableMessage(msg *Message) {}

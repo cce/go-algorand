@@ -1,19 +1,32 @@
-package pubsub
+package scorelimiter
 
 import (
 	"context"
 	"testing"
 	"time"
 
-	"github.com/libp2p/go-libp2p/core/peer"
+	"github.com/algorand/go-algorand/logging"
 )
+
+type testPeer struct {
+	ip string
+}
+
+func (p testPeer) GetIP() (string, error) { return p.ip, nil }
+
+type testMessage struct {
+	receivedFrom peerID
+}
+
+func (m testMessage) ReceivedFrom() peerID { return m.receivedFrom }
+func (m testMessage) GetTopic() string     { return "" }
 
 func TestPeerGater(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	peerA := peer.ID("A")
 	peerAip := "1.2.3.4"
+	peerA := testPeer{ip: peerAip}
 
 	params := NewPeerGaterParams(.1, .9, .999)
 	err := params.validate()
@@ -21,24 +34,16 @@ func TestPeerGater(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	pg := newPeerGater(ctx, nil, params)
-	pg.getIP = func(p peer.ID) string {
-		switch p {
-		case peerA:
-			return peerAip
-		default:
-			return "<wtf>"
-		}
-	}
+	pg := newPeerGater(ctx, logging.Base(), nil, params)
 
-	pg.AddPeer(peerA, "")
+	pg.AddPeer(peerA)
 
 	status := pg.AcceptFrom(peerA)
 	if status != AcceptAll {
 		t.Fatal("expected AcceptAll")
 	}
 
-	msg := &Message{ReceivedFrom: peerA}
+	msg := testMessage{receivedFrom: peerA}
 
 	pg.ValidateMessage(msg)
 	status = pg.AcceptFrom(peerA)
