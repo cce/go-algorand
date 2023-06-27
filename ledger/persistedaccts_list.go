@@ -16,37 +16,35 @@
 
 package ledger
 
-import "github.com/algorand/go-algorand/ledger/store/trackerdb"
-
 // persistedAccountDataList represents a doubly linked list.
 // must initiate with newPersistedAccountList.
-type persistedAccountDataList struct {
-	root     persistedAccountDataListNode  // sentinel list element, only &root, root.prev, and root.next are used
-	freeList *persistedAccountDataListNode // preallocated nodes location
+type lruDataList[K comparable, V any] struct {
+	root     lruDataListNode[K, V]  // sentinel list element, only &root, root.prev, and root.next are used
+	freeList *lruDataListNode[K, V] // preallocated nodes location
 }
 
-type persistedAccountDataListNode struct {
+type lruDataListNode[K comparable, V any] struct {
 	// Next and previous pointers in the doubly-linked list of elements.
 	// To simplify the implementation, internally a list l is implemented
 	// as a ring, such that &l.root is both the next element of the last
 	// list element (l.Back()) and the previous element of the first list
 	// element (l.Front()).
-	next, prev *persistedAccountDataListNode
+	next, prev *lruDataListNode[K, V]
 
-	Value *trackerdb.PersistedAccountData
+	Value lruCacheValue[K, V]
 }
 
-func newPersistedAccountList() *persistedAccountDataList {
-	l := new(persistedAccountDataList)
+func newLRUDataList[K comparable, V any]() *lruDataList[K, V] {
+	l := new(lruDataList[K, V])
 	l.root.next = &l.root
 	l.root.prev = &l.root
 	// used as a helper but does not store value
-	l.freeList = new(persistedAccountDataListNode)
+	l.freeList = new(lruDataListNode[K, V])
 
 	return l
 }
 
-func (l *persistedAccountDataList) insertNodeToFreeList(otherNode *persistedAccountDataListNode) {
+func (l *lruDataList[K, V]) insertNodeToFreeList(otherNode *lruDataListNode[K, V]) {
 	otherNode.next = l.freeList.next
 	otherNode.prev = nil
 	otherNode.Value = nil
@@ -54,9 +52,9 @@ func (l *persistedAccountDataList) insertNodeToFreeList(otherNode *persistedAcco
 	l.freeList.next = otherNode
 }
 
-func (l *persistedAccountDataList) getNewNode() *persistedAccountDataListNode {
+func (l *lruDataList[K, V]) getNewNode() *lruDataListNode[K, V] {
 	if l.freeList.next == nil {
-		return new(persistedAccountDataListNode)
+		return new(lruDataListNode[K, V])
 	}
 	newNode := l.freeList.next
 	l.freeList.next = newNode.next
@@ -64,20 +62,20 @@ func (l *persistedAccountDataList) getNewNode() *persistedAccountDataListNode {
 	return newNode
 }
 
-func (l *persistedAccountDataList) allocateFreeNodes(numAllocs int) *persistedAccountDataList {
+func (l *lruDataList[K, V]) allocateFreeNodes(numAllocs int) *lruDataList[K, V] {
 	if l.freeList == nil {
 		return l
 	}
 	for i := 0; i < numAllocs; i++ {
-		l.insertNodeToFreeList(new(persistedAccountDataListNode))
+		l.insertNodeToFreeList(new(lruDataListNode[K, V]))
 	}
 
 	return l
 }
 
 // Back returns the last element of list l or nil if the list is empty.
-func (l *persistedAccountDataList) back() *persistedAccountDataListNode {
-	isEmpty := func(list *persistedAccountDataList) bool {
+func (l *lruDataList[K, V]) back() *lruDataListNode[K, V] {
+	isEmpty := func(list *lruDataList[K, V]) bool {
 		// assumes we are inserting correctly to the list - using pushFront.
 		return list.root.next == &list.root
 	}
@@ -91,7 +89,7 @@ func (l *persistedAccountDataList) back() *persistedAccountDataListNode {
 // remove removes e from l if e is an element of list l.
 // It returns the element value e.Value.
 // The element must not be nil.
-func (l *persistedAccountDataList) remove(e *persistedAccountDataListNode) {
+func (l *lruDataList[K, V]) remove(e *lruDataListNode[K, V]) {
 	e.prev.next = e.next
 	e.next.prev = e.prev
 	e.next = nil // avoid memory leaks
@@ -101,14 +99,14 @@ func (l *persistedAccountDataList) remove(e *persistedAccountDataListNode) {
 }
 
 // pushFront inserts a new element e with value v at the front of list l and returns e.
-func (l *persistedAccountDataList) pushFront(v *trackerdb.PersistedAccountData) *persistedAccountDataListNode {
+func (l *lruDataList[K, V]) pushFront(v lruCacheValue[K, V]) *lruDataListNode[K, V] {
 	newNode := l.getNewNode()
 	newNode.Value = v
 	return l.insertValue(newNode, &l.root)
 }
 
 // insertValue inserts e after at, increments l.len, and returns e.
-func (l *persistedAccountDataList) insertValue(newNode *persistedAccountDataListNode, at *persistedAccountDataListNode) *persistedAccountDataListNode {
+func (l *lruDataList[K, V]) insertValue(newNode *lruDataListNode[K, V], at *lruDataListNode[K, V]) *lruDataListNode[K, V] {
 	n := at.next
 	at.next = newNode
 	newNode.prev = at
@@ -121,7 +119,7 @@ func (l *persistedAccountDataList) insertValue(newNode *persistedAccountDataList
 // moveToFront moves element e to the front of list l.
 // If e is not an element of l, the list is not modified.
 // The element must not be nil.
-func (l *persistedAccountDataList) moveToFront(e *persistedAccountDataListNode) {
+func (l *lruDataList[K, V]) moveToFront(e *lruDataListNode[K, V]) {
 	if l.root.next == e {
 		return
 	}
@@ -129,7 +127,7 @@ func (l *persistedAccountDataList) moveToFront(e *persistedAccountDataListNode) 
 }
 
 // move moves e to next to at and returns e.
-func (l *persistedAccountDataList) move(e, at *persistedAccountDataListNode) *persistedAccountDataListNode {
+func (l *lruDataList[K, V]) move(e, at *lruDataListNode[K, V]) *lruDataListNode[K, V] {
 	if e == at {
 		return e
 	}
