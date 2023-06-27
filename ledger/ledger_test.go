@@ -3055,7 +3055,7 @@ func TestLedgerSPVerificationTracker(t *testing.T) {
 	}
 
 	verifyStateProofVerificationTracking(t, &l.spVerification, basics.Round(firstStateProofContextTargetRound),
-		1, proto.StateProofInterval, false, any)
+		1, proto.StateProofInterval, false, anyLocation)
 
 	addEmptyValidatedBlock(t, l, genesisInitState.Accounts)
 
@@ -3079,7 +3079,7 @@ func TestLedgerSPVerificationTracker(t *testing.T) {
 	triggerTrackerFlush(t, l, genesisInitState)
 
 	verifyStateProofVerificationTracking(t, &l.spVerification, basics.Round(firstStateProofContextTargetRound),
-		numOfStateProofs, proto.StateProofInterval, true, any)
+		numOfStateProofs, proto.StateProofInterval, true, anyLocation)
 
 	blk := makeNewEmptyBlock(t, l, t.Name(), genesisInitState.Accounts)
 	var stateProofReceived bookkeeping.StateProofTrackingData
@@ -3105,9 +3105,9 @@ func TestLedgerSPVerificationTracker(t *testing.T) {
 	triggerTrackerFlush(t, l, genesisInitState)
 
 	verifyStateProofVerificationTracking(t, &l.spVerification, basics.Round(firstStateProofContextTargetRound),
-		1, proto.StateProofInterval, false, any)
+		1, proto.StateProofInterval, false, anyLocation)
 	verifyStateProofVerificationTracking(t, &l.spVerification, basics.Round(firstStateProofContextTargetRound+proto.StateProofInterval),
-		numOfStateProofs-1, proto.StateProofInterval, true, any)
+		numOfStateProofs-1, proto.StateProofInterval, true, anyLocation)
 }
 
 func TestLedgerReloadStateProofVerificationTracker(t *testing.T) {
@@ -3199,7 +3199,7 @@ func TestLedgerCatchpointSPVerificationTracker(t *testing.T) {
 	numTrackedDataFirstCatchpoint := (cfg.CatchpointInterval - proto.MaxBalLookback) / proto.StateProofInterval
 
 	verifyStateProofVerificationTracking(t, &l.spVerification, basics.Round(firstStateProofDataTargetRound),
-		numTrackedDataFirstCatchpoint, proto.StateProofInterval, true, any)
+		numTrackedDataFirstCatchpoint, proto.StateProofInterval, true, anyLocation)
 	l.Close()
 
 	l, err = OpenLedger(log, dbName, inMem, genesisInitState, cfg)
@@ -3207,7 +3207,7 @@ func TestLedgerCatchpointSPVerificationTracker(t *testing.T) {
 	defer l.Close()
 
 	verifyStateProofVerificationTracking(t, &l.spVerification, basics.Round(firstStateProofDataTargetRound),
-		numTrackedDataFirstCatchpoint, proto.StateProofInterval, false, any)
+		numTrackedDataFirstCatchpoint, proto.StateProofInterval, false, anyLocation)
 
 	catchpointAccessor, accessorProgress := initializeTestCatchupAccessor(t, l, uint64(len(initkeys)))
 
@@ -3220,7 +3220,7 @@ func TestLedgerCatchpointSPVerificationTracker(t *testing.T) {
 	require.NoError(t, err)
 
 	verifyStateProofVerificationTracking(t, &l.spVerification, basics.Round(firstStateProofDataTargetRound),
-		numTrackedDataFirstCatchpoint, proto.StateProofInterval, true, any)
+		numTrackedDataFirstCatchpoint, proto.StateProofInterval, true, anyLocation)
 }
 
 func TestLedgerSPTrackerAfterReplay(t *testing.T) {
@@ -3257,7 +3257,7 @@ func TestLedgerSPTrackerAfterReplay(t *testing.T) {
 	}
 
 	// 1024
-	verifyStateProofVerificationTracking(t, &l.spVerification, firstStateProofRound, 1, proto.StateProofInterval, true, any)
+	verifyStateProofVerificationTracking(t, &l.spVerification, firstStateProofRound, 1, proto.StateProofInterval, true, anyLocation)
 	a.Equal(0, len(l.spVerification.pendingDeleteContexts))
 
 	// Add StateProof transaction (for round 512) and apply without validating, advancing the NextStateProofRound to 768
@@ -3266,7 +3266,7 @@ func TestLedgerSPTrackerAfterReplay(t *testing.T) {
 	a.NoError(err)
 	a.Equal(1, len(l.spVerification.pendingDeleteContexts))
 	// To be deleted, but not yet deleted (waiting for commit)
-	verifyStateProofVerificationTracking(t, &l.spVerification, firstStateProofRound, 1, proto.StateProofInterval, true, any)
+	verifyStateProofVerificationTracking(t, &l.spVerification, firstStateProofRound, 1, proto.StateProofInterval, true, anyLocation)
 
 	// first ensure the block is committed into blockdb
 	l.WaitForCommit(l.Latest())
@@ -3285,5 +3285,5 @@ func TestLedgerSPTrackerAfterReplay(t *testing.T) {
 	a.NoError(err)
 
 	a.Equal(1, len(l.spVerification.pendingDeleteContexts))
-	verifyStateProofVerificationTracking(t, &l.spVerification, firstStateProofRound, 1, proto.StateProofInterval, true, any)
+	verifyStateProofVerificationTracking(t, &l.spVerification, firstStateProofRound, 1, proto.StateProofInterval, true, anyLocation)
 }
