@@ -22,34 +22,19 @@ import (
 	"github.com/algorand/go-algorand/logging"
 )
 
-type lruAccounts lruCache[basics.Address, trackerdb.PersistedAccountData, lruAccountsValue]
-
-//type lruCacheValue[K comparable, V any] struct {
-//	Value *V
-//}
+type lruAccounts struct {
+	lruCache[basics.Address, trackerdb.PersistedAccountData]
+}
 
 type lruCacheValue[K comparable, V any] interface {
-	GetKey() K
-	GetValue() *V
+	CacheKey() K
 	Before(other *V) bool
 }
-
-type lruAccountsValue struct {
-	v *trackerdb.PersistedAccountData
-}
-
-func (l lruAccountsValue) GetKey() basics.Address                    { return l.v.Addr }
-func (l lruAccountsValue) GetValue() *trackerdb.PersistedAccountData { return l.v }
-func (l lruAccountsValue) Before(other *trackerdb.PersistedAccountData) bool {
-	return l.v.Before(other)
-}
-
-//type lruAccountsValue[K comparable] trackerdb.PersistedAccountData
 
 // lruAccounts provides a storage class for the most recently used accounts data.
 // It doesn't have any synchronization primitive on its own and require to be
 // synchronized by the caller.
-type lruCache[K comparable, V any, B lruCacheValue[K, V]] struct {
+type lruCache[K comparable, V lruCacheValue[K, V]] struct {
 	// dataList contain the list of persistedAccountData, where the front ones are the most "fresh"
 	// and the ones on the back are the oldest.
 	dataList *lruDataList[K, V]
@@ -72,7 +57,7 @@ type lruCache[K comparable, V any, B lruCacheValue[K, V]] struct {
 
 // init initializes the lruAccounts for use.
 // thread locking semantics : write lock
-func (m *lruCache[K, V, B]) init(log logging.Logger, pendingWrites int, pendingWritesWarnThreshold int) {
+func (m *lruCache[K, V]) init(log logging.Logger, pendingWrites int, pendingWritesWarnThreshold int) {
 	if pendingWrites > 0 {
 		m.dataList = newLRUDataList[K, V]().allocateFreeNodes(pendingWrites)
 		m.accounts = make(map[K]*lruDataListNode[K, V], pendingWrites)
@@ -86,9 +71,9 @@ func (m *lruCache[K, V, B]) init(log logging.Logger, pendingWrites int, pendingW
 
 // read the persistedAccountData object that the lruAccounts has for the given address.
 // thread locking semantics : read lock
-func (m *lruCache[K, V, B]) read(addr K) (data V, has bool) {
+func (m *lruCache[K, V]) read(addr K) (data V, has bool) {
 	if el := m.accounts[addr]; el != nil {
-		return *el.Value.GetValue(), true
+		return *el.Value, true
 	}
 	var zero V
 	return zero, false
@@ -96,14 +81,14 @@ func (m *lruCache[K, V, B]) read(addr K) (data V, has bool) {
 
 // readNotFound returns whether we have attempted to read this address but it did not exist in the db.
 // thread locking semantics : read lock
-func (m *lruCache[K, V, B]) readNotFound(addr K) bool {
+func (m *lruCache[K, V]) readNotFound(addr K) bool {
 	_, ok := m.notFound[addr]
 	return ok
 }
 
 // flushPendingWrites flushes the pending writes to the main lruAccounts cache.
 // thread locking semantics : write lock
-func (m *lruCache[K, V, B]) flushPendingWrites() {
+func (m *lruCache[K, V]) flushPendingWrites() {
 	pendingEntriesCount := len(m.pendingAccounts)
 	if pendingEntriesCount >= m.pendingWritesWarnThreshold {
 		m.log.Warnf("lruAccounts: number of entries in pendingAccounts(%d) exceed the warning threshold of %d", pendingEntriesCount, m.pendingWritesWarnThreshold)
@@ -134,7 +119,7 @@ outer2:
 // writePending write a single persistedAccountData entry to the pendingAccounts buffer.
 // the function doesn't block, and in case of a buffer overflow the entry would not be added.
 // thread locking semantics : no lock is required.
-func (m *lruCache[K, V, B]) writePending(acct V) {
+func (m *lruCache[K, V]) writePending(acct V, key K) {
 	select {
 	case m.pendingAccounts <- acct:
 	default:
@@ -144,7 +129,7 @@ func (m *lruCache[K, V, B]) writePending(acct V) {
 // writeNotFoundPending tags an address as not existing in the db.
 // the function doesn't block, and in case of a buffer overflow the entry would not be added.
 // thread locking semantics : no lock is required.
-func (m *lruCache[K, V, B]) writeNotFoundPending(addr K) {
+func (m *lruCache[K, V]) writeNotFoundPending(addr K) {
 	select {
 	case m.pendingNotFound <- addr:
 	default:
@@ -156,27 +141,27 @@ func (m *lruCache[K, V, B]) writeNotFoundPending(addr K) {
 // version of what's already on the cache or not. In all cases, the entry is going
 // to be promoted to the front of the list.
 // thread locking semantics : write lock
-func (m *lruCache[K, V, B]) write(acctData B) {
+func (m *lruCache[K, V]) write(acctData V) {
 	if m.accounts == nil {
 		return
 	}
-	if el := m.accounts[acctData.GetKey()]; el != nil {
+	if el := m.accounts[acctData.CacheKey()]; el != nil {
 		// already exists; is it a newer ?
-		if el.Value.Before(acctData.GetValue()) {
+		if (*el.Value).Before(&acctData) {
 			// we update with a newer version.
-			el.Value = acctData
+			el.Value = &acctData
 		}
 		m.dataList.moveToFront(el)
 	} else {
 		// new entry.
-		m.accounts[acctData.GetKey()] = m.dataList.pushFront(acctData.GetValue())
+		m.accounts[acctData.CacheKey()] = m.dataList.pushFront(&acctData)
 	}
 }
 
 // prune adjust the current size of the lruAccounts cache, by dropping the least
 // recently used entries.
 // thread locking semantics : write lock
-func (m *lruCache[K, V, B]) prune(newSize int) (removed int) {
+func (m *lruCache[K, V]) prune(newSize int) (removed int) {
 	if m.accounts == nil {
 		return
 	}
@@ -185,7 +170,7 @@ func (m *lruCache[K, V, B]) prune(newSize int) (removed int) {
 			break
 		}
 		back := m.dataList.back()
-		delete(m.accounts, back.Value.GetKey())
+		delete(m.accounts, (*back.Value).CacheKey())
 		m.dataList.remove(back)
 		removed++
 	}

@@ -766,13 +766,16 @@ func (rd *ResourcesData) SetAppData(ap ledgercore.AppParamsDelta, al ledgercore.
 
 // Before compares the round numbers of two persistedAccountData and determines if the current persistedAccountData
 // happened before the other.
-func (pac *PersistedAccountData) Before(other *PersistedAccountData) bool {
+func (pac PersistedAccountData) Before(other *PersistedAccountData) bool {
 	return pac.Round < other.Round
 }
 
+// CacheKey is used as a map key in the LRU cache.
+func (pac PersistedAccountData) CacheKey() basics.Address { return pac.Addr }
+
 // Before compares the round numbers of two persistedResourcesData and determines if the current persistedResourcesData
 // happened before the other.
-func (prd *PersistedResourcesData) Before(other *PersistedResourcesData) bool {
+func (prd PersistedResourcesData) Before(other *PersistedResourcesData) bool {
 	return prd.Round < other.Round
 }
 

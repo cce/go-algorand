@@ -18,12 +18,12 @@ package ledger
 
 // persistedAccountDataList represents a doubly linked list.
 // must initiate with newPersistedAccountList.
-type lruDataList[K comparable, V any] struct {
+type lruDataList[K comparable, V lruCacheValue[K, V]] struct {
 	root     lruDataListNode[K, V]  // sentinel list element, only &root, root.prev, and root.next are used
 	freeList *lruDataListNode[K, V] // preallocated nodes location
 }
 
-type lruDataListNode[K comparable, V any] struct {
+type lruDataListNode[K comparable, V lruCacheValue[K, V]] struct {
 	// Next and previous pointers in the doubly-linked list of elements.
 	// To simplify the implementation, internally a list l is implemented
 	// as a ring, such that &l.root is both the next element of the last
@@ -31,10 +31,10 @@ type lruDataListNode[K comparable, V any] struct {
 	// element (l.Front()).
 	next, prev *lruDataListNode[K, V]
 
-	Value lruCacheValue[K, V]
+	Value *V
 }
 
-func newLRUDataList[K comparable, V any]() *lruDataList[K, V] {
+func newLRUDataList[K comparable, V lruCacheValue[K, V]]() *lruDataList[K, V] {
 	l := new(lruDataList[K, V])
 	l.root.next = &l.root
 	l.root.prev = &l.root
@@ -99,7 +99,7 @@ func (l *lruDataList[K, V]) remove(e *lruDataListNode[K, V]) {
 }
 
 // pushFront inserts a new element e with value v at the front of list l and returns e.
-func (l *lruDataList[K, V]) pushFront(v lruCacheValue[K, V]) *lruDataListNode[K, V] {
+func (l *lruDataList[K, V]) pushFront(v *V) *lruDataListNode[K, V] {
 	newNode := l.getNewNode()
 	newNode.Value = v
 	return l.insertValue(newNode, &l.root)

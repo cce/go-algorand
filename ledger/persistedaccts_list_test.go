@@ -33,11 +33,11 @@ type dataList interface {
 	getRoot() dataListNode
 }
 
-func (l *persistedAccountDataList) getRoot() dataListNode {
+func (l *lruDataList[K, V]) getRoot() dataListNode {
 	return &l.root
 }
 
-func (l *persistedAccountDataListNode) getNext() dataListNode {
+func (l *lruDataListNode[K, V]) getNext() dataListNode {
 	// get rid of returning nil wrapped into an interface to let i = x.getNext(); i != nil work.
 	if l.next == nil {
 		return nil
@@ -45,7 +45,7 @@ func (l *persistedAccountDataListNode) getNext() dataListNode {
 	return l.next
 }
 
-func (l *persistedAccountDataListNode) getPrev() dataListNode {
+func (l *lruDataListNode[K, V]) getPrev() dataListNode {
 	if l.prev == nil {
 		return nil
 	}
@@ -77,29 +77,29 @@ func checkListLen(t *testing.T, l dataList, len int) bool {
 
 func TestRemoveFromListAD(t *testing.T) {
 	partitiontest.PartitionTest(t)
-	l := newPersistedAccountList()
+	l := newLRUDataList[basics.Address, trackerdb.PersistedAccountData]()
 	e1 := l.pushFront(&trackerdb.PersistedAccountData{Addr: basics.Address{1}})
 	e2 := l.pushFront(&trackerdb.PersistedAccountData{Addr: basics.Address{2}})
 	e3 := l.pushFront(&trackerdb.PersistedAccountData{Addr: basics.Address{3}})
-	checkListPointersAD(t, l, []*persistedAccountDataListNode{e3, e2, e1})
+	checkListPointersAD(t, l, []*lruDataListNode[basics.Address, trackerdb.PersistedAccountData]{e3, e2, e1})
 
 	l.remove(e2)
-	checkListPointersAD(t, l, []*persistedAccountDataListNode{e3, e1})
+	checkListPointersAD(t, l, []*lruDataListNode[basics.Address, trackerdb.PersistedAccountData]{e3, e1})
 	l.remove(e3)
-	checkListPointersAD(t, l, []*persistedAccountDataListNode{e1})
+	checkListPointersAD(t, l, []*lruDataListNode[basics.Address, trackerdb.PersistedAccountData]{e1})
 }
 
 func TestAddingNewNodeWithAllocatedFreeListAD(t *testing.T) {
 	partitiontest.PartitionTest(t)
-	l := newPersistedAccountList().allocateFreeNodes(10)
-	checkListPointersAD(t, l, []*persistedAccountDataListNode{})
+	l := newLRUDataList[basics.Address, trackerdb.PersistedAccountData]().allocateFreeNodes(10)
+	checkListPointersAD(t, l, []*lruDataListNode[basics.Address, trackerdb.PersistedAccountData]{})
 	if countListSize(l.freeList) != 10 {
 		t.Errorf("free list did not allocate nodes")
 		return
 	}
 	// test elements
 	e1 := l.pushFront(&trackerdb.PersistedAccountData{Addr: basics.Address{1}})
-	checkListPointersAD(t, l, []*persistedAccountDataListNode{e1})
+	checkListPointersAD(t, l, []*lruDataListNode[basics.Address, trackerdb.PersistedAccountData]{e1})
 
 	if countListSize(l.freeList) != 9 {
 		t.Errorf("free list did not provide a node on new list entry")
@@ -122,7 +122,7 @@ func checkListPointers(t *testing.T, l dataList, es []dataListNode) {
 }
 
 // inspect that the list seems like the array
-func checkListPointersAD(t *testing.T, l *persistedAccountDataList, es []*persistedAccountDataListNode) {
+func checkListPointersAD[K comparable, V lruCacheValue[K, V]](t *testing.T, l *lruDataList[K, V], es []*lruDataListNode[K, V]) {
 	es2 := make([]dataListNode, len(es))
 	for i, el := range es {
 		es2[i] = el
@@ -165,8 +165,8 @@ func pointerInspection(t *testing.T, es []dataListNode, root dataListNode) {
 
 func TestMultielementListPositioningAD(t *testing.T) {
 	partitiontest.PartitionTest(t)
-	l := newPersistedAccountList()
-	checkListPointersAD(t, l, []*persistedAccountDataListNode{})
+	l := newLRUDataList[basics.Address, trackerdb.PersistedAccountData]()
+	checkListPointersAD(t, l, []*lruDataListNode[basics.Address, trackerdb.PersistedAccountData]{})
 	// test elements
 	e2 := l.pushFront(&trackerdb.PersistedAccountData{Addr: basics.Address{2}})
 	e1 := l.pushFront(&trackerdb.PersistedAccountData{Addr: basics.Address{1}})
@@ -174,73 +174,73 @@ func TestMultielementListPositioningAD(t *testing.T) {
 	e4 := l.pushFront(&trackerdb.PersistedAccountData{Addr: basics.Address{4}})
 	e5 := l.pushFront(&trackerdb.PersistedAccountData{Addr: basics.Address{5}})
 
-	checkListPointersAD(t, l, []*persistedAccountDataListNode{e5, e4, e3, e1, e2})
+	checkListPointersAD(t, l, []*lruDataListNode[basics.Address, trackerdb.PersistedAccountData]{e5, e4, e3, e1, e2})
 
 	l.move(e4, e1)
-	checkListPointersAD(t, l, []*persistedAccountDataListNode{e5, e3, e1, e4, e2})
+	checkListPointersAD(t, l, []*lruDataListNode[basics.Address, trackerdb.PersistedAccountData]{e5, e3, e1, e4, e2})
 
 	l.remove(e5)
-	checkListPointersAD(t, l, []*persistedAccountDataListNode{e3, e1, e4, e2})
+	checkListPointersAD(t, l, []*lruDataListNode[basics.Address, trackerdb.PersistedAccountData]{e3, e1, e4, e2})
 
 	l.move(e1, e4) // swap in middle
-	checkListPointersAD(t, l, []*persistedAccountDataListNode{e3, e4, e1, e2})
+	checkListPointersAD(t, l, []*lruDataListNode[basics.Address, trackerdb.PersistedAccountData]{e3, e4, e1, e2})
 
 	l.moveToFront(e4)
-	checkListPointersAD(t, l, []*persistedAccountDataListNode{e4, e3, e1, e2})
+	checkListPointersAD(t, l, []*lruDataListNode[basics.Address, trackerdb.PersistedAccountData]{e4, e3, e1, e2})
 
 	l.remove(e2)
-	checkListPointersAD(t, l, []*persistedAccountDataListNode{e4, e3, e1})
+	checkListPointersAD(t, l, []*lruDataListNode[basics.Address, trackerdb.PersistedAccountData]{e4, e3, e1})
 
 	l.moveToFront(e3) // move from middle
-	checkListPointersAD(t, l, []*persistedAccountDataListNode{e3, e4, e1})
+	checkListPointersAD(t, l, []*lruDataListNode[basics.Address, trackerdb.PersistedAccountData]{e3, e4, e1})
 
 	l.moveToFront(e1) // move from end
-	checkListPointersAD(t, l, []*persistedAccountDataListNode{e1, e3, e4})
+	checkListPointersAD(t, l, []*lruDataListNode[basics.Address, trackerdb.PersistedAccountData]{e1, e3, e4})
 
 	l.moveToFront(e1) // no movement
-	checkListPointersAD(t, l, []*persistedAccountDataListNode{e1, e3, e4})
+	checkListPointersAD(t, l, []*lruDataListNode[basics.Address, trackerdb.PersistedAccountData]{e1, e3, e4})
 
 	e2 = l.pushFront(&trackerdb.PersistedAccountData{Addr: basics.Address{2}})
-	checkListPointersAD(t, l, []*persistedAccountDataListNode{e2, e1, e3, e4})
+	checkListPointersAD(t, l, []*lruDataListNode[basics.Address, trackerdb.PersistedAccountData]{e2, e1, e3, e4})
 
 	l.remove(e3) // removing from middle
-	checkListPointersAD(t, l, []*persistedAccountDataListNode{e2, e1, e4})
+	checkListPointersAD(t, l, []*lruDataListNode[basics.Address, trackerdb.PersistedAccountData]{e2, e1, e4})
 
 	l.remove(e4) // removing from end
-	checkListPointersAD(t, l, []*persistedAccountDataListNode{e2, e1})
+	checkListPointersAD(t, l, []*lruDataListNode[basics.Address, trackerdb.PersistedAccountData]{e2, e1})
 
 	l.move(e2, e1) // swapping between two elements
-	checkListPointersAD(t, l, []*persistedAccountDataListNode{e1, e2})
+	checkListPointersAD(t, l, []*lruDataListNode[basics.Address, trackerdb.PersistedAccountData]{e1, e2})
 
 	l.remove(e1) // removing front
-	checkListPointersAD(t, l, []*persistedAccountDataListNode{e2})
+	checkListPointersAD(t, l, []*lruDataListNode[basics.Address, trackerdb.PersistedAccountData]{e2})
 
 	l.move(e2, l.back()) // swapping element with itself.
-	checkListPointersAD(t, l, []*persistedAccountDataListNode{e2})
+	checkListPointersAD(t, l, []*lruDataListNode[basics.Address, trackerdb.PersistedAccountData]{e2})
 
 	l.remove(e2) // remove last one
-	checkListPointersAD(t, l, []*persistedAccountDataListNode{})
+	checkListPointersAD(t, l, []*lruDataListNode[basics.Address, trackerdb.PersistedAccountData]{})
 }
 
 func TestSingleElementListPositioningAD(t *testing.T) {
 	partitiontest.PartitionTest(t)
-	l := newPersistedAccountList()
-	checkListPointersAD(t, l, []*persistedAccountDataListNode{})
+	l := newLRUDataList[basics.Address, trackerdb.PersistedAccountData]()
+	checkListPointersAD(t, l, []*lruDataListNode[basics.Address, trackerdb.PersistedAccountData]{})
 	e := l.pushFront(&trackerdb.PersistedAccountData{Addr: basics.Address{1}})
-	checkListPointersAD(t, l, []*persistedAccountDataListNode{e})
+	checkListPointersAD(t, l, []*lruDataListNode[basics.Address, trackerdb.PersistedAccountData]{e})
 	l.moveToFront(e)
-	checkListPointersAD(t, l, []*persistedAccountDataListNode{e})
+	checkListPointersAD(t, l, []*lruDataListNode[basics.Address, trackerdb.PersistedAccountData]{e})
 	l.remove(e)
-	checkListPointersAD(t, l, []*persistedAccountDataListNode{})
+	checkListPointersAD(t, l, []*lruDataListNode[basics.Address, trackerdb.PersistedAccountData]{})
 }
 
 func TestRemovedNodeShouldBeMovedToFreeListAD(t *testing.T) {
 	partitiontest.PartitionTest(t)
-	l := newPersistedAccountList()
+	l := newLRUDataList[basics.Address, trackerdb.PersistedAccountData]()
 	e1 := l.pushFront(&trackerdb.PersistedAccountData{Addr: basics.Address{1}})
 	e2 := l.pushFront(&trackerdb.PersistedAccountData{Addr: basics.Address{2}})
 
-	checkListPointersAD(t, l, []*persistedAccountDataListNode{e2, e1})
+	checkListPointersAD(t, l, []*lruDataListNode[basics.Address, trackerdb.PersistedAccountData]{e2, e1})
 
 	e := l.back()
 	l.remove(e)
