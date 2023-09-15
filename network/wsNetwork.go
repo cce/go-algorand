@@ -432,7 +432,7 @@ func (wn *msgBroadcaster) BroadcastArray(ctx context.Context, tags []protocol.Ta
 		//wn.log.Debugf("broadcast enqueued nowait")
 		return nil
 	default:
-		wn.log.Debugf("broadcast queue full")
+		//wn.log.Debugf("broadcast queue full")
 		// broadcastQueue full, and we're not going to wait for it.
 		networkBroadcastQueueFull.Inc(nil)
 		return errBcastQFull

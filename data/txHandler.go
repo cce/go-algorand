@@ -481,7 +481,7 @@ func (handler *TxHandler) postProcessCheckedTxn(wi *txBacklogMsg) {
 	err := handler.txPool.Remember(verifiedTxGroup)
 	if err != nil {
 		handler.rememberReportErrors(err)
-		logging.Base().Debugf("could not remember tx: %v", err)
+		//logging.Base().Debugf("could not remember tx: %v", err)
 		return
 	}
 
@@ -490,7 +490,7 @@ func (handler *TxHandler) postProcessCheckedTxn(wi *txBacklogMsg) {
 	// if we remembered without any error ( i.e. txpool wasn't full ), then we should pin these transactions.
 	err = handler.ledger.VerifiedTransactionCache().Pin(verifiedTxGroup)
 	if err != nil {
-		logging.Base().Infof("unable to pin transaction: %v", err)
+		//logging.Base().Infof("unable to pin transaction: %v", err)
 	}
 
 	// We reencode here instead of using rawmsg.Data to avoid broadcasting non-canonical encodings
@@ -692,19 +692,19 @@ func (handler *TxHandler) LocalTransaction(txgroup []transactions.SignedTxn) err
 // Note that this also checks the consistency of the transaction's group hash,
 // which is required for safe transaction signature caching behavior.
 func (handler *TxHandler) checkAlreadyCommitted(tx *txBacklogMsg) (processingDone bool) {
-	if logging.Base().IsLevelEnabled(logging.Debug) {
-		txids := make([]transactions.Txid, len(tx.unverifiedTxGroup))
-		for i := range tx.unverifiedTxGroup {
-			txids[i] = tx.unverifiedTxGroup[i].ID()
-		}
-		logging.Base().Debugf("got a tx group with IDs %v", txids)
-	}
+	// if logging.Base().IsLevelEnabled(logging.Debug) {
+	// 	txids := make([]transactions.Txid, len(tx.unverifiedTxGroup))
+	// 	for i := range tx.unverifiedTxGroup {
+	// 		txids[i] = tx.unverifiedTxGroup[i].ID()
+	// 	}
+	// 	logging.Base().Debugf("got a tx group with IDs %v", txids)
+	// }
 
 	// do a quick test to check that this transaction could potentially be committed, to reject dup pending transactions
 	err := handler.txPool.Test(tx.unverifiedTxGroup)
 	if err != nil {
 		handler.checkReportErrors(err)
-		logging.Base().Debugf("txPool rejected transaction: %v", err)
+		//logging.Base().Debugf("txPool rejected transaction: %v", err)
 		return true
 	}
 	return false
@@ -744,7 +744,7 @@ func (handler *TxHandler) processDecoded(unverifiedTxGroup []transactions.Signed
 	// save the transaction, if it has high enough fee and not already in the cache
 	err = handler.txPool.Remember(verifiedTxGroup)
 	if err != nil {
-		logging.Base().Debugf("could not remember tx: %v", err)
+		//logging.Base().Debugf("could not remember tx: %v", err)
 		return network.OutgoingMessage{}, true
 	}
 
