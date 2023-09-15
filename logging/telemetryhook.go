@@ -218,7 +218,7 @@ type elasticClientLogger struct {
 func (el elasticClientLogger) Printf(format string, v ...interface{}) {
 	switch el.level {
 	case logrus.DebugLevel:
-		el.logger.Debugf(format, v...)
+		//el.logger.Debugf(format, v...)
 	case logrus.InfoLevel:
 		el.logger.Infof(format, v...)
 	case logrus.WarnLevel:
