@@ -612,31 +612,33 @@ func (p *player) handleMessageEvent(r routerHandle, e messageEvent) (actions []a
 			err := ef.(filteredEvent).Err
 			return append(actions, disconnectAction(e, err))
 		case voteFiltered:
-			ver := e.Proto.Version
-			proto := config.Consensus[ver]
-			if !proto.DynamicFilterTimeout {
-				// Dynamic filter timeout feature disabled, so we filter the
-				// message as usual (keeping earlier behavior)
-				err := ef.(filteredEvent).Err
-				return append(actions, ignoreAction(e, err))
-			}
-			switch ef.(filteredEvent).CredentialTrackingNote {
-			case VerifiedBetterCredentialForTracking:
-				// Dynamic filter timeout feature enabled, and current message
-				// updated the best credential arrival time
-				v := e.Input.Vote
-				return append(actions, relayAction(e, protocol.AgreementVoteTag, v.u()))
-			case NoCredentialTrackingImpact:
-				// Dynamic filter timeout feature enabled, but current message
-				// may not update the best credential arrival time, so we should
-				// ignore it.
-				err := ef.(filteredEvent).Err
-				return append(actions, ignoreAction(e, err))
-			case UnverifiedBetterCredentialForTracking:
-				// There is another case, where the message
-				// MayImpactCredentialTracking. This case does not return here,
-				// so we continue processing the message.
-			}
+			err := ef.(filteredEvent).Err
+			return append(actions, ignoreAction(e, err))
+			// ver := e.Proto.Version
+			// proto := config.Consensus[ver]
+			// if !proto.DynamicFilterTimeout {
+			// 	// Dynamic filter timeout feature disabled, so we filter the
+			// 	// message as usual (keeping earlier behavior)
+			// 	err := ef.(filteredEvent).Err
+			// 	return append(actions, ignoreAction(e, err))
+			// }
+			// switch ef.(filteredEvent).CredentialTrackingNote {
+			// case VerifiedBetterCredentialForTracking:
+			// 	// Dynamic filter timeout feature enabled, and current message
+			// 	// updated the best credential arrival time
+			// 	v := e.Input.Vote
+			// 	return append(actions, relayAction(e, protocol.AgreementVoteTag, v.u()))
+			// case NoCredentialTrackingImpact:
+			// 	// Dynamic filter timeout feature enabled, but current message
+			// 	// may not update the best credential arrival time, so we should
+			// 	// ignore it.
+			// 	err := ef.(filteredEvent).Err
+			// 	return append(actions, ignoreAction(e, err))
+			// case UnverifiedBetterCredentialForTracking:
+			// 	// There is another case, where the message
+			// 	// MayImpactCredentialTracking. This case does not return here,
+			// 	// so we continue processing the message.
+			// }
 		}
 
 		if e.t() == votePresent {
