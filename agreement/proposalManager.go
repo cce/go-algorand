@@ -174,26 +174,26 @@ func (m *proposalManager) handleMessageEvent(r routerHandle, p player, e filtera
 			r.t.timeRPlus1().RecVoteReceived(v)
 		}
 
-		e := r.dispatch(p, e.messageEvent, proposalMachineRound, v.R.Round, v.R.Period, 0)
+		return r.dispatch(p, e.messageEvent, proposalMachineRound, v.R.Round, v.R.Period, 0)
 
-		if keepForCredentialTracking {
-			// we only continued processing this vote to see whether it updates the credential arrival time
-			err := makeSerErrf("proposalManager: ignoring proposal-vote due to age: %v", err)
-			if e.t() == voteFiltered {
-				credNote := e.(filteredEvent).CredentialTrackingNote
-				if credNote != VerifiedBetterCredentialForTracking && credNote != NoCredentialTrackingImpact {
-					// It should be impossible to hit this condition
-					r.t.log.Debugf("vote verified may only be tagged with NewBestCredential/NoCredentialTrackingImpact but saw %v", credNote)
-					credNote = NoCredentialTrackingImpact
-				}
-				// indicate whether it updated
-				return filteredEvent{T: voteFiltered, Err: err, CredentialTrackingNote: credNote}
-			}
-			// the proposalMachineRound didn't filter the vote, so it must have had a better credential,
-			// indicate that it did cause updating its state
-			return filteredEvent{T: voteFiltered, Err: err, CredentialTrackingNote: VerifiedBetterCredentialForTracking}
-		}
-		return e
+		// if keepForCredentialTracking {
+		// 	// we only continued processing this vote to see whether it updates the credential arrival time
+		// 	err := makeSerErrf("proposalManager: ignoring proposal-vote due to age: %v", err)
+		// 	if e.t() == voteFiltered {
+		// 		credNote := e.(filteredEvent).CredentialTrackingNote
+		// 		if credNote != VerifiedBetterCredentialForTracking && credNote != NoCredentialTrackingImpact {
+		// 			// It should be impossible to hit this condition
+		// 			r.t.log.Debugf("vote verified may only be tagged with NewBestCredential/NoCredentialTrackingImpact but saw %v", credNote)
+		// 			credNote = NoCredentialTrackingImpact
+		// 		}
+		// 		// indicate whether it updated
+		// 		return filteredEvent{T: voteFiltered, Err: err, CredentialTrackingNote: credNote}
+		// 	}
+		// 	// the proposalMachineRound didn't filter the vote, so it must have had a better credential,
+		// 	// indicate that it did cause updating its state
+		// 	return filteredEvent{T: voteFiltered, Err: err, CredentialTrackingNote: VerifiedBetterCredentialForTracking}
+		// }
+		// return e
 
 	case payloadPresent:
 		propRound := e.Input.UnauthenticatedProposal.Round()
