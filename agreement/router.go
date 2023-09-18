@@ -153,11 +153,12 @@ func (router *rootRouter) update(state player, r round, gc bool) {
 	if gc {
 		children := make(map[round]*roundRouter)
 		for r, c := range router.Children {
-			// We may still receive credential messages from old rounds. Keep
-			// old round routers around, for as long as those credentials may
-			// arrive to keep track of them.
-			rr := r + credentialRoundLag
-			if rr >= state.Round {
+			// // We may still receive credential messages from old rounds. Keep
+			// // old round routers around, for as long as those credentials may
+			// // arrive to keep track of them.
+			// rr := r + credentialRoundLag
+			// if rr >= state.Round {
+			if r >= state.Round {
 				children[r] = c
 			}
 		}
