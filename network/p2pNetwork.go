@@ -462,17 +462,17 @@ func (n *P2PNetwork) txTopicHandleLoop() {
 
 // txTopicValidator calls txHandler to validate and process incoming transactions.
 func (n *P2PNetwork) txTopicValidator(ctx context.Context, peerID peer.ID, msg *pubsub.Message) pubsub.ValidationResult {
+	// if we sent the message, don't validate it
+	if msg.ReceivedFrom == n.service.ID() {
+		return pubsub.ValidationAccept
+	}
+
 	inmsg := IncomingMessage{
-		Sender:   gossipSubPeer{peerID: msg.ReceivedFrom, net: n},
+		Sender:   gossipSubPeer{peerID: peerID, net: n},
 		Tag:      protocol.TxnTag,
 		Data:     msg.Data,
 		Net:      n,
 		Received: time.Now().UnixNano(),
-	}
-
-	// if we sent the message, don't validate it
-	if msg.ReceivedFrom == n.service.ID() {
-		return pubsub.ValidationAccept
 	}
 
 	n.peerStatsMu.Lock()

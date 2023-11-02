@@ -33,8 +33,6 @@ type HybridP2PNetwork struct {
 	p2pNetwork *P2PNetwork
 	wsNetwork  *WebsocketNetwork
 	genesisID  string
-
-	useP2PAddress bool
 }
 
 // NewHybridP2PNetwork constructs a GossipNode that combines P2PNetwork and WebsocketNetwork
@@ -59,10 +57,7 @@ func NewHybridP2PNetwork(log logging.Logger, cfg config.Local, datadir string, p
 
 // Address implements GossipNode
 func (n *HybridP2PNetwork) Address() (string, bool) {
-	// TODO map from configuration? used for REST API, goal status, algod.net, etc
-	if n.useP2PAddress {
-		return n.p2pNetwork.Address()
-	}
+	// For now, provide wsNetwork address: this function is used by goal status, algod.net, etc
 	return n.wsNetwork.Address()
 }
 
@@ -163,7 +158,7 @@ func (n *HybridP2PNetwork) Start() {
 // Stop implements GossipNode
 func (n *HybridP2PNetwork) Stop() {
 	_ = n.runParallel(func(net GossipNode) error {
-		net.Start()
+		net.Stop()
 		return nil
 	})
 }
