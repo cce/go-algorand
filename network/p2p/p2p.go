@@ -74,8 +74,7 @@ const AlgorandWsProtocol = "/algorand-ws/1.0.0"
 
 const dialTimeout = 30 * time.Second
 
-// MakeService creates a P2P service instance
-func MakeService(ctx context.Context, log logging.Logger, cfg config.Local, datadir string, pstore peerstore.Peerstore, wsStreamHandler StreamHandler) (*serviceImpl, error) {
+func makeHost(cfg config.Local, datadir string, pstore peerstore.Peerstore) (host.Host, error) {
 	// load stored peer ID, or make ephemeral peer ID
 	privKey, err := GetPrivKey(cfg, datadir)
 	if err != nil {
@@ -97,7 +96,7 @@ func MakeService(ctx context.Context, log logging.Logger, cfg config.Local, data
 		listenAddr = "/ip4/0.0.0.0/tcp/0"
 	}
 
-	h, err := libp2p.New(
+	return libp2p.New(
 		libp2p.Identity(privKey),
 		libp2p.UserAgent(ua),
 		libp2p.Transport(tcp.NewTCPTransport),
@@ -106,6 +105,11 @@ func MakeService(ctx context.Context, log logging.Logger, cfg config.Local, data
 		libp2p.ListenAddrStrings(listenAddr),
 		libp2p.Security(noise.ID, noise.New),
 	)
+}
+
+// MakeService creates a P2P service instance
+func MakeService(ctx context.Context, log logging.Logger, cfg config.Local, datadir string, pstore peerstore.Peerstore, wsStreamHandler StreamHandler) (*serviceImpl, error) {
+	h, err := makeHost(cfg, datadir, pstore)
 	if err != nil {
 		return nil, err
 	}
