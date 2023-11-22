@@ -134,10 +134,12 @@ func (m *proposalManager) handleMessageEvent(r routerHandle, p player, e filtera
 
 	switch e.t() {
 	case votePresent:
-		verifyForCredHistory, err := m.filterProposalVote(p, r, e.Input.UnauthenticatedVote, e.FreshnessData)
+		//verifyForCredHistory, err := m.filterProposalVote(p, r, e.Input.UnauthenticatedVote, e.FreshnessData)
+		_, err := m.filterProposalVote(p, r, e.Input.UnauthenticatedVote, e.FreshnessData)
 		if err != nil {
 			credTrackingNote := NoCredentialTrackingImpact
-			if verifyForCredHistory {
+			if proposalUsedForCredentialHistory(e.FreshnessData.PlayerRound, e.Input.UnauthenticatedVote) {
+				//if verifyForCredHistory {
 				// mark filtered votes that may still update the best credential arrival time
 				// the freshness check failed, but we still want to verify this proposal-vote for credential tracking
 				credTrackingNote = UnverifiedBetterCredentialForTracking
