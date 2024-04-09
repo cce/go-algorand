@@ -84,7 +84,7 @@ func (ub UnfinishedBlock) ContainsAddress(addr basics.Address) bool {
 }
 
 // FinishBlock completes the block and returns a proposable block.
-func (ub UnfinishedBlock) FinishBlock(s committee.Seed, proposer basics.Address, eligible bool) bookkeeping.Block {
+func (ub UnfinishedBlock) FinishBlock(s committee.Seed, proposer basics.Address, eligible bool) bookkeeping.ProposableBlock {
 	return ub.blk.WithProposer(s, proposer, eligible)
 }
 

@@ -102,7 +102,7 @@ type proposal struct {
 	validatedAt time.Duration
 }
 
-func makeProposalFromProposableBlock(blk ProposableBlock, pf crypto.VrfProof, origPer period, origProp basics.Address) proposal {
+func makeProposalFromProposableBlock(blk bookkeeping.ProposableBlock, pf crypto.VrfProof, origPer period, origProp basics.Address) proposal {
 	e := blk.Block()
 	var payload unauthenticatedProposal
 	payload.Block = e
@@ -295,7 +295,7 @@ func payoutEligible(rnd basics.Round, proposer basics.Address, ledger LedgerRead
 	return eligible, balanceRecord, nil
 }
 
-func proposalForBlock(address basics.Address, vrf *crypto.VRFSecrets, blk UnfinishedBlock, period period, ledger LedgerReader) (proposal, proposalValue, error) {
+func proposalForBlock(address basics.Address, vrf *crypto.VRFSecrets, blk bookkeeping.UnfinishedBlock, period period, ledger LedgerReader) (proposal, proposalValue, error) {
 	rnd := blk.Round()
 
 	cparams, err := ledger.ConsensusParams(ParamsRound(rnd))

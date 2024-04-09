@@ -314,7 +314,7 @@ func (block Block) ProposerPayout() basics.MicroAlgos {
 }
 
 // WithProposer returns a copy of the Block with a modified seed and associated proposer
-func (block Block) WithProposer(s committee.Seed, proposer basics.Address, eligible bool) Block {
+func (block Block) WithProposer(s committee.Seed, proposer basics.Address, eligible bool) ProposableBlock {
 	newblock := block
 	newblock.BlockHeader.Seed = s
 	// agreement is telling us who the proposer is and if they're eligible, but
@@ -328,7 +328,7 @@ func (block Block) WithProposer(s committee.Seed, proposer basics.Address, eligi
 		newblock.BlockHeader.ProposerPayout = basics.MicroAlgos{}
 	}
 
-	return newblock
+	return proposableBlock(newblock)
 }
 
 // NextRewardsState computes the RewardsState of the subsequent round
@@ -895,4 +895,34 @@ func (bh BlockHeader) EncodeSignedTxn(st transactions.SignedTxn, ad transactions
 	stb.SignedTxn = st
 	stb.ApplyData = ad
 	return stb, nil
+}
+
+// An UnfinishedBlock represents a Block produced by a BlockFactory
+// and must be finalized before being proposed by agreement.
+type UnfinishedBlock interface {
+	// WithSeed creates a copy of this UnfinishedBlock with its
+	// cryptographically random seed set to the given value.
+	//
+	// Calls to Seed() or to Digest() on the copy's Block must
+	// reflect the value of the new seed.
+	FinishBlock(seed committee.Seed, proposer basics.Address, eligible bool) ProposableBlock
+
+	Round() basics.Round
+}
+
+// An ProposableBlock represents a Block produced by a BlockFactory,
+// that was later finalized by providing the seed and the proposer,
+// and can now be proposed by agreement.
+type ProposableBlock interface {
+	// Block returns the underlying block that has been assembled.
+	Block() Block
+}
+
+// proposableBlock exists in order to be a distinct type from Block, statically
+// ensuring that a FinishBlock step has occurred.
+type proposableBlock Block
+
+// Block() returns the proposableBlock as a Block
+func (pb proposableBlock) Block() Block {
+	return Block(pb)
 }

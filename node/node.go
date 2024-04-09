@@ -1289,37 +1289,8 @@ func (node *AlgorandFullNode) SetCatchpointCatchupMode(catchpointCatchupMode boo
 
 }
 
-// validatedBlock satisfies agreement.ValidatedBlock
-type validatedBlock struct {
-	vb *ledgercore.ValidatedBlock
-}
-
-// unfinishedBlock satisfies agreement.UnfinishedBlock
-type unfinishedBlock struct {
-	blk *ledgercore.UnfinishedBlock
-}
-
-// proposableBlock satisfies agreement.ProposableBlock
-type proposableBlock struct {
-	blk bookkeeping.Block
-}
-
-// Block satisfies the agreement.ValidatedBlock interface.
-func (vb validatedBlock) Block() bookkeeping.Block { return vb.vb.Block() }
-
-// Round satisfies the agreement.UnfinishedBlock interface.
-func (ub unfinishedBlock) Round() basics.Round { return ub.blk.Round() }
-
-// Block satisfies the agreement.ProposableBlock interface.
-func (ab proposableBlock) Block() bookkeeping.Block { return ab.blk }
-
-// FinishBlock satisfies the agreement.UnfinishedBlock interface.
-func (ub unfinishedBlock) FinishBlock(s committee.Seed, proposer basics.Address, eligible bool) agreement.ProposableBlock {
-	return proposableBlock{blk: ub.blk.FinishBlock(s, proposer, eligible)}
-}
-
 // AssembleBlock implements Ledger.AssembleBlock.
-func (node *AlgorandFullNode) AssembleBlock(round basics.Round, addrs []basics.Address) (agreement.UnfinishedBlock, error) {
+func (node *AlgorandFullNode) AssembleBlock(round basics.Round, addrs []basics.Address) (bookkeeping.UnfinishedBlock, error) {
 	deadline := time.Now().Add(node.config.ProposalAssemblyTime)
 	ub, err := node.transactionPool.AssembleBlock(round, deadline)
 	if err != nil {
@@ -1350,7 +1321,7 @@ func (node *AlgorandFullNode) AssembleBlock(round basics.Round, addrs []basics.A
 		}
 	}
 
-	return unfinishedBlock{blk: ub}, nil
+	return ub, nil
 }
 
 // getOfflineClosedStatus will return an int with the appropriate bit(s) set if it is offline and/or online

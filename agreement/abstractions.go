@@ -78,28 +78,7 @@ type BlockFactory interface {
 	// produce an UnfinishedBlock for the given round. If an insufficient number of
 	// nodes on the network can assemble entries, the agreement protocol may
 	// lose liveness.
-	AssembleBlock(rnd basics.Round, partAddresses []basics.Address) (UnfinishedBlock, error)
-}
-
-// An UnfinishedBlock represents a Block produced by a BlockFactory
-// and must be finalized before being proposed by agreement.
-type UnfinishedBlock interface {
-	// WithSeed creates a copy of this UnfinishedBlock with its
-	// cryptographically random seed set to the given value.
-	//
-	// Calls to Seed() or to Digest() on the copy's Block must
-	// reflect the value of the new seed.
-	FinishBlock(seed committee.Seed, proposer basics.Address, eligible bool) ProposableBlock
-
-	Round() basics.Round
-}
-
-// An ProposableBlock represents a Block produced by a BlockFactory,
-// that was later finalized by providing the seed and the proposer,
-// and can now be proposed by agreement.
-type ProposableBlock interface {
-	// Block returns the underlying block that has been assembled.
-	Block() bookkeeping.Block
+	AssembleBlock(rnd basics.Round, partAddresses []basics.Address) (bookkeeping.UnfinishedBlock, error)
 }
 
 // A Ledger represents the sequence of Entries agreed upon by the protocol.

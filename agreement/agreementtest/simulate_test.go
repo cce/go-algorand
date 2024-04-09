@@ -83,7 +83,7 @@ func (b testValidatedBlock) Round() basics.Round {
 	return b.Inside.Round()
 }
 
-func (b testValidatedBlock) FinishBlock(s committee.Seed, proposer basics.Address, eligible bool) agreement.ProposableBlock {
+func (b testValidatedBlock) FinishBlock(s committee.Seed, proposer basics.Address, eligible bool) bookkeeping.ProposableBlock {
 	b.Inside.BlockHeader.Seed = s
 	b.Inside.BlockHeader.Proposer = proposer
 	if !eligible {
@@ -102,7 +102,7 @@ type testBlockFactory struct {
 	Owner int
 }
 
-func (f testBlockFactory) AssembleBlock(r basics.Round, addrs []basics.Address) (agreement.UnfinishedBlock, error) {
+func (f testBlockFactory) AssembleBlock(r basics.Round, addrs []basics.Address) (bookkeeping.UnfinishedBlock, error) {
 	return testValidatedBlock{Inside: bookkeeping.Block{BlockHeader: bookkeeping.BlockHeader{Round: r}}}, nil
 }
 
