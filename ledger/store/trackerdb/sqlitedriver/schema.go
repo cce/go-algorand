@@ -939,7 +939,7 @@ func convertOnlineRoundParamsTail(ctx context.Context, e db.Executable) error {
 	return err
 }
 
-func accountsAddCreatableTypeColumn(ctx context.Context, e db.Executable) error {
+func accountsAddCreatableTypeColumn(ctx context.Context, e db.Executable, updateCol bool) error {
 	// Run ctype resources migration if it hasn't run yet
 	var creatableTypeOnResourcesRun bool
 	err := e.QueryRow("SELECT 1 FROM pragma_table_info('resources') WHERE name='ctype'").Scan(&creatableTypeOnResourcesRun)
@@ -960,59 +960,65 @@ func accountsAddCreatableTypeColumn(ctx context.Context, e db.Executable) error 
 		return err
 	}
 
-	// Insert into the new resources table using the data from the old resources table joined with the assetcreators table
-	insertStmt := `INSERT INTO resources_ctype_migration (addrid, aidx, data, ctype)
+	if updateCol {
+		// Insert into the new resources table using the data from the old resources table joined with the assetcreators table
+		insertStmt := `INSERT INTO resources_ctype_migration (addrid, aidx, data, ctype)
 		SELECT r.addrid, r.aidx, r.data, COALESCE(ac.ctype, -1)
 		FROM resources r
 		LEFT JOIN assetcreators ac ON r.aidx = ac.asset`
-	_, err = e.ExecContext(ctx, insertStmt)
-	if err != nil {
-		return err
-	}
-
-	updateStmt, err := e.PrepareContext(ctx, "UPDATE resources_ctype_migration SET ctype = ? WHERE addrid = ? AND aidx = ?")
-	if err != nil {
-		return err
-	}
-	defer updateStmt.Close()
-
-	// Pull resource entries into memory where ctype is not set
-	rows, err := e.QueryContext(ctx, "SELECT addrid, aidx, data FROM resources_ctype_migration r WHERE ctype = -1")
-	if err != nil {
-		return err
-	}
-	defer rows.Close()
-
-	// Update the ctype column for subset of resources where ctype was not resolved from assetcreators
-	for rows.Next() {
-		var addrid int64
-		var aidx int64
-		var encodedData []byte
-		err = rows.Scan(&addrid, &aidx, &encodedData)
+		_, err = e.ExecContext(ctx, insertStmt)
 		if err != nil {
 			return err
 		}
 
-		var rd trackerdb.ResourcesData
-		err = protocol.Decode(encodedData, &rd)
+		updateStmt, err := e.PrepareContext(ctx, "UPDATE resources_ctype_migration SET ctype = ? WHERE addrid = ? AND aidx = ?")
 		if err != nil {
 			return err
 		}
+		defer updateStmt.Close()
 
-		var ct basics.CreatableType
-		if rd.IsAsset() && rd.IsApp() {
-			// This should never happen!
-			return fmt.Errorf("unable to discern creatable type for addrid %d, resource %d", addrid, aidx)
-		} else if rd.IsAsset() {
-			ct = basics.AssetCreatable
-		} else if rd.IsApp() {
-			ct = basics.AppCreatable
-		} else { // This should never happen!
-			return fmt.Errorf("unable to discern creatable type for addrid %d, resource %d", addrid, aidx)
+		// Pull resource entries into memory where ctype is not set
+		rows, err := e.QueryContext(ctx, "SELECT addrid, aidx, data FROM resources_ctype_migration r WHERE ctype = -1")
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+
+		// Update the ctype column for subset of resources where ctype was not resolved from assetcreators
+		for rows.Next() {
+			var addrid int64
+			var aidx int64
+			var encodedData []byte
+			err = rows.Scan(&addrid, &aidx, &encodedData)
+			if err != nil {
+				return err
+			}
+
+			var rd trackerdb.ResourcesData
+			err = protocol.Decode(encodedData, &rd)
+			if err != nil {
+				return err
+			}
+
+			var ct basics.CreatableType
+			if rd.IsAsset() && rd.IsApp() {
+				// This should never happen!
+				return fmt.Errorf("unable to discern creatable type for addrid %d, resource %d", addrid, aidx)
+			} else if rd.IsAsset() {
+				ct = basics.AssetCreatable
+			} else if rd.IsApp() {
+				ct = basics.AppCreatable
+			} else { // This should never happen!
+				return fmt.Errorf("unable to discern creatable type for addrid %d, resource %d", addrid, aidx)
+			}
+
+			_, err = updateStmt.ExecContext(ctx, ct, addrid, aidx)
+			if err != nil {
+				return err
+			}
 		}
 
-		_, err = updateStmt.ExecContext(ctx, ct, addrid, aidx)
-		if err != nil {
+		if err := rows.Err(); err != nil {
 			return err
 		}
 	}
@@ -1030,5 +1036,5 @@ func accountsAddCreatableTypeColumn(ctx context.Context, e db.Executable) error 
 			return err
 		}
 	}
-	return rows.Err()
+	return nil
 }

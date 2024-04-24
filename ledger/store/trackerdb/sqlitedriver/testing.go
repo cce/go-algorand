@@ -101,7 +101,7 @@ func AccountsInitTest(tb testing.TB, e db.Executable, initAccounts map[basics.Ad
 	err = performKVStoreNullBlobConversion(context.Background(), e)
 	require.NoError(tb, err)
 
-	err = accountsAddCreatableTypeColumn(context.Background(), e)
+	err = accountsAddCreatableTypeColumn(context.Background(), e, true)
 	require.NoError(tb, err)
 
 	return newDB
@@ -124,6 +124,14 @@ func AccountsUpdateSchemaTest(ctx context.Context, e db.Executable) (err error) 
 	// this line creates kvstore table, even if it is not required in accountDBVersion 6 -> 7
 	// or in later version where we need kvstore table, some tests will fail
 	if err := accountsCreateBoxTable(ctx, e); err != nil {
+		return err
+	}
+	// this adds the resources table and ctype column, even if it is not required in accountDBVersion 6 -> 7
+	// but this also prevents some tests from failing.
+	if err := accountsCreateResourceTable(ctx, e); err != nil {
+		return err
+	}
+	if err := accountsAddCreatableTypeColumn(ctx, e, false); err != nil {
 		return err
 	}
 	return createStateProofVerificationTable(ctx, e)
