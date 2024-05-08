@@ -199,9 +199,14 @@ func cgoBatchVerificationImpl(messages []byte, msgLengths []uint64, publicKeys [
 		C.size_t(numberOfSignatures),
 		(*C.int)(&valid[0]))
 
+	if allValid == 0 { // all signatures valid
+		return true, nil
+	}
+
+	// not all signatures valid, identify the failed signatures
 	failed = make([]bool, numberOfSignatures)
 	for i := 0; i < numberOfSignatures; i++ {
 		failed[i] = (valid[i] == 0)
 	}
-	return allValid == 0, failed
+	return false, failed
 }
