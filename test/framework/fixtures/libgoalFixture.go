@@ -1,4 +1,4 @@
-// Copyright (C) 2019-2022 Algorand, Inc.
+// Copyright (C) 2019-2024 Algorand, Inc.
 // This file is part of go-algorand
 //
 // go-algorand is free software: you can redistribute it and/or modify
@@ -22,6 +22,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"syscall"
 	"testing"
@@ -33,8 +34,9 @@ import (
 	"github.com/algorand/go-algorand/config"
 	"github.com/algorand/go-algorand/crypto"
 	"github.com/algorand/go-algorand/crypto/merklearray"
-	generatedV2 "github.com/algorand/go-algorand/daemon/algod/api/server/v2/generated"
+	"github.com/algorand/go-algorand/daemon/algod/api/server/v2/generated/model"
 	"github.com/algorand/go-algorand/data/account"
+	"github.com/algorand/go-algorand/data/basics"
 	"github.com/algorand/go-algorand/gen"
 	"github.com/algorand/go-algorand/libgoal"
 	"github.com/algorand/go-algorand/netdeploy"
@@ -65,20 +67,42 @@ func (f *RestClientFixture) SetConsensus(consensus config.ConsensusProtocols) {
 	f.consensus = consensus
 }
 
+// FasterConsensus speeds up the given consensus version in two ways. The seed
+// refresh lookback is set to 8 (instead of 80), so the 320 round balance
+// lookback becomes 32.  And, if the architecture implies it can be handled,
+// round times are shortened by lowering vote timeouts.
+func (f *RestClientFixture) FasterConsensus(ver protocol.ConsensusVersion, timeout time.Duration, lookback basics.Round) {
+	if f.consensus == nil {
+		f.consensus = make(config.ConsensusProtocols)
+	}
+	fast := config.Consensus[ver]
+	// balanceRound is 4 * SeedRefreshInterval
+	if lookback%4 != 0 {
+		panic(fmt.Sprintf("lookback must be a multiple of 4, got %d", lookback))
+	}
+	fast.SeedRefreshInterval = uint64(lookback) / 4
+	// and speed up the rounds while we're at it
+	if runtime.GOARCH == "amd64" || runtime.GOARCH == "arm64" {
+		fast.AgreementFilterTimeoutPeriod0 = timeout
+		fast.AgreementFilterTimeout = timeout
+	}
+	f.consensus[ver] = fast
+}
+
 // Setup is called to initialize the test fixture for the test(s)
-func (f *LibGoalFixture) Setup(t TestingTB, templateFile string) {
-	f.setup(t, t.Name(), templateFile, true)
+func (f *LibGoalFixture) Setup(t TestingTB, templateFile string, overrides ...netdeploy.TemplateOverride) {
+	f.setup(t, t.Name(), templateFile, true, overrides...)
 }
 
 // SetupNoStart is called to initialize the test fixture for the test(s)
 // but does not start the network before returning.  Call NC.Start() to start later.
-func (f *LibGoalFixture) SetupNoStart(t TestingTB, templateFile string) {
-	f.setup(t, t.Name(), templateFile, false)
+func (f *LibGoalFixture) SetupNoStart(t TestingTB, templateFile string, overrides ...netdeploy.TemplateOverride) {
+	f.setup(t, t.Name(), templateFile, false, overrides...)
 }
 
 // SetupShared is called to initialize the test fixture that will be used for multiple tests
-func (f *LibGoalFixture) SetupShared(testName string, templateFile string) {
-	f.setup(nil, testName, templateFile, true)
+func (f *LibGoalFixture) SetupShared(testName string, templateFile string, overrides ...netdeploy.TemplateOverride) {
+	f.setup(nil, testName, templateFile, true, overrides...)
 }
 
 // Genesis returns the genesis data for this fixture
@@ -86,7 +110,7 @@ func (f *LibGoalFixture) Genesis() gen.GenesisData {
 	return f.network.Genesis()
 }
 
-func (f *LibGoalFixture) setup(test TestingTB, testName string, templateFile string, startNetwork bool) {
+func (f *LibGoalFixture) setup(test TestingTB, testName string, templateFile string, startNetwork bool, overrides ...netdeploy.TemplateOverride) {
 	// Call initialize for our base implementation
 	f.initialize(f)
 	f.t = SynchronizedTest(test)
@@ -96,7 +120,9 @@ func (f *LibGoalFixture) setup(test TestingTB, testName string, templateFile str
 	os.RemoveAll(f.rootDir)
 	templateFile = filepath.Join(f.testDataDir, templateFile)
 	importKeys := false // Don't automatically import root keys when creating folders, we'll import on-demand
-	network, err := netdeploy.CreateNetworkFromTemplate("test", f.rootDir, templateFile, f.binDir, importKeys, f.nodeExitWithError, f.consensus, false)
+	file, err := os.Open(templateFile)
+	f.failOnError(err, "Template file could not be opened: %v")
+	network, err := netdeploy.CreateNetworkFromTemplate("test", f.rootDir, file, f.binDir, importKeys, f.nodeExitWithError, f.consensus, overrides...)
 	f.failOnError(err, "CreateNetworkFromTemplate failed: %v")
 	f.network = network
 
@@ -117,6 +143,12 @@ func (f *LibGoalFixture) nodeExitWithError(nc *nodecontrol.NodeController, err e
 	if f.t == nil {
 		return
 	}
+
+	defer func() {
+		f.t.Logf("Node at %s has terminated with an error: %v. Dumping logs...", nc.GetDataDir(), err)
+		f.dumpLogs(filepath.Join(nc.GetDataDir(), "node.log"))
+	}()
+
 	exitError, ok := err.(*exec.ExitError)
 	if !ok {
 		require.NoError(f.t, err, "Node at %s has terminated with an error", nc.GetDataDir())
@@ -311,7 +343,9 @@ func (f *LibGoalFixture) ShutdownImpl(preserveData bool) {
 	f.NC.StopKMD()
 	if preserveData {
 		f.network.Stop(f.binDir)
-		f.dumpLogs(filepath.Join(f.PrimaryDataDir(), "node.log"))
+		for _, relayDir := range f.RelayDataDirs() {
+			f.dumpLogs(filepath.Join(relayDir, "node.log"))
+		}
 		for _, nodeDir := range f.NodeDataDirs() {
 			f.dumpLogs(filepath.Join(nodeDir, "node.log"))
 		}
@@ -357,6 +391,11 @@ func (f *LibGoalFixture) failOnError(err error, message string) {
 // PrimaryDataDir returns the data directory for the PrimaryNode for the network
 func (f *LibGoalFixture) PrimaryDataDir() string {
 	return f.network.PrimaryDataDir()
+}
+
+// RelayDataDirs returns the relays data directories for the network (including the primary relay)
+func (f *LibGoalFixture) RelayDataDirs() []string {
+	return f.network.RelayDataDirs()
 }
 
 // NodeDataDirs returns the (non-Primary) data directories for the network
@@ -479,7 +518,7 @@ func (f *LibGoalFixture) CurrentConsensusParams() (consensus config.ConsensusPar
 
 // ConsensusParams returns the consensus parameters for the protocol from the specified round
 func (f *LibGoalFixture) ConsensusParams(round uint64) (consensus config.ConsensusParams, err error) {
-	block, err := f.LibGoalClient.Block(round)
+	block, err := f.LibGoalClient.BookkeepingBlock(round)
 	if err != nil {
 		return
 	}
@@ -526,31 +565,31 @@ func (f *LibGoalFixture) MinFeeAndBalance(round uint64) (minFee, minBalance uint
 }
 
 // TransactionProof returns a proof for usage in merkle array verification for the provided transaction.
-func (f *LibGoalFixture) TransactionProof(txid string, round uint64, hashType crypto.HashType) (generatedV2.TransactionProofResponse, merklearray.SingleLeafProof, error) {
+func (f *LibGoalFixture) TransactionProof(txid string, round uint64, hashType crypto.HashType) (model.TransactionProofResponse, merklearray.SingleLeafProof, error) {
 	proofResp, err := f.LibGoalClient.TransactionProof(txid, round, hashType)
 	if err != nil {
-		return generatedV2.TransactionProofResponse{}, merklearray.SingleLeafProof{}, err
+		return model.TransactionProofResponse{}, merklearray.SingleLeafProof{}, err
 	}
 
-	proof, err := merklearray.ProofDataToSingleLeafProof(proofResp.Hashtype, proofResp.Treedepth, proofResp.Proof)
+	proof, err := merklearray.ProofDataToSingleLeafProof(string(proofResp.Hashtype), proofResp.Proof)
 	if err != nil {
-		return generatedV2.TransactionProofResponse{}, merklearray.SingleLeafProof{}, err
+		return model.TransactionProofResponse{}, merklearray.SingleLeafProof{}, err
 	}
 
 	return proofResp, proof, nil
 }
 
 // LightBlockHeaderProof returns a proof for usage in merkle array verification for the provided block's light block header.
-func (f *LibGoalFixture) LightBlockHeaderProof(round uint64) (generatedV2.LightBlockHeaderProofResponse, merklearray.SingleLeafProof, error) {
+func (f *LibGoalFixture) LightBlockHeaderProof(round uint64) (model.LightBlockHeaderProofResponse, merklearray.SingleLeafProof, error) {
 	proofResp, err := f.LibGoalClient.LightBlockHeaderProof(round)
 
 	if err != nil {
-		return generatedV2.LightBlockHeaderProofResponse{}, merklearray.SingleLeafProof{}, err
+		return model.LightBlockHeaderProofResponse{}, merklearray.SingleLeafProof{}, err
 	}
 
-	proof, err := merklearray.ProofDataToSingleLeafProof(crypto.Sha256.String(), proofResp.Treedepth, proofResp.Proof)
+	proof, err := merklearray.ProofDataToSingleLeafProof(crypto.Sha256.String(), proofResp.Proof)
 	if err != nil {
-		return generatedV2.LightBlockHeaderProofResponse{}, merklearray.SingleLeafProof{}, err
+		return model.LightBlockHeaderProofResponse{}, merklearray.SingleLeafProof{}, err
 	}
 
 	return proofResp, proof, nil

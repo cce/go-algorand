@@ -1,4 +1,4 @@
-// Copyright (C) 2019-2022 Algorand, Inc.
+// Copyright (C) 2019-2024 Algorand, Inc.
 // This file is part of go-algorand
 //
 // go-algorand is free software: you can redistribute it and/or modify
@@ -223,7 +223,7 @@ func (n *asyncPseudonode) loadRoundParticipationKeys(voteRound basics.Round) []a
 		n.participationKeys = nil
 		return nil
 	}
-	balanceRound := balanceRound(voteRound, cparams)
+	balanceRound := BalanceRound(voteRound, cparams)
 
 	// measure the time it takes to acquire the voting keys.
 	beforeVotingKeysTime := time.Now()
@@ -296,7 +296,11 @@ func (n asyncPseudonode) makeProposals(traceCtx context.Context, round basics.Ro
 	)
 	defer span.End()
 
-	ve, err := n.factory.AssembleBlock(traceCtx, round)
+	addresses := make([]basics.Address, len(accounts))
+	for i := range accounts {
+		addresses[i] = accounts[i].Account
+	}
+	ve, err := n.factory.AssembleBlock(traceCtx, round, addresses)
 	if err != nil {
 		if err != ErrAssembleBlockRoundStale {
 			n.log.Errorf("pseudonode.makeProposals: could not generate a proposal for round %d: %v", round, err)
@@ -307,17 +311,17 @@ func (n asyncPseudonode) makeProposals(traceCtx context.Context, round basics.Ro
 	votes := make([]unauthenticatedVote, 0, len(accounts))
 	proposals := make([]proposal, 0, len(accounts))
 	for _, acc := range accounts {
-		payload, proposal, err := proposalForBlock(traceCtx, acc.Account, acc.VRF, ve, period, n.ledger)
-		if err != nil {
-			n.log.Errorf("pseudonode.makeProposals: could not create proposal for block (address %v): %v", acc.Account, err)
+		payload, proposal, pErr := proposalForBlock(traceCtx, acc.Account, acc.VRF, ve, period, n.ledger)
+		if pErr != nil {
+			n.log.Errorf("pseudonode.makeProposals: could not create proposal for block (address %v): %v", acc.Account, pErr)
 			continue
 		}
 
 		// attempt to make the vote
 		rv := rawVote{Sender: acc.Account, Round: round, Period: period, Step: propose, Proposal: proposal}
-		uv, err := makeVote(rv, acc.VotingSigner(), acc.VRF, n.ledger)
-		if err != nil {
-			n.log.Warnf("pseudonode.makeProposals: could not create vote: %v", err)
+		uv, vErr := makeVote(rv, acc.VotingSigner(), acc.VRF, n.ledger)
+		if vErr != nil {
+			n.log.Warnf("pseudonode.makeProposals: could not create vote: %v", vErr)
 			continue
 		}
 
@@ -406,7 +410,7 @@ func (t pseudonodeVotesTask) execute(verifier *AsyncVoteVerifier, quit chan stru
 	asyncVerifyingVotes := len(unverifiedVotes)
 	for i, uv := range unverifiedVotes {
 		msg := message{Tag: protocol.AgreementVoteTag, UnauthenticatedVote: uv, traceCtx: traceCtx}
-		err := verifier.verifyVote(context.TODO(), t.node.ledger, uv, i, msg, results)
+		err := verifier.verifyVote(context.TODO(), t.node.ledger, uv, uint64(i), msg, results)
 		if err != nil {
 			orderedResults[i].err = err
 			t.node.log.Infof("pseudonode.makeVotes: failed to enqueue vote verification for (%d, %d): %v", t.round, t.period, err)
@@ -537,7 +541,7 @@ func (t pseudonodeProposalsTask) execute(verifier *AsyncVoteVerifier, quit chan 
 	asyncVerifyingVotes := len(votes)
 	for i, uv := range votes {
 		msg := message{Tag: protocol.AgreementVoteTag, UnauthenticatedVote: uv, traceCtx: traceCtx}
-		err := verifier.verifyVote(context.TODO(), t.node.ledger, uv, i, msg, results)
+		err := verifier.verifyVote(context.TODO(), t.node.ledger, uv, uint64(i), msg, results)
 		if err != nil {
 			cryptoOutputs[i].err = err
 			t.node.log.Infof("pseudonode.makeProposals: failed to enqueue vote verification for (%d, %d): %v", t.round, t.period, err)

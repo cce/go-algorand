@@ -1,6 +1,6 @@
 #!/usr/bin/python3
 #
-# Copyright (C) 2019-2022 Algorand, Inc.
+# Copyright (C) 2019-2024 Algorand, Inc.
 # This file is part of go-algorand
 #
 # go-algorand is free software: you can redistribute it and/or modify
@@ -165,6 +165,12 @@ class algodDir:
     def get_goroutine_snapshot(self, snapshot_name=None, outdir=None):
         return self.get_pprof_snapshot('goroutine', snapshot_name, outdir)
 
+    def get_mutex_snapshot(self, snapshot_name=None, outdir=None):
+        return self.get_pprof_snapshot('mutex', snapshot_name, outdir)
+
+    def get_block_snapshot(self, snapshot_name=None, outdir=None):
+        return self.get_pprof_snapshot('block', snapshot_name, outdir)
+
     def get_cpu_profile(self, snapshot_name=None, outdir=None, seconds=90):
         seconds = int(seconds)
         return self.get_pprof_snapshot('profile?seconds={}'.format(seconds), snapshot_name, outdir, timeout=seconds+20)
@@ -262,6 +268,7 @@ class watcher:
         self.they = []
         self.netseen = set()
         self.latest_round = None
+        self.rounds_seen = set()
         self.bi_hosts = []
         self.netToAd = {}
         os.makedirs(self.args.out, exist_ok=True)
@@ -351,6 +358,12 @@ class watcher:
         if self.args.goroutine:
             for ad in self.they:
                 ad.get_goroutine_snapshot(snapshot_name, outdir=self.args.out)
+        if self.args.mutex:
+            for ad in self.they:
+                ad.get_mutex_snapshot(snapshot_name, outdir=self.args.out)
+        if self.args.block:
+            for ad in self.they:
+                ad.get_block_snapshot(snapshot_name, outdir=self.args.out)
         if self.args.metrics:
             threads = []
             for ad in self.they:
@@ -371,6 +384,7 @@ class watcher:
             biq.put({})
             mrt.join()
             self.latest_round = mr.maxrnd
+            self.rounds_seen.add(self.latest_round)
             logger.debug('blockinfo done')
         if get_cpu:
             cpuSample = durationToSeconds(self.args.cpu_sample) or 90
@@ -394,6 +408,16 @@ class watcher:
         self.prevsnapshots = newsnapshots
         logger.debug('end snapshot %s', snapshot_name)
 
+    def summaries(self):
+        if self.args.out and self.rounds_seen:
+            rpath = os.path.join(self.args.out, 'rounds.json')
+            with open(rpath, 'wt') as fout:
+                json.dump({
+                    "min": min(self.rounds_seen),
+                    "max": max(self.rounds_seen),
+                    "all": sorted(self.rounds_seen),
+                }, fout)
+
 def durationToSeconds(rts):
     if rts is None:
         return None
@@ -415,7 +439,9 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('data_dirs', nargs='*', help='list paths to algorand datadirs to grab heap profile from')
     ap.add_argument('--no-heap', dest='heaps', default=True, action='store_false', help='disable heap snapshot capture')
+    ap.add_argument('--block', default=False, action='store_true', help='also capture goroutines block profile')
     ap.add_argument('--goroutine', default=False, action='store_true', help='also capture goroutine profile')
+    ap.add_argument('--mutex', default=False, action='store_true', help='also capture mutex profile')
     ap.add_argument('--metrics', default=False, action='store_true', help='also capture /metrics counts')
     ap.add_argument('--blockinfo', default=False, action='store_true', help='also capture block header info')
     ap.add_argument('--period', default=None, help='seconds between automatically capturing')
@@ -439,6 +465,12 @@ def main():
         logging.basicConfig(level=logging.DEBUG)
     else:
         logging.basicConfig(level=logging.INFO)
+
+    if args.block:
+        print('Ensure algod is compiled with `runtime.SetBlockProfileRate()` set')
+
+    if args.mutex:
+        print('Ensure algod is compiled with `runtime.SetMutexProfileFraction()` set')
 
     for nre in args.tf_name_re:
         try:
@@ -499,6 +531,7 @@ def main():
             if (end_round is not None) and (app.latest_round is not None) and (app.latest_round >= end_round):
                 logger.debug('after end round %d > %d', app.latest_round, end_round)
                 return 0
+    app.summaries()
     return 0
 
 if __name__ == '__main__':
