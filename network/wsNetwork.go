@@ -1370,7 +1370,7 @@ func (wn *WebsocketNetwork) getPeersChangeCounter() int32 {
 
 // preparePeerData prepares batches of data for sending.
 // It performs optional zstd compression for proposal massages
-func (wn *msgBroadcaster) preparePeerData(request broadcastRequest, prio bool, peers []*wsPeer) ([][]byte, [][]byte, []crypto.Digest, bool) {
+func (wn *msgBroadcaster) preparePeerData(traceCtx context.Context, request broadcastRequest, prio bool, peers []*wsPeer) ([][]byte, [][]byte, []crypto.Digest, bool) {
 	// determine if there is a payload proposal and peers supporting compressed payloads
 	wantCompression := false
 	containsPrioPPTag := false
@@ -1452,7 +1452,7 @@ func (wn *msgBroadcaster) innerBroadcast(request broadcastRequest, prio bool, pe
 	}
 
 	start := time.Now()
-	data, dataWithCompression, digests, containsPrioPPTag := wn.preparePeerData(request, prio, peers)
+	data, dataWithCompression, digests, containsPrioPPTag := wn.preparePeerData(traceCtx, request, prio, peers)
 
 	// first send to all the easy outbound peers who don't block, get them started.
 	sentMessageCount := 0

@@ -78,7 +78,7 @@ type BlockFactory interface {
 	// produce an UnfinishedBlock for the given round. If an insufficient number of
 	// nodes on the network can assemble entries, the agreement protocol may
 	// lose liveness.
-	AssembleBlock(context.Context, rnd basics.Round, partAddresses []basics.Address) (UnfinishedBlock, error)
+	AssembleBlock(ctx context.Context, rnd basics.Round, partAddresses []basics.Address) (UnfinishedBlock, error)
 }
 
 // An UnfinishedBlock represents a Block produced by a BlockFactory

@@ -3768,7 +3768,7 @@ func TestPreparePeerData(t *testing.T) {
 
 	peers := []*wsPeer{}
 	wn := WebsocketNetwork{}
-	data, comp, digests, seenPrioPPTag := wn.broadcaster.preparePeerData(req, false, peers)
+	data, comp, digests, seenPrioPPTag := wn.broadcaster.preparePeerData(context.TODO(), req, false, peers)
 	require.NotEmpty(t, data)
 	require.Empty(t, comp)
 	require.NotEmpty(t, digests)
@@ -3788,7 +3788,7 @@ func TestPreparePeerData(t *testing.T) {
 		features: pfCompressedProposal,
 	}
 	peers = []*wsPeer{&peer1, &peer2}
-	data, comp, digests, seenPrioPPTag = wn.broadcaster.preparePeerData(req, true, peers)
+	data, comp, digests, seenPrioPPTag = wn.broadcaster.preparePeerData(context.TODO(), req, true, peers)
 	require.NotEmpty(t, data)
 	require.NotEmpty(t, comp)
 	require.NotEmpty(t, digests)

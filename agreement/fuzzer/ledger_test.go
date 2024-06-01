@@ -116,7 +116,7 @@ type testBlockFactory struct {
 	Owner int
 }
 
-func (f testBlockFactory) AssembleBlock(r basics.Round, _ []basics.Address) (agreement.UnfinishedBlock, error) {
+func (f testBlockFactory) AssembleBlock(_ context.Context, r basics.Round, _ []basics.Address) (agreement.UnfinishedBlock, error) {
 	return testValidatedBlock{Inside: bookkeeping.Block{BlockHeader: bookkeeping.BlockHeader{Round: r}}}, nil
 }
 

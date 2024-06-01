@@ -294,7 +294,7 @@ func (n serializedPseudonode) MakeProposals(ctx context.Context, r round, p peri
 	n.loadRoundParticipationKeys(n.ledger.NextRound())
 	participation := n.participationKeys
 
-	proposals, votes := n.makeProposals(r, p, participation)
+	proposals, votes := n.makeProposals(context.Background(), r, p, participation)
 
 	out := make(chan externalEvent, len(proposals)+len(votes))
 	defer close(out)
@@ -351,7 +351,7 @@ func (n serializedPseudonode) MakeVotes(ctx context.Context, r round, p period, 
 	n.loadRoundParticipationKeys(r)
 	participation := n.participationKeys
 
-	votes := n.makeVotes(r, p, s, prop, participation)
+	votes := n.makeVotes(context.Background(), r, p, s, prop, participation)
 
 	out := make(chan externalEvent, len(votes))
 	defer close(out)

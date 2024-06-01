@@ -325,7 +325,7 @@ func BenchmarkCryptoVerifierProposalVertification(b *testing.B) {
 	pn.loadRoundParticipationKeys(ledger.NextRound())
 	participation := pn.participationKeys
 
-	proposals, _ := pn.makeProposals(ledger.NextRound(), Period, participation)
+	proposals, _ := pn.makeProposals(context.Background(), ledger.NextRound(), Period, participation)
 
 	ctx := context.Background()
 

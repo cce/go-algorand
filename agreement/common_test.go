@@ -188,7 +188,7 @@ type testBlockFactory struct {
 	Owner int
 }
 
-func (f testBlockFactory) AssembleBlock(r basics.Round, _ []basics.Address) (UnfinishedBlock, error) {
+func (f testBlockFactory) AssembleBlock(_ context.Context, r basics.Round, _ []basics.Address) (UnfinishedBlock, error) {
 	return testValidatedBlock{Inside: bookkeeping.Block{BlockHeader: bookkeeping.BlockHeader{Round: r}}}, nil
 }
 
@@ -421,7 +421,7 @@ type testAccountData struct {
 }
 
 func makeProposalsTesting(accs testAccountData, round basics.Round, period period, factory BlockFactory, ledger Ledger) (ps []proposal, vs []vote) {
-	ve, err := factory.AssembleBlock(round, accs.addresses)
+	ve, err := factory.AssembleBlock(context.Background(), round, accs.addresses)
 	if err != nil {
 		logging.Base().Errorf("Could not generate a proposal for round %d: %v", round, err)
 		return nil, nil
@@ -431,7 +431,7 @@ func makeProposalsTesting(accs testAccountData, round basics.Round, period perio
 	var votes []vote
 	proposals := make([]proposal, 0)
 	for i := range accs.addresses {
-		payload, proposal, err := proposalForBlock(accs.addresses[i], accs.vrfs[i], ve, period, ledger)
+		payload, proposal, err := proposalForBlock(context.Background(), accs.addresses[i], accs.vrfs[i], ve, period, ledger)
 		if err != nil {
 			logging.Base().Errorf("proposalForBlock could not create proposal under address %v (corrupt VRF key?): %v", accs.addresses[i], err)
 			return
@@ -533,7 +533,7 @@ func (v *voteMakerHelper) MakeRandomProposalValue() *proposalValue {
 
 func (v *voteMakerHelper) MakeRandomProposalPayload(t *testing.T, r round) (*proposal, *proposalValue) {
 	f := testBlockFactory{Owner: 1}
-	ub, err := f.AssembleBlock(r, nil)
+	ub, err := f.AssembleBlock(context.Background(), r, nil)
 	require.NoError(t, err)
 	pb := ub.FinishBlock(committee.Seed{}, basics.Address{}, false)
 

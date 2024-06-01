@@ -297,7 +297,7 @@ func startMessageCounter(n *networkImpl) *messageCounter {
 				atomic.AddUint32(&m.votes, 1)
 				buf := msg.Data
 				if len(buf) > 1 {
-					n.Broadcast(protocol.ProposalPayloadTag, buf[1:])
+					n.Broadcast(context.Background(), protocol.ProposalPayloadTag, buf[1:])
 				}
 			case msg := <-payloadChan:
 				proposals := atomic.AddUint32(&m.proposals, 1)

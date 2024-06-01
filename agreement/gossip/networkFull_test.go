@@ -17,6 +17,7 @@
 package gossip
 
 import (
+	"context"
 	"os"
 	"sync"
 	"testing"
@@ -149,7 +150,7 @@ func testNetworkImplAgreementVote(t *testing.T, nodesCount int, cfg config.Local
 	nets, counters := spinNetwork(t, nodesCount, cfg)
 	defer shutdownNetwork(nets, counters)
 
-	nets[0].Broadcast(protocol.AgreementVoteTag, []byte{1})
+	nets[0].Broadcast(context.Background(), protocol.AgreementVoteTag, []byte{1})
 	for i, counter := range counters {
 		if i != 0 {
 			if !counter.verify(t, 1, 0, 0) {
@@ -168,7 +169,7 @@ func testNetworkImplProposalPayload(t *testing.T, nodesCount int, cfg config.Loc
 	nets, counters := spinNetwork(t, nodesCount, cfg)
 	defer shutdownNetwork(nets, counters)
 
-	nets[0].Broadcast(protocol.ProposalPayloadTag, []byte{1})
+	nets[0].Broadcast(context.Background(), protocol.ProposalPayloadTag, []byte{1})
 	for i, counter := range counters {
 		if i != 0 {
 			if !counter.verify(t, 0, 1, 0) {
@@ -187,7 +188,7 @@ func testNetworkImplVoteBundle(t *testing.T, nodesCount int, cfg config.Local) {
 	nets, counters := spinNetwork(t, nodesCount, cfg)
 	defer shutdownNetwork(nets, counters)
 
-	nets[0].Broadcast(protocol.VoteBundleTag, []byte{1})
+	nets[0].Broadcast(context.Background(), protocol.VoteBundleTag, []byte{1})
 	for i, counter := range counters {
 		if i != 0 {
 			if !counter.verify(t, 0, 0, 1) {
@@ -206,12 +207,12 @@ func testNetworkImplMixed(t *testing.T, nodesCount int, cfg config.Local) {
 	nets, counters := spinNetwork(t, nodesCount, cfg)
 	defer shutdownNetwork(nets, counters)
 
-	nets[0].Broadcast(protocol.AgreementVoteTag, []byte{1})
-	nets[0].Broadcast(protocol.ProposalPayloadTag, []byte{1})
-	nets[0].Broadcast(protocol.ProposalPayloadTag, []byte{1})
-	nets[0].Broadcast(protocol.VoteBundleTag, []byte{1})
-	nets[0].Broadcast(protocol.VoteBundleTag, []byte{1})
-	nets[0].Broadcast(protocol.VoteBundleTag, []byte{1})
+	nets[0].Broadcast(context.Background(), protocol.AgreementVoteTag, []byte{1})
+	nets[0].Broadcast(context.Background(), protocol.ProposalPayloadTag, []byte{1})
+	nets[0].Broadcast(context.Background(), protocol.ProposalPayloadTag, []byte{1})
+	nets[0].Broadcast(context.Background(), protocol.VoteBundleTag, []byte{1})
+	nets[0].Broadcast(context.Background(), protocol.VoteBundleTag, []byte{1})
+	nets[0].Broadcast(context.Background(), protocol.VoteBundleTag, []byte{1})
 	for i, counter := range counters {
 		if i != 0 {
 			if !counter.verify(t, 1, 2, 3) {
@@ -232,14 +233,14 @@ func testNetworkImplMixed2(t *testing.T, nodesCount int, cfg config.Local) {
 
 	const loadSize = 12
 	for i := byte(0); i < loadSize; i++ {
-		ok := nets[0].Broadcast(protocol.AgreementVoteTag, []byte{i})
+		ok := nets[0].Broadcast(context.Background(), protocol.AgreementVoteTag, []byte{i})
 		assert.NoError(t, ok)
 		if i%2 == 0 {
-			ok = nets[0].Broadcast(protocol.ProposalPayloadTag, []byte{i})
+			ok = nets[0].Broadcast(context.Background(), protocol.ProposalPayloadTag, []byte{i})
 			assert.NoError(t, ok)
 		}
 		if i%4 == 0 {
-			ok = nets[0].Broadcast(protocol.VoteBundleTag, []byte{i})
+			ok = nets[0].Broadcast(context.Background(), protocol.VoteBundleTag, []byte{i})
 			assert.NoError(t, ok)
 		}
 	}
@@ -270,14 +271,14 @@ func testNetworkImplReordered(t *testing.T, nodesCount int, cfg config.Local) {
 	wg.Add(loadSize)
 	for i := byte(0); i < loadSize; i++ {
 		go func(i byte) {
-			ok := nets[0].Broadcast(protocol.AgreementVoteTag, []byte{i})
+			ok := nets[0].Broadcast(context.Background(), protocol.AgreementVoteTag, []byte{i})
 			assert.NoError(t, ok)
 			if i%2 == 0 {
-				ok = nets[0].Broadcast(protocol.ProposalPayloadTag, []byte{i})
+				ok = nets[0].Broadcast(context.Background(), protocol.ProposalPayloadTag, []byte{i})
 				assert.NoError(t, ok)
 			}
 			if i%4 == 0 {
-				ok = nets[0].Broadcast(protocol.VoteBundleTag, []byte{i})
+				ok = nets[0].Broadcast(context.Background(), protocol.VoteBundleTag, []byte{i})
 				assert.NoError(t, ok)
 			}
 			wg.Done()
@@ -306,7 +307,7 @@ func testNetworkImplMultisource(t *testing.T, nodesCount int, cfg config.Local) 
 	defer shutdownNetwork(nets, counters)
 
 	for i := byte(0); i < byte(nodesCount); i++ {
-		nets[i].Broadcast(protocol.AgreementVoteTag, []byte{i})
+		nets[i].Broadcast(context.Background(), protocol.AgreementVoteTag, []byte{i})
 	}
 	for i, counter := range counters {
 		if !counter.verify(t, uint32(nodesCount-1), 0, 0) {
@@ -327,7 +328,7 @@ func testNetworkImplRebroadcast(t *testing.T, nodesCount int, cfg config.Local) 
 		rebroadcastNodes = 3
 	}
 	for i := byte(0); i < byte(rebroadcastNodes); i++ {
-		ok := nets[i].Broadcast(protocol.AgreementVoteTag, []byte{i, i + 1})
+		ok := nets[i].Broadcast(context.Background(), protocol.AgreementVoteTag, []byte{i, i + 1})
 		assert.NoError(t, ok)
 	}
 

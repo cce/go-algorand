@@ -17,6 +17,7 @@
 package agreement
 
 import (
+	"context"
 	"fmt"
 	"testing"
 
@@ -33,7 +34,7 @@ import (
 
 func makeRandomProposalPayload(r round) *proposal {
 	f := testBlockFactory{Owner: 1}
-	ub, _ := f.AssembleBlock(r, nil)
+	ub, _ := f.AssembleBlock(context.Background(), r, nil)
 	pb := ub.FinishBlock(committee.Seed{}, basics.Address{}, false)
 
 	var payload unauthenticatedProposal

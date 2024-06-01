@@ -46,7 +46,7 @@ func testSetup(periodCount uint64) (player, rootRouter, testAccountData, testBlo
 }
 
 func createProposalsTesting(accs testAccountData, round basics.Round, period period, factory BlockFactory, ledger Ledger) (ps []proposal, vs []vote) {
-	ve, err := factory.AssembleBlock(round, accs.addresses)
+	ve, err := factory.AssembleBlock(context.Background(), round, accs.addresses)
 	if err != nil {
 		logging.Base().Errorf("Could not generate a proposal for round %d: %v", round, err)
 		return nil, nil
@@ -56,7 +56,7 @@ func createProposalsTesting(accs testAccountData, round basics.Round, period per
 	var votes []vote
 	proposals := make([]proposal, 0)
 	for i := range accs.addresses {
-		payload, proposal, _ := proposalForBlock(accs.addresses[i], accs.vrfs[i], ve, period, ledger)
+		payload, proposal, _ := proposalForBlock(context.Background(), accs.addresses[i], accs.vrfs[i], ve, period, ledger)
 
 		// attempt to make the vote
 		rv := rawVote{Sender: accs.addresses[i], Round: round, Period: period, Step: propose, Proposal: proposal}
@@ -122,13 +122,13 @@ func TestProposalFunctions(t *testing.T) {
 	player, _, accs, factory, ledger := testSetup(0)
 	round := player.Round
 	period := player.Period
-	ve, err := factory.AssembleBlock(player.Round, accs.addresses)
+	ve, err := factory.AssembleBlock(context.Background(), player.Round, accs.addresses)
 	require.NoError(t, err, "Could not generate a proposal for round %d: %v", round, err)
 
 	validator := testBlockValidator{}
 
 	for i := range accs.addresses {
-		proposal, proposalValue, _ := proposalForBlock(accs.addresses[i], accs.vrfs[i], ve, period, ledger)
+		proposal, proposalValue, _ := proposalForBlock(context.Background(), accs.addresses[i], accs.vrfs[i], ve, period, ledger)
 
 		//validate returning unauthenticatedProposal from proposalPayload
 		unauthenticatedProposalResult := proposal
@@ -162,14 +162,14 @@ func TestProposalUnauthenticated(t *testing.T) {
 
 	round := player.Round
 	period := player.Period
-	testBlockFactory, err := factory.AssembleBlock(player.Round, accounts.addresses)
+	testBlockFactory, err := factory.AssembleBlock(context.Background(), player.Round, accounts.addresses)
 	require.NoError(t, err, "Could not generate a proposal for round %d: %v", round, err)
 
 	validator := testBlockValidator{}
 
 	accountIndex := 0
 
-	proposal, _, _ := proposalForBlock(accounts.addresses[accountIndex], accounts.vrfs[accountIndex], testBlockFactory, period, ledger)
+	proposal, _, _ := proposalForBlock(context.Background(), accounts.addresses[accountIndex], accounts.vrfs[accountIndex], testBlockFactory, period, ledger)
 	accountIndex++
 
 	// validate a good unauthenticated proposal
@@ -188,14 +188,14 @@ func TestProposalUnauthenticated(t *testing.T) {
 	require.NoError(t, err)
 
 	// validate a good unauthenticated proposal
-	proposal, _, _ = proposalForBlock(accounts.addresses[accountIndex], accounts.vrfs[accountIndex], testBlockFactory, period, ledger)
+	proposal, _, _ = proposalForBlock(context.Background(), accounts.addresses[accountIndex], accounts.vrfs[accountIndex], testBlockFactory, period, ledger)
 	accountIndex++
 	unauthenticatedProposal = proposal.u()
 	block = unauthenticatedProposal.Block
 	require.NotNil(t, block)
 
 	// validate corruption of SeedProof
-	proposal3, _, _ := proposalForBlock(accounts.addresses[accountIndex], accounts.vrfs[accountIndex], testBlockFactory, period, ledger)
+	proposal3, _, _ := proposalForBlock(context.Background(), accounts.addresses[accountIndex], accounts.vrfs[accountIndex], testBlockFactory, period, ledger)
 	accountIndex++
 	unauthenticatedProposal3 := proposal3.u()
 	unauthenticatedProposal3.SeedProof = unauthenticatedProposal.SeedProof
@@ -203,7 +203,7 @@ func TestProposalUnauthenticated(t *testing.T) {
 	require.Error(t, err)
 
 	// validate mismatch proposer address between block and unauthenticatedProposal
-	proposal4, _, _ := proposalForBlock(accounts.addresses[accountIndex], accounts.vrfs[accountIndex], testBlockFactory, period, ledger)
+	proposal4, _, _ := proposalForBlock(context.Background(), accounts.addresses[accountIndex], accounts.vrfs[accountIndex], testBlockFactory, period, ledger)
 	accountIndex++
 	unauthenticatedProposal4 := proposal4.u()
 	unauthenticatedProposal4.OriginalProposer = accounts.addresses[0] // set to the wrong address
