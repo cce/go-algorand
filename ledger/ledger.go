@@ -24,7 +24,6 @@ import (
 	"time"
 
 	"github.com/algorand/go-deadlock"
-	"go.opentelemetry.io/otel"
 
 	"github.com/algorand/go-algorand/agreement"
 	"github.com/algorand/go-algorand/config"
@@ -910,8 +909,6 @@ func (l *Ledger) StartEvaluator(hdr bookkeeping.BlockHeader, paysetHint, maxTxnB
 			Tracer:              tracerForEval,
 		})
 }
-
-var tracer = otel.Tracer("algod-ledger")
 
 // FlushCaches flushes any pending data in caches so that it is fully available during future lookups.
 func (l *Ledger) FlushCaches() {

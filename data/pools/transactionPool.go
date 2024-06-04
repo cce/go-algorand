@@ -17,6 +17,7 @@
 package pools
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"sync"
@@ -35,6 +36,7 @@ import (
 	"github.com/algorand/go-algorand/logging/telemetryspec"
 	"github.com/algorand/go-algorand/protocol"
 	"github.com/algorand/go-algorand/util/condvar"
+	"github.com/algorand/go-algorand/util/tracing"
 )
 
 // A TransactionPool prepares valid blocks for proposal and caches
@@ -461,15 +463,12 @@ func (pool *TransactionPool) ingest(txgroup []transactions.SignedTxn, params poo
 	return nil
 }
 
-// RememberOne stores the provided transaction.
-// Precondition: Only RememberOne() properly-signed and well-formed transactions (i.e., ensure t.WellFormed())
-func (pool *TransactionPool) RememberOne(t transactions.SignedTxn) error {
-	return pool.Remember([]transactions.SignedTxn{t})
-}
-
 // Remember stores the provided transaction group.
 // Precondition: Only Remember() properly-signed and well-formed transactions (i.e., ensure t.WellFormed())
-func (pool *TransactionPool) Remember(txgroup []transactions.SignedTxn) error {
+func (pool *TransactionPool) Remember(ctx context.Context, txgroup []transactions.SignedTxn) error {
+	ctx, span := tracing.StartSpan(ctx, "TransactionPool.Remember")
+	defer span.End()
+
 	if err := pool.checkPendingQueueSize(txgroup); err != nil {
 		return err
 	}

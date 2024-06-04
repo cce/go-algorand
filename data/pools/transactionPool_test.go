@@ -19,6 +19,7 @@ package pools
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"fmt"
 	"math/rand"
 	"os"
@@ -146,6 +147,12 @@ func initAccFixed(initAddrs []basics.Address, bal uint64) map[basics.Address]bas
 }
 
 const testPoolSize = 1000
+
+// RememberOne stores the provided transaction.
+// Precondition: Only RememberOne() properly-signed and well-formed transactions (i.e., ensure t.WellFormed())
+func (pool *TransactionPool) RememberOne(t transactions.SignedTxn) error {
+	return pool.Remember(context.Background(), []transactions.SignedTxn{t})
+}
 
 func TestMinBalanceOK(t *testing.T) {
 	partitiontest.PartitionTest(t)
@@ -1383,7 +1390,7 @@ func TestTxPoolSizeLimits(t *testing.T) {
 		}
 
 		// ensure that we would fail adding this.
-		require.Error(t, transactionPool.Remember(txgroup))
+		require.Error(t, transactionPool.Remember(context.Background(), txgroup))
 
 		if groupSize > 1 {
 			// add a single transaction and ensure we succeed

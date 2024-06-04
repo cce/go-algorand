@@ -45,6 +45,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/algorand/go-deadlock"
@@ -58,6 +59,7 @@ import (
 	"github.com/algorand/go-algorand/test/partitiontest"
 	"github.com/algorand/go-algorand/util"
 	"github.com/algorand/go-algorand/util/metrics"
+	"github.com/algorand/go-algorand/util/tracing"
 )
 
 const sendBufferLength = 1000
@@ -381,16 +383,20 @@ func TestWebsocketNetworkTracing(t *testing.T) {
 	netB.phonebook.ReplacePeerList([]string{addrA}, "default", PhoneBookEntryRelayRole)
 	netB.Start()
 	defer netStop(t, netB, "B")
-	counter := newMessageCounter(t, 2)
+	counter := newMessageCounter(t, 1)
 	counterDone := counter.done
 	msgHandler := func(msg IncomingMessage) (out OutgoingMessage) {
-		assert.Equal(t, protocol.ProposalPayloadTag, msg.Tag)
+		assert.Contains(t, []protocol.Tag{protocol.TxnTag, protocol.AgreementVoteTag, protocol.ProposalPayloadTag}, msg.Tag)
 		sc := trace.SpanContextFromContext(msg.TraceCtx)
-		t.Logf("Received trace %s span %s", sc.TraceID(), sc.SpanID())
+		t.Logf("Received trace %s span %s tag %s", sc.TraceID(), sc.SpanID(), msg.Tag)
 		assert.True(t, sc.IsValid())
+		_, span := tracing.StartSpan(msg.TraceCtx, "msgHandlerTest")
+		span.End()
 		return counter.Handle(msg)
 	}
 	netB.RegisterHandlers([]TaggedMessageHandler{{Tag: protocol.ProposalPayloadTag, MessageHandler: HandlerFunc(msgHandler)}})
+	netB.RegisterHandlers([]TaggedMessageHandler{{Tag: protocol.AgreementVoteTag, MessageHandler: HandlerFunc(msgHandler)}})
+	netB.RegisterHandlers([]TaggedMessageHandler{{Tag: protocol.TxnTag, MessageHandler: HandlerFunc(msgHandler)}})
 
 	readyTimeout := time.NewTimer(2 * time.Second)
 	waitReady(t, netA, readyTimeout.C)
@@ -398,36 +404,56 @@ func TestWebsocketNetworkTracing(t *testing.T) {
 	waitReady(t, netB, readyTimeout.C)
 	t.Log("b ready")
 
+	// // uncomment to log full JSON traces
+	// var traceJSON bytes.Buffer
+	// traceWriter := bufio.NewWriter(&traceJSON)
 	// testExporter, err := stdouttrace.New(
-	// 	stdouttrace.WithWriter(os.Stdout),
+	// 	stdouttrace.WithWriter(traceWriter),
 	// 	stdouttrace.WithPrettyPrint(),
 	// )
-	//require.NoError(t, err)
+	// require.NoError(t, err)
+	testExporter := tracetest.NewInMemoryExporter()
 	tp := sdktrace.NewTracerProvider(
 		sdktrace.WithSampler(sdktrace.AlwaysSample()),
-		//sdktrace.WithBatcher(testExporter),
+		sdktrace.WithBatcher(testExporter),
+		//sdktrace.WithSyncer(testExporter),
 	)
 	testTracer := tp.Tracer("testTracer")
+	tracing.SetTracerProvider(tp)
 
-	ctx, span := testTracer.Start(context.Background(), "testSpan")
-	sc := trace.SpanContextFromContext(ctx)
-	t.Logf("Sending trace %s span %s", sc.TraceID(), sc.SpanID())
-	assert.True(t, sc.IsValid())
-	netA.Broadcast(ctx, protocol.ProposalPayloadTag, []byte("foo"), false, nil)
-	span.End()
-
-	ctx, span = testTracer.Start(context.Background(), "testSpan2")
-	sc = trace.SpanContextFromContext(ctx)
-	t.Logf("Sending trace %s span %s", sc.TraceID(), sc.SpanID())
-	assert.True(t, sc.IsValid())
-	netA.Broadcast(ctx, protocol.ProposalPayloadTag, []byte("bar"), false, nil)
-	span.End()
+	for _, tag := range []protocol.Tag{protocol.ProposalPayloadTag} { //, protocol.AgreementVoteTag, protocol.TxnTag} {
+		ctx, span := testTracer.Start(context.Background(), "testSpan")
+		sc := trace.SpanContextFromContext(ctx)
+		t.Logf("Sending trace %s span %s tag %s", sc.TraceID(), sc.SpanID(), tag)
+		assert.True(t, sc.IsValid())
+		netA.Broadcast(ctx, tag, []byte("foo"), false, nil)
+		span.End()
+	}
 
 	select {
 	case <-counterDone:
 	case <-time.After(2 * time.Second):
 		t.Errorf("timeout, count=%d, wanted 2", counter.count)
 	}
+
+	tp.ForceFlush(context.Background())
+	//traceWriter.Flush()
+	//t.Log("trace JSON export:", traceJSON.String())
+
+	// ensure that "testSpan" and "msgHandlerTest" spans are present (that propagation works)
+	spans := testExporter.GetSpans()
+	var netASpanFound, netBSpanFound bool
+	for _, span := range spans {
+		if span.Name == "testSpan" {
+			netASpanFound = true
+		}
+		if span.Name == "msgHandlerTest" {
+			netBSpanFound = true
+		}
+		t.Logf("span %s %v %v", span.Name, span.SpanContext.TraceID(), span.SpanContext.SpanID())
+	}
+	assert.True(t, netASpanFound, "netA span not found")
+	assert.True(t, netBSpanFound, "netB span not found")
 }
 
 type mutexBuilder struct {

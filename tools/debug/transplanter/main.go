@@ -18,6 +18,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"encoding/binary"
 	"errors"
 	"flag"
@@ -443,7 +444,7 @@ func main() {
 				break
 			}
 		}
-		err = pool.Remember(item.txgroup)
+		err = pool.Remember(context.Background(), item.txgroup)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "WARN: Cannot remember txn %s: %v\n", item.path, err)
 			continue

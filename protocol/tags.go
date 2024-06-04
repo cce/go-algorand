@@ -47,6 +47,7 @@ const (
 
 	TracedProposalPayloadTag Tag = "tP"
 	TracedAgreementVoteTag   Tag = "tV"
+	TracedTxnTag             Tag = "tX"
 )
 
 // UnwrapTracedTag returns the underlying tag behind a "trace-enabled" version of
@@ -57,6 +58,8 @@ func UnwrapTracedTag(tag Tag) (Tag, bool) {
 		return ProposalPayloadTag, true
 	case TracedAgreementVoteTag:
 		return AgreementVoteTag, true
+	case TracedTxnTag:
+		return TxnTag, true
 	default:
 		return tag, false
 	}
@@ -70,6 +73,8 @@ func WrapTracedTag(tag Tag) (Tag, bool) {
 		return TracedProposalPayloadTag, true
 	case AgreementVoteTag:
 		return TracedAgreementVoteTag, true
+	case TxnTag:
+		return TracedTxnTag, true
 	default:
 		return tag, false
 	}
@@ -154,6 +159,8 @@ func (tag Tag) MaxMessageSize() uint64 {
 		return UniEnsBlockReqTagMaxSize
 	case VoteBundleTag:
 		return VoteBundleTagMaxSize
+	case TracedProposalPayloadTag, TracedAgreementVoteTag, TracedTxnTag:
+		panic("trace tags should be a hidden detail from read limits")
 	default:
 		return 0 // Unknown tag
 	}
@@ -176,6 +183,7 @@ var TagList = []Tag{
 	VoteBundleTag,
 	TracedProposalPayloadTag,
 	TracedAgreementVoteTag,
+	TracedTxnTag,
 }
 
 // TagMap is a map of all currently used protocol tags.

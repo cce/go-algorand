@@ -30,7 +30,6 @@ import (
 	"github.com/algorand/go-algorand/protocol"
 	"github.com/algorand/go-algorand/util/metrics"
 	"github.com/algorand/go-algorand/util/tracing"
-	"go.opentelemetry.io/otel"
 )
 
 var messagesHandledTotal = metrics.MakeCounter(metrics.AgreementMessagesHandled)
@@ -97,8 +96,6 @@ func messageMetadataFromHandle(h agreement.MessageHandle) *messageMetadata {
 	}
 	return nil
 }
-
-var tracer = otel.Tracer("algod-agreement-gossip")
 
 func (i *networkImpl) processVoteMessage(raw network.IncomingMessage) network.OutgoingMessage {
 	return i.processMessage(raw, i.voteCh, agreementVoteMessageType)

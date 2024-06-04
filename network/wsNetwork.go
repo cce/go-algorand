@@ -1387,18 +1387,13 @@ func (wn *msgBroadcaster) preparePeerData(traceCtx context.Context, request broa
 	for i, d := range request.data {
 		tag, addTraceMD := protocol.WrapTracedTag(request.tags[i])
 		tbytes := []byte(tag)
-		var mbytes []byte
 		if addTraceMD {
 			traceMD := traceMetadataFromContext(traceCtx)
-			mbytes = make([]byte, len(tbytes)+len(traceMD)+len(d))
-			copy(mbytes, tbytes)
-			copy(mbytes[len(tbytes):], traceMD[:])
-			copy(mbytes[len(tbytes)+len(traceMD):], d)
-		} else {
-			mbytes = make([]byte, len(tbytes)+len(d))
-			copy(mbytes, tbytes)
-			copy(mbytes[len(tbytes):], d)
+			tbytes = append(tbytes, traceMD[:]...)
 		}
+		mbytes := make([]byte, len(tbytes)+len(d))
+		copy(mbytes, tbytes)
+		copy(mbytes[len(tbytes):], d)
 		data[i] = mbytes
 		if request.tags[i] != protocol.MsgDigestSkipTag && len(d) >= messageFilterSize {
 			digests[i] = crypto.Hash(mbytes)

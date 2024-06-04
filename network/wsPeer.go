@@ -32,8 +32,8 @@ import (
 
 	"github.com/algorand/go-deadlock"
 	"github.com/algorand/websocket"
-	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/trace"
+	"go.opentelemetry.io/otel/trace/noop"
 
 	"github.com/algorand/go-algorand/config"
 	"github.com/algorand/go-algorand/crypto"
@@ -119,9 +119,6 @@ var defaultSendMessageTags = map[protocol.Tag]bool{
 	protocol.TxnTag:               true,
 	protocol.UniEnsBlockReqTag:    true,
 	protocol.VoteBundleTag:        true,
-
-	protocol.TracedProposalPayloadTag: true,
-	protocol.TracedAgreementVoteTag:   true,
 }
 
 // interface allows substituting debug implementation for *websocket.Conn
@@ -598,9 +595,9 @@ func (wp *wsPeer) readLoop() {
 		}
 
 		// if this message is trace-enabled, read trace propagation information and make a span
-		var span trace.Span
+		var span trace.Span = noop.Span{}
 		var traced bool
-		msg.Tag, traced = protocol.UnwrapTracedTag(Tag(string(tag[:])))
+		msg.Tag, traced = protocol.UnwrapTracedTag(Tag(tag[:]))
 		if traced {
 			var traceMD traceMetadata
 			if _, err := io.ReadFull(reader, traceMD[:]); err != nil {
@@ -609,7 +606,6 @@ func (wp *wsPeer) readLoop() {
 			}
 			// start span and add context to IncomingMessage
 			msg.TraceCtx, span = tracing.StartSpan(contextFromTraceMetadata(context.Background(), traceMD), "wsPeer.readLoop")
-			defer span.End()
 		}
 
 		// Skip the message if it's a response to a request we didn't make or has timed out
@@ -621,6 +617,7 @@ func (wp *wsPeer) readLoop() {
 				wp.log.Errorf("wsPeer readloop: peer %s sent TS response without a request", wp.conn.RemoteAddrString())
 				networkConnectionsDroppedTotal.Inc(map[string]string{"reason": "unrequestedTS"})
 				cleanupCloseError = disconnectUnexpectedTopicResp
+				span.End()
 				return
 			}
 			var n int64
@@ -629,9 +626,11 @@ func (wp *wsPeer) readLoop() {
 			if err != nil {
 				wp.log.Infof("wsPeer readloop: could not discard timed-out TS message from %s : %s", wp.conn.RemoteAddrString(), err)
 				wp.reportReadErr(err)
+				span.End()
 				return
 			}
 			wp.log.Warnf("wsPeer readLoop: received a TS response for a stale request from %s. %d bytes discarded", wp.conn.RemoteAddrString(), n)
+			span.End()
 			continue
 		}
 
@@ -639,11 +638,10 @@ func (wp *wsPeer) readLoop() {
 		err = slurper.Read(reader)
 		if err != nil {
 			wp.reportReadErr(err)
+			span.End()
 			return
 		}
-		if span != nil {
-			span.AddEvent("finished-read")
-		}
+		span.AddEvent("finished-read")
 
 		msg.processing = wp.processed
 		msg.Received = time.Now().UnixNano()
@@ -651,6 +649,7 @@ func (wp *wsPeer) readLoop() {
 		msg.Data, err = dataConverter.convert(msg.Tag, msg.Data)
 		if err != nil {
 			wp.reportReadErr(err)
+			span.End()
 			return
 		}
 		msg.Net = wp.net
@@ -676,25 +675,30 @@ func (wp *wsPeer) readLoop() {
 				if reason == disconnectBadData {
 					networkConnectionsDroppedTotal.Inc(map[string]string{"reason": "protocol"})
 				}
+				span.End()
 				return
 			}
+			span.End()
 			continue
 		case protocol.TopicMsgRespTag: // Handle Topic message
 			wp.outstandingTopicRequests.Add(-1)
 			topics, err := UnmarshallTopics(msg.Data)
 			if err != nil {
 				wp.log.Warnf("wsPeer readLoop: could not read the message from: %s %s", wp.conn.RemoteAddrString(), err)
+				span.End()
 				continue
 			}
 			requestHash, found := topics.GetValue(requestHashKey)
 			if !found {
 				wp.log.Warnf("wsPeer readLoop: message from %s is missing the %s", wp.conn.RemoteAddrString(), requestHashKey)
+				span.End()
 				continue
 			}
 			hashKey, _ := binary.Uvarint(requestHash)
 			channel, found := wp.getAndRemoveResponseChannel(hashKey)
 			if !found {
 				wp.log.Warnf("wsPeer readLoop: received a message response from %s for a stale request", wp.conn.RemoteAddrString())
+				span.End()
 				continue
 			}
 
@@ -704,10 +708,12 @@ func (wp *wsPeer) readLoop() {
 			default:
 				wp.log.Warn("wsPeer readLoop: channel blocked. Could not pass the response to the requester", wp.conn.RemoteAddrString())
 			}
+			span.End()
 			continue
 		case protocol.MsgDigestSkipTag:
 			// network maintenance message handled immediately instead of handing off to general handlers
 			wp.handleFilterMessage(msg)
+			span.End()
 			continue
 		case protocol.TxnTag:
 			wp.txMessageCount.Add(1)
@@ -721,6 +727,7 @@ func (wp *wsPeer) readLoop() {
 		default: // unrecognized tag
 			unknownProtocolTagMessagesTotal.Inc(nil)
 			wp.unkMessageCount.Add(1)
+			span.End()
 			continue // drop message, skip adding it to queue
 			// TODO: should disconnect here?
 		}
@@ -730,6 +737,7 @@ func (wp *wsPeer) readLoop() {
 				duplicateNetworkMessageReceivedTotal.Inc(nil)
 				duplicateNetworkMessageReceivedBytesTotal.AddUint64(uint64(len(msg.Data)+len(msg.Tag)), nil)
 				// drop message, skip adding it to queue
+				span.End()
 				continue
 			}
 		}
@@ -741,22 +749,21 @@ func (wp *wsPeer) readLoop() {
 		case <-wp.processed:
 		case <-wp.closing:
 			wp.log.Debugf("peer closing %s", wp.conn.RemoteAddrString())
+			span.End()
 			return
 		}
 
-		if span != nil {
-			span.AddEvent("enqueue-readBuffer")
-		}
+		span.AddEvent("enqueue-readBuffer")
 		select {
 		case wp.readBuffer <- msg:
 		case <-wp.closing:
 			wp.log.Debugf("peer closing %s", wp.conn.RemoteAddrString())
+			span.End()
 			return
 		}
+		span.End()
 	}
 }
-
-var tracer = otel.Tracer("algod-network")
 
 type traceMetadata [25]byte
 
@@ -886,7 +893,7 @@ func (wp *wsPeer) writeLoopSendMsg(msg sendMessage) disconnectReason {
 		return disconnectReasonNone
 	}
 	// the tags are always 2 char long; note that this is safe since it's only being used for messages that we have generated locally.
-	tag := protocol.Tag(msg.data[:2])
+	tag, _ := protocol.UnwrapTracedTag(Tag(msg.data[:2]))
 	if !wp.sendMessageTag[tag] {
 		// the peer isn't interested in this message.
 		return disconnectReasonNone

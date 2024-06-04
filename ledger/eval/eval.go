@@ -40,7 +40,6 @@ import (
 	"github.com/algorand/go-algorand/protocol"
 	"github.com/algorand/go-algorand/util/execpool"
 	"github.com/algorand/go-algorand/util/tracing"
-	"go.opentelemetry.io/otel"
 )
 
 // LedgerForCowBase represents subset of Ledger functionality needed for cow business
@@ -1975,8 +1974,6 @@ func (validator *evalTxValidator) run() {
 		validator.done <- err
 	}
 }
-
-var tracer = otel.Tracer("algod-ledger-internal")
 
 // Eval is the main evaluator entrypoint (in addition to StartEvaluator)
 // used by Ledger.Validate() Ledger.AddBlock() Ledger.trackerEvalVerified()(accountUpdates.loadFromDisk())

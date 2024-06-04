@@ -26,7 +26,6 @@ import (
 	"github.com/algorand/go-algorand/logging/logspec"
 	"github.com/algorand/go-algorand/protocol"
 	"github.com/algorand/go-algorand/util/tracing"
-	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/trace"
 )
 
@@ -107,8 +106,6 @@ func (d *demux) UpdateEventsQueue(queueName string, queueLength int) {
 	}
 	d.processingMonitor.UpdateEventsQueue(queueName, queueLength)
 }
-
-var otTracer = otel.Tracer("algod-agreement")
 
 // tokenizeMessages tokenizes a raw message stream
 func (d *demux) tokenizeMessages(ctx context.Context, net Network, tag protocol.Tag, tokenize streamTokenizer) <-chan message {

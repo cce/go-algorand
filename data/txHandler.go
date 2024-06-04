@@ -38,6 +38,9 @@ import (
 	"github.com/algorand/go-algorand/util"
 	"github.com/algorand/go-algorand/util/execpool"
 	"github.com/algorand/go-algorand/util/metrics"
+	"github.com/algorand/go-algorand/util/tracing"
+	"go.opentelemetry.io/otel/trace"
+	"go.opentelemetry.io/otel/trace/noop"
 )
 
 var transactionMessagesHandled = metrics.MakeCounter(metrics.TransactionMessagesHandled)
@@ -316,6 +319,12 @@ func (handler *TxHandler) backlogWorker() {
 				// this is never happening since handler.backlogQueue is never closed
 				return
 			}
+
+			var span trace.Span = noop.Span{}
+			if wi.rawmsg != nil {
+				wi.rawmsg.TraceCtx, span = tracing.StartSpan(wi.rawmsg.TraceCtx, "backlogWorker.backlogQueue")
+			}
+
 			if wi.capguard != nil {
 				if err := wi.capguard.Release(); err != nil {
 					logging.Base().Warnf("Failed to release capacity to ElasticRateLimiter: %v", err)
@@ -326,18 +335,22 @@ func (handler *TxHandler) backlogWorker() {
 				if wi.capguard != nil {
 					wi.capguard.Served()
 				}
+				span.End()
 				continue
 			}
 			// handler.streamVerifierChan does not receive if ctx is cancled
+			span.AddEvent("enqueue-streamVerifierChan")
 			select {
 			case handler.streamVerifierChan <- &verify.UnverifiedTxnSigJob{TxnGroup: wi.unverifiedTxGroup, BacklogMessage: wi}:
 			case <-handler.ctx.Done():
 				transactionMessagesDroppedFromBacklog.Inc(nil)
+				span.End()
 				return
 			}
 			if wi.capguard != nil {
 				wi.capguard.Served()
 			}
+			span.End()
 		case wi, ok := <-handler.postVerificationQueue:
 			if !ok {
 				// this is never happening since handler.postVerificationQueue is never closed
@@ -484,6 +497,13 @@ func (handler *TxHandler) rememberReportErrors(err error) {
 }
 
 func (handler *TxHandler) postProcessCheckedTxn(wi *txBacklogMsg) {
+	var span trace.Span = noop.Span{}
+	var traceCtx context.Context
+	if wi.rawmsg != nil {
+		traceCtx, span = tracing.StartSpan(wi.rawmsg.TraceCtx, "TxHandler.postProcessCheckedTxn")
+	}
+	defer span.End()
+
 	if wi.verificationErr != nil {
 		// disconnect from peer.
 		handler.postProcessReportErrors(wi.verificationErr)
@@ -499,7 +519,7 @@ func (handler *TxHandler) postProcessCheckedTxn(wi *txBacklogMsg) {
 	verifiedTxGroup := wi.unverifiedTxGroup
 
 	// save the transaction, if it has high enough fee and not already in the cache
-	err := handler.txPool.Remember(verifiedTxGroup)
+	err := handler.txPool.Remember(traceCtx, verifiedTxGroup)
 	if err != nil {
 		handler.rememberReportErrors(err)
 		logging.Base().Debugf("could not remember tx: %v", err)
@@ -515,7 +535,7 @@ func (handler *TxHandler) postProcessCheckedTxn(wi *txBacklogMsg) {
 	}
 
 	// We reencode here instead of using rawmsg.Data to avoid broadcasting non-canonical encodings
-	handler.net.Relay(handler.ctx, protocol.TxnTag, reencode(verifiedTxGroup), false, wi.rawmsg.Sender)
+	handler.net.Relay(trace.ContextWithSpan(handler.ctx, span), protocol.TxnTag, reencode(verifiedTxGroup), false, wi.rawmsg.Sender)
 }
 
 func (handler *TxHandler) deleteFromCaches(msgKey *crypto.Digest, canonicalKey *crypto.Digest) {
@@ -581,6 +601,10 @@ func (handler *TxHandler) dedupCanonical(ntx int, unverifiedTxGroup []transactio
 //  - transactions are checked for duplicates
 
 func (handler *TxHandler) processIncomingTxn(rawmsg network.IncomingMessage) network.OutgoingMessage {
+	var span trace.Span
+	rawmsg.TraceCtx, span = tracing.StartSpan(rawmsg.TraceCtx, "TxHandler.processIncomingTxn")
+	defer span.End()
+
 	var msgKey *crypto.Digest
 	var isDup bool
 	if handler.msgCache != nil {
@@ -671,6 +695,7 @@ func (handler *TxHandler) processIncomingTxn(rawmsg network.IncomingMessage) net
 		}
 	}
 
+	span.AddEvent("enqueue-BacklogQueue")
 	select {
 	case handler.backlogQueue <- &txBacklogMsg{
 		rawmsg:                &rawmsg,
@@ -723,6 +748,11 @@ func (handler *TxHandler) LocalTransaction(txgroup []transactions.SignedTxn) err
 // Note that this also checks the consistency of the transaction's group hash,
 // which is required for safe transaction signature caching behavior.
 func (handler *TxHandler) checkAlreadyCommitted(tx *txBacklogMsg) (processingDone bool) {
+	if tx.rawmsg != nil {
+		_, span := tracing.StartSpan(tx.rawmsg.TraceCtx, "TxHandler.checkAlreadyCommitted")
+		defer span.End()
+	}
+
 	if logging.Base().IsLevelEnabled(logging.Debug) {
 		txids := make([]transactions.Txid, len(tx.unverifiedTxGroup))
 		for i := range tx.unverifiedTxGroup {
@@ -773,7 +803,7 @@ func (handler *TxHandler) processDecoded(unverifiedTxGroup []transactions.Signed
 	verifiedTxGroup := unverifiedTxGroup
 
 	// save the transaction, if it has high enough fee and not already in the cache
-	err = handler.txPool.Remember(verifiedTxGroup)
+	err = handler.txPool.Remember(nil, verifiedTxGroup)
 	if err != nil {
 		logging.Base().Debugf("could not remember tx: %v", err)
 		return network.OutgoingMessage{}, true

@@ -41,14 +41,14 @@ require (
 	github.com/olivere/elastic v6.2.14+incompatible
 	github.com/sirupsen/logrus v1.8.1
 	github.com/spf13/cobra v1.5.0
-	github.com/stretchr/testify v1.8.4
-	go.opentelemetry.io/otel v1.10.0
-	go.opentelemetry.io/otel/sdk v1.10.0
-	go.opentelemetry.io/otel/trace v1.10.0
+	github.com/stretchr/testify v1.9.0
+	go.opentelemetry.io/otel v1.27.0
+	go.opentelemetry.io/otel/sdk v1.27.0
+	go.opentelemetry.io/otel/trace v1.27.0
 	golang.org/x/crypto v0.21.0
 	golang.org/x/exp v0.0.0-20240213143201-ec583247a57a
 	golang.org/x/sync v0.6.0
-	golang.org/x/sys v0.18.0
+	golang.org/x/sys v0.20.0
 	golang.org/x/text v0.14.0
 	gopkg.in/sohlich/elogrus.v3 v3.0.0-20180410122755-1fa29e2f2009
 	pgregory.net/rapid v0.6.2
@@ -76,7 +76,7 @@ require (
 	github.com/flynn/noise v1.1.0 // indirect
 	github.com/fortytw2/leaktest v1.3.0 // indirect
 	github.com/francoispqt/gojay v1.2.13 // indirect
-	github.com/go-logr/logr v1.3.0 // indirect
+	github.com/go-logr/logr v1.4.1 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/go-openapi/jsonpointer v0.19.5 // indirect
 	github.com/go-openapi/swag v0.19.5 // indirect
@@ -147,9 +147,10 @@ require (
 	github.com/russross/blackfriday/v2 v2.1.0 // indirect
 	github.com/spaolacci/murmur3 v1.1.0 // indirect
 	github.com/spf13/pflag v1.0.5 // indirect
-	github.com/stretchr/objx v0.5.0 // indirect
+	github.com/stretchr/objx v0.5.2 // indirect
 	github.com/valyala/bytebufferpool v1.0.0 // indirect
 	github.com/valyala/fasttemplate v1.2.1 // indirect
+	go.opentelemetry.io/otel/metric v1.27.0 // indirect
 	go.uber.org/dig v1.17.1 // indirect
 	go.uber.org/fx v1.20.1 // indirect
 	go.uber.org/mock v0.4.0 // indirect

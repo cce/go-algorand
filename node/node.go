@@ -56,7 +56,6 @@ import (
 	"github.com/algorand/go-algorand/util/timers"
 	"github.com/algorand/go-algorand/util/tracing"
 	"github.com/algorand/go-deadlock"
-	"go.opentelemetry.io/otel"
 )
 
 const (
@@ -520,6 +519,9 @@ var broadcastTxFailed = metrics.MakeCounter(metrics.BroadcastSignedTxGroupFailed
 
 // broadcastSignedTxGroup broadcasts a transaction group that has already been signed.
 func (node *AlgorandFullNode) broadcastSignedTxGroup(txgroup []transactions.SignedTxn) (err error) {
+	ctx, span := tracing.StartSpan(context.Background(), "node.broadcastSignedTxGroup")
+	defer span.End()
+
 	defer func() {
 		if err != nil {
 			broadcastTxFailed.Inc(nil)
@@ -542,7 +544,7 @@ func (node *AlgorandFullNode) broadcastSignedTxGroup(txgroup []transactions.Sign
 		return err
 	}
 
-	err = node.transactionPool.Remember(txgroup)
+	err = node.transactionPool.Remember(ctx, txgroup)
 	if err != nil {
 		node.log.Infof("rejected by local pool: %v - transaction group was %+v", err, txgroup)
 		return err
@@ -562,7 +564,7 @@ func (node *AlgorandFullNode) broadcastSignedTxGroup(txgroup []transactions.Sign
 		enc = append(enc, protocol.Encode(&tx)...)
 		txids = append(txids, tx.ID())
 	}
-	err = node.net.Broadcast(context.TODO(), protocol.TxnTag, enc, false, nil)
+	err = node.net.Broadcast(ctx, protocol.TxnTag, enc, false, nil)
 	if err != nil {
 		node.log.Infof("failure broadcasting transaction to network: %v - transaction group was %+v", err, txgroup)
 		return err
@@ -1232,8 +1234,6 @@ func (ub unfinishedBlock) Round() basics.Round { return ub.blk.Round() }
 func (ub unfinishedBlock) FinishBlock(s committee.Seed, proposer basics.Address, eligible bool) agreement.Block {
 	return agreement.Block(ub.blk.FinishBlock(s, proposer, eligible))
 }
-
-var tracer = otel.Tracer("algod-node")
 
 // AssembleBlock implements Ledger.AssembleBlock.
 func (node *AlgorandFullNode) AssembleBlock(ctx context.Context, round basics.Round, addrs []basics.Address) (agreement.UnfinishedBlock, error) {
