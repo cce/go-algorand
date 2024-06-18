@@ -397,6 +397,10 @@ func (cb *roundCowState) CalculateTotals() error {
 		return fmt.Errorf("roundCowState: CalculateTotals sum of money changed from %d to %d", cb.prevTotals.All().Raw, totals.All().Raw)
 	}
 
+	if totals.Online.Money.IsZero() {
+		return fmt.Errorf("CalculateTotals: total online circulation is zero at the end of this block. Proposal must contain keyreg to increase online stake")
+	}
+
 	cb.mods.Totals = totals
 	return nil
 }
