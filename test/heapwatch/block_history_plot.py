@@ -31,9 +31,11 @@ import sys
 from algosdk.encoding import msgpack
 from matplotlib import pyplot as plt
 
-def process(path, args):
+
+def process(path, args, ax4, ax5, ax6, color):
     minrnd = None
     maxrnd = None
+
     # maybe load first/last round bounds from heapWatch.py emitted rounds.json
     rounds_json = os.path.join(os.path.dirname(path), 'rounds.json')
     if os.path.exists(rounds_json):
@@ -72,8 +74,8 @@ def process(path, args):
             if (prevrnd is not None) and (rnd <= prevrnd):
                 sys.stderr.write(f'wat rnd {rnd}, prevrnd {prevrnd}, line {count}\n')
             tc = block.get('tc', 0)
-            ts = block.get('ts', 0) # timestamp recorded at algod, 1s resolution int
-            _time = row['_time'] # timestamp recorded at client, 0.000001s resolution float
+            ts = block.get('ts', 0)  # timestamp recorded at algod, 1s resolution int
+            _time = row['_time']  # timestamp recorded at client, 0.000001s resolution float
             tcv.append(tc)
             if prevtime is not None:
                 dt = _time - prevtime
@@ -152,21 +154,31 @@ def process(path, args):
         min(tpsv[start:end]), max(tpsv[start:end]),
     ))
     print('long round times: {}'.format(' '.join(list(map(str,filter(lambda x: x >= 9,dtv[start:end]))))))
-    fig, ((ax1, ax2, ax3), (ax4, ax5, ax6)) = plt.subplots(2,3, figsize=(10, 5))
-    ax1.set_title('round time histogram (sec)')
-    ax1.hist(list(filter(lambda x: x < 9,dtv[start:end])),bins=20)
+    #fig, ((ax1, ax2, ax3), (ax4, ax5, ax6)) = plt.subplots(2,3, figsize=(10, 5))
+    # ax1.set_title('round time histogram (sec)')
+    # ax1.hist(list(filter(lambda x: x < 9,dtv[start:end])),bins=20)
+    # #ax1.set_xlim(0)
+    # ax1.set_ylim(0)
 
     ax4.set_title('round time')
-    ax4.plot(dtv[start:end])
+    ax4.plot(dtv[start:end], alpha=0.5, color=color)
+    #ax4.set_xlim(0)
+    #ax4.set_ylim(0, 3)
 
-    ax2.set_title('txn/block histogram')
-    ax2.hist(txnv[start:end],bins=20)
+    # ax2.set_title('txn/block histogram')
+    # ax2.hist(txnv[start:end],bins=20)
+    # #ax2.set_xlim(0)
+    # ax2.set_ylim(0, max(txnv[start:end])*1.1)
 
     ax5.set_title('txn/block')
-    ax5.plot(txnv[start:end])
+    ax5.plot(txnv[start:end], alpha=0.5, color=color)
+    #ax5.set_xlim(0)
+    #ax5.set_ylim(0, max(txnv[start:end])*1.1)
 
-    ax3.set_title('TPS')
-    ax3.hist(tpsv[start:end],bins=20)
+    # ax3.set_title('TPS')
+    # ax3.hist(tpsv[start:end],bins=20)
+    # #ax3.set_xlim(0)
+    # ax3.set_ylim(0, max(tpsv[start:end])*1.1)
 
     # 10 round moving average TPS
     tpsv10 = []
@@ -182,18 +194,37 @@ def process(path, args):
         tpsv10.append(dtxn/dt)
     if args.tps1:
         ax6.set_title('TPS')
-        ax6.plot(tpsv[start:end])
+        ax6.plot(tpsv[start:end], alpha=0.5, color=color)
+        #ax6.set_ylim(0, max(tpsv[start:end])*1.1)
         print('fullish block sizes: {}'.format(list(filter(lambda x: x > 100, txnv))))
     else:
         ax6.set_title('TPS(10 round window)')
-        ax6.plot(tpsv10)
-    fig.tight_layout()
-    plt.savefig(path + '_hist.svg', format='svg')
-    plt.savefig(path + '_hist.png', format='png')
+        ax6.plot(tpsv10, alpha=0.5, color=color)
+        #ax6.set_ylim(0, max(tpsv10)*1.1)
+    #ax6.set_xlim(0)
+    #fig.tight_layout()
+    #plt.savefig(path + '_hist.svg', format='svg')
+    #plt.savefig(path + '_hist.png', format='png')
+
+def set_max(ax):
+    # Access the lines on the ax6 plot
+    lines = ax.get_lines()
+
+    # Initialize a variable to store the maximum y-value
+    max_y_value = 0
+
+    # Iterate through each line and find the maximum y-value
+    for line in lines:
+        y_data = line.get_ydata()
+        max_y_value = max(max_y_value, max(y_data))
+    print("!!!found max y", max_y_value)
+    ax.set_ylim(0, max_y_value*1.1)
 
 def main():
-    import argparse
+    import argparse, itertools
     ap = argparse.ArgumentParser()
+    import matplotlib.cm as cm
+
     ap.add_argument('files', nargs='+')
     ap.add_argument('--all', default=False, action='store_true')
     ap.add_argument('--tps1', default=False, action='store_true')
@@ -202,8 +233,25 @@ def main():
     ap.add_argument('--stop', default=None, type=int, help='stop round')
     args = ap.parse_args()
 
-    for fname in args.files:
-        process(fname, args)
+    # Generate distinct colors for each file
+    #colors = cm.rainbow([i / len(args.files) for i in range(len(args.files))])
+    colors = ['red', 'blue']
+
+    fig, ((ax4, ax5, ax6)) = plt.subplots(1, 3, figsize=(10, 2.5))
+    ax4.set_title('Round Time')
+    ax5.set_title('Txn/Block')
+    ax6.set_title('TPS (10 round window)')
+
+    for fname, color in zip(args.files, colors):
+        process(fname, args, ax4, ax5, ax6, color)
+    #for fname in args.files:
+    #    process(fname, args)
+
+    set_max(ax4)
+    set_max(ax5)
+    set_max(ax6)
+    fig.tight_layout()
+    plt.savefig('combined_hist.png', format='png')
 
 if __name__ == '__main__':
     main()
