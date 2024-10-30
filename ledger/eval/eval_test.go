@@ -1164,7 +1164,7 @@ func TestEvalFunctionForExpiredAccounts(t *testing.T) {
 	for i := uint64(0); i < uint64(targetRound); i++ {
 		vb := l.endBlock(t, blkEval, []basics.Address{recvAddr})
 		blkEval = l.nextBlock(t)
-		//require.Empty(t, vb.Block().ExpiredParticipationAccounts)
+		//require.Empty(t, vb.Block().ExpiredParticipationAccounts) // XXX
 		log.Printf("rnd %d, proposer %s", vb.Block().Round(), vb.Block().Proposer)
 		for _, acct := range vb.Block().ExpiredParticipationAccounts {
 			if acct == recvAddr {
