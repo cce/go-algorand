@@ -21,6 +21,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"math/rand"
 	"testing"
 
@@ -43,6 +44,7 @@ import (
 	ledgertesting "github.com/algorand/go-algorand/ledger/testing"
 	"github.com/algorand/go-algorand/protocol"
 	"github.com/algorand/go-algorand/test/partitiontest"
+	"github.com/algorand/go-algorand/util"
 	"github.com/algorand/go-algorand/util/execpool"
 )
 
@@ -489,7 +491,7 @@ int 1`,
 
 			expectedEvents := []mocktracer.Event{mocktracer.BeforeBlock(eval.block.Round())}
 			if testCase.firstTxnBehavior == "approve" {
-				err = eval.endOfBlock()
+				err = eval.endOfBlock(nil)
 				require.NoError(t, err)
 
 				expectedAcct1Data := ledgercore.AccountData{}
@@ -959,7 +961,7 @@ func (ledger *evalTestLedger) nextBlock(t testing.TB) *BlockEvaluator {
 }
 
 // endBlock completes the block being created, returns the ValidatedBlock for inspection
-func (ledger *evalTestLedger) endBlock(t testing.TB, eval *BlockEvaluator, proposers ...basics.Address) *ledgercore.ValidatedBlock {
+func (ledger *evalTestLedger) endBlock(t testing.TB, eval *BlockEvaluator, proposers []basics.Address) *ledgercore.ValidatedBlock {
 	unfinishedBlock, err := eval.GenerateBlock(proposers)
 	require.NoError(t, err)
 	// fake agreement's setting of header fields so later validates work.
@@ -1160,9 +1162,10 @@ func TestEvalFunctionForExpiredAccounts(t *testing.T) {
 
 	// Advance the evaluator a couple rounds, watching for lack of expiration
 	for i := uint64(0); i < uint64(targetRound); i++ {
-		vb := l.endBlock(t, blkEval, recvAddr)
+		vb := l.endBlock(t, blkEval, []basics.Address{recvAddr})
 		blkEval = l.nextBlock(t)
 		//require.Empty(t, vb.Block().ExpiredParticipationAccounts)
+		log.Printf("rnd %d, proposer %s", vb.Block().Round(), vb.Block().Proposer)
 		for _, acct := range vb.Block().ExpiredParticipationAccounts {
 			if acct == recvAddr {
 				// won't happen, because recvAddr was proposer
@@ -1251,6 +1254,7 @@ func TestExpiredAccountGenerationWithDiskFailure(t *testing.T) {
 
 	sendAddr := addrs[0]
 	recvAddr := addrs[1]
+	proposers := []basics.Address{sendAddr}
 
 	// the last round that the recvAddr is valid for
 	recvAddrLastValidRound := basics.Round(10)
@@ -1289,7 +1293,7 @@ func TestExpiredAccountGenerationWithDiskFailure(t *testing.T) {
 
 	// Advance the evaluator a couple rounds...
 	for i := uint64(0); i < uint64(targetRound); i++ {
-		l.endBlock(t, eval)
+		l.endBlock(t, eval, proposers)
 		eval = l.nextBlock(t)
 	}
 
@@ -1298,13 +1302,13 @@ func TestExpiredAccountGenerationWithDiskFailure(t *testing.T) {
 
 	eval.block.ExpiredParticipationAccounts = append(eval.block.ExpiredParticipationAccounts, recvAddr)
 
-	err = eval.endOfBlock()
+	err = eval.endOfBlock(util.MakeSet(proposers...))
 	require.ErrorContains(t, err, "found expiration candidate")
 
 	eval.block.ExpiredParticipationAccounts = []basics.Address{{}}
 	eval.state.mods.Accts = ledgercore.AccountDeltas{}
 	eval.state.lookupParent = &failRoundCowParent{}
-	err = eval.endOfBlock()
+	err = eval.endOfBlock(util.MakeSet(proposers...))
 	require.ErrorContains(t, err, "disk I/O fail (on purpose)")
 
 	err = eval.resetExpiredOnlineAccountsParticipationKeys()
@@ -1374,7 +1378,7 @@ func TestAbsenteeChecks(t *testing.T) {
 	// Advance the evaluator, watching for suspensions as they appear
 	challenge := byte(0)
 	for i := uint64(0); i < uint64(1200); i++ { // Just before first suspension at 1171
-		vb := l.endBlock(t, blkEval, proposers...)
+		vb := l.endBlock(t, blkEval, proposers)
 		blkEval = l.nextBlock(t)
 
 		switch vb.Block().Round() {
@@ -1557,7 +1561,7 @@ func TestExpiredAccountGeneration(t *testing.T) {
 
 	// Advance the evaluator a couple rounds...
 	for i := uint64(0); i < uint64(targetRound); i++ {
-		vb := l.endBlock(t, eval)
+		vb := l.endBlock(t, eval, proposers)
 		eval = l.nextBlock(t)
 		require.Empty(t, vb.Block().ExpiredParticipationAccounts)
 	}

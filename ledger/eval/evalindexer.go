@@ -41,7 +41,7 @@ func (eval *BlockEvaluator) ProcessBlockForIndexer(block *bookkeeping.Block) (le
 	}
 
 	// Finally, process any pending end-of-block state changes.
-	err = eval.endOfBlock()
+	err = eval.endOfBlock(nil)
 	if err != nil {
 		return ledgercore.StateDelta{}, []transactions.SignedTxnInBlock{},
 			fmt.Errorf("ProcessBlockForIndexer() err: %w", err)

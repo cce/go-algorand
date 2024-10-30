@@ -1347,9 +1347,12 @@ func (eval *BlockEvaluator) TestingTxnCounter() uint64 {
 // Call "endOfBlock" after all the block's rewards and transactions are processed.
 // When generating a block, participating addresses are passed to prevent a
 // proposer from suspending itself.
-func (eval *BlockEvaluator) endOfBlock(participating ...basics.Address) error {
-	if participating != nil && !eval.generate {
-		panic("logic error: only pass partAddresses to endOfBlock when generating")
+func (eval *BlockEvaluator) endOfBlock(partAddrs util.Set[basics.Address]) error {
+	if eval.generate && partAddrs == nil {
+		panic("logic error: must pass partAddresses to endOfBlock when generating")
+	}
+	if !eval.generate && partAddrs != nil {
+		panic("logic error: must not pass partAddresses to endOfBlock if not generating")
 	}
 
 	if eval.generate {
@@ -1376,7 +1379,7 @@ func (eval *BlockEvaluator) endOfBlock(participating ...basics.Address) error {
 			}
 		}
 
-		eval.generateKnockOfflineAccountsList(participating)
+		eval.generateKnockOfflineAccountsList(partAddrs)
 
 		if eval.proto.StateProofInterval > 0 {
 			var basicStateProof bookkeeping.StateProofTrackingData
@@ -1627,7 +1630,7 @@ type challenge struct {
 //
 // This function is passed a list of participating addresses so a node will not
 // propose a block that suspends or expires itself.
-func (eval *BlockEvaluator) generateKnockOfflineAccountsList(participating []basics.Address) {
+func (eval *BlockEvaluator) generateKnockOfflineAccountsList(partAddrs util.Set[basics.Address]) {
 	if !eval.generate {
 		return
 	}
@@ -1651,7 +1654,6 @@ func (eval *BlockEvaluator) generateKnockOfflineAccountsList(participating []bas
 		IncentiveEligible     bool // currently unused below, but may be needed in the future
 	}
 	candidates := make(map[basics.Address]candidateData)
-	partAddrs := util.MakeSet(participating...)
 
 	// First, ask the ledger for the top N online accounts, with their latest
 	// online account data, current up to the previous round.
@@ -1986,7 +1988,8 @@ func (eval *BlockEvaluator) GenerateBlock(participating []basics.Address) (*ledg
 		return nil, fmt.Errorf("GenerateBlock already called on this BlockEvaluator")
 	}
 
-	err := eval.endOfBlock(participating...)
+	partAddrs := util.MakeSet(participating...)
+	err := eval.endOfBlock(partAddrs)
 	if err != nil {
 		return nil, err
 	}
@@ -2063,6 +2066,8 @@ func (validator *evalTxValidator) run() {
 
 // Eval is the main evaluator entrypoint (in addition to StartEvaluator)
 // used by Ledger.Validate() Ledger.AddBlock() Ledger.trackerEvalVerified()(accountUpdates.loadFromDisk())
+// It always runs the evaluator with EvaluatorOptions.Generate = false, and the Validate option
+// set according to the "validate" argument.
 //
 // Validate: Eval(ctx, l, blk, true, txcache, executionPool)
 // AddBlock: Eval(context.Background(), l, blk, false, txcache, nil)
@@ -2199,7 +2204,7 @@ transactionGroupLoop:
 	}
 
 	// Finally, process any pending end-of-block state changes.
-	err = eval.endOfBlock()
+	err = eval.endOfBlock(nil)
 	if err != nil {
 		return ledgercore.StateDelta{}, err
 	}

@@ -145,6 +145,7 @@ func (dl *DoubleLedger) endBlock(proposer ...basics.Address) *ledgercore.Validat
 		require.Len(dl.t, proposer, 1, "endBlock() cannot specify multiple proposers")
 		prp = proposer[0]
 	}
+	require.False(dl.t, prp.IsZero(), "endBlock() must set a proposer, either by default DoubleLedger.proposer or explicitly")
 	vb := endBlock(dl.t, dl.generator, dl.eval, prp)
 	if dl.validator != nil { // Allows setting to nil while debugging, to simplify
 		checkBlock(dl.t, dl.validator, vb)

@@ -143,11 +143,12 @@ func txgroup(t testing.TB, ledger *Ledger, eval *eval.BlockEvaluator, txns ...*t
 }
 
 // endBlock completes the block being created, returning the ValidatedBlock for
-// inspection. Proposer is optional - if unset, blocks will be finished with
-// ZeroAddress proposer.
-func endBlock(t testing.TB, ledger *Ledger, eval *eval.BlockEvaluator, proposer ...basics.Address) *ledgercore.ValidatedBlock {
+// inspection. Proposer is optional - if
+// The proposers arg will be provided to GenerateBlock() and the first proposers[0]
+// will be passed to Block().WithProposer().
+func endBlock(t testing.TB, ledger *Ledger, eval *eval.BlockEvaluator, proposers []basics.Address) *ledgercore.ValidatedBlock {
 	// pass proposers to GenerateBlock, if provided
-	ub, err := eval.GenerateBlock(proposer)
+	ub, err := eval.GenerateBlock(proposers)
 	require.NoError(t, err)
 
 	// We fake some things that agreement would do, like setting proposer
@@ -157,8 +158,8 @@ func endBlock(t testing.TB, ledger *Ledger, eval *eval.BlockEvaluator, proposer 
 	// Making the proposer the feesink unless specified causes less disruption
 	// to existing tests. (Because block payouts don't change balances.)
 	prp := gvb.Block().BlockHeader.FeeSink
-	if len(proposer) > 0 {
-		prp = proposer[0]
+	if len(proposers) > 0 {
+		prp = proposers[0]
 	}
 
 	// Since we can't do agreement, we have this backdoor way to install a
