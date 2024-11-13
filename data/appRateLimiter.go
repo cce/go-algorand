@@ -173,10 +173,12 @@ func (r *appRateLimiter) shouldDropAt(txgroup []transactions.SignedTxn, origin [
 	if len(keysBuckets.keys) == 0 {
 		return false
 	}
-	return r.shouldDropKeys(keysBuckets.buckets, keysBuckets.keys, nowNano)
+	// count number of txns in txgroup to use as weight
+	weight := len(txgroup)
+	return r.shouldDropKeys(keysBuckets.buckets, keysBuckets.keys, nowNano, int64(weight))
 }
 
-func (r *appRateLimiter) shouldDropKeys(buckets []int, keys []keyType, nowNano int64) bool {
+func (r *appRateLimiter) shouldDropKeys(buckets []int, keys []keyType, nowNano int64, weight int64) bool {
 	curInt := r.interval(nowNano)
 	curFraction := r.fraction(nowNano)
 
@@ -187,7 +189,7 @@ func (r *appRateLimiter) shouldDropKeys(buckets []int, keys []keyType, nowNano i
 		if !has {
 			// new entry, defaults are provided by entry() function
 			// admit and increment
-			entry.cur.Add(1)
+			entry.cur.Add(weight)
 			continue
 		}
 
@@ -195,7 +197,7 @@ func (r *appRateLimiter) shouldDropKeys(buckets []int, keys []keyType, nowNano i
 		if rate > int64(r.serviceRatePerWindow) {
 			return true
 		}
-		entry.cur.Add(1)
+		entry.cur.Add(weight)
 	}
 
 	return false
