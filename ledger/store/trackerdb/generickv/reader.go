@@ -65,14 +65,26 @@ func (r *reader) MakeCatchpointReader() (trackerdb.CatchpointReader, error) {
 	panic("unimplemented")
 }
 
-// MakeEncodedAccoutsBatchIter implements trackerdb.Reader
-func (r *reader) MakeEncodedAccoutsBatchIter() trackerdb.EncodedAccountsBatchIter {
+// MakeEncodedAccountsBatchIter implements trackerdb.Reader
+func (r *reader) MakeEncodedAccountsBatchIter() trackerdb.EncodedAccountsBatchIter {
 	// TODO: catchpoint
 	panic("unimplemented")
 }
 
 // MakeKVsIter implements trackerdb.Reader
 func (r *reader) MakeKVsIter(ctx context.Context) (trackerdb.KVsIter, error) {
+	// TODO: catchpoint
+	panic("unimplemented")
+}
+
+// MakeOnlineAccountsIter implements trackerdb.Reader
+func (r *reader) MakeOnlineAccountsIter(ctx context.Context) (trackerdb.OnlineAccountsIter, error) {
+	// TODO: catchpoint
+	panic("unimplemented")
+}
+
+// MakeOnlineRoundParamsIter implements trackerdb.Reader
+func (r *reader) MakeOnlineRoundParamsIter(ctx context.Context) (trackerdb.OnlineRoundParamsIter, error) {
 	// TODO: catchpoint
 	panic("unimplemented")
 }

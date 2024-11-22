@@ -352,7 +352,7 @@ func (cs *CatchpointCatchupService) processStageLedgerDownload() error {
 }
 
 // updateVerifiedCounts update the user's statistics for the given verified hashes
-func (cs *CatchpointCatchupService) updateVerifiedCounts(accountCount, kvCount uint64) {
+func (cs *CatchpointCatchupService) updateVerifiedCounts(accountCount, kvCount, onlineAccountsCount, onlineRoundParamsCount uint64) {
 	cs.statsMu.Lock()
 	defer cs.statsMu.Unlock()
 
@@ -363,6 +363,8 @@ func (cs *CatchpointCatchupService) updateVerifiedCounts(accountCount, kvCount u
 	if cs.stats.TotalKVs > 0 {
 		cs.stats.VerifiedKVs = kvCount
 	}
+
+	// TODO currently ignoring onlineAccountsCount and onlineRoundParamsCount
 }
 
 // processStageLatestBlockDownload is the third catchpoint catchup stage. It downloads the latest block and verify that against the previously downloaded ledger.

@@ -63,7 +63,7 @@ type CatchpointCatchupAccessor interface {
 	ProcessStagingBalances(ctx context.Context, sectionName string, bytes []byte, progress *CatchpointCatchupAccessorProgress) (err error)
 
 	// BuildMerkleTrie inserts the account hashes into the merkle trie
-	BuildMerkleTrie(ctx context.Context, progressUpdates func(uint64, uint64)) (err error)
+	BuildMerkleTrie(ctx context.Context, progressUpdates func(uint64, uint64, uint64, uint64)) (err error)
 
 	// GetCatchupBlockRound returns the latest block round matching the current catchpoint
 	GetCatchupBlockRound(ctx context.Context) (round basics.Round, err error)
@@ -103,6 +103,8 @@ type stagingWriter interface {
 	writeCreatables(context.Context, []trackerdb.NormalizedAccountBalance) error
 	writeHashes(context.Context, []trackerdb.NormalizedAccountBalance) error
 	writeKVs(context.Context, []encoded.KVRecordV6) error
+	writeOnlineAccounts(context.Context, []encoded.OnlineAccountRecordV6) error
+	writeOnlineRoundParams(context.Context, []encoded.OnlineRoundParamsRecordV6) error
 	isShared() bool
 }
 
@@ -162,6 +164,35 @@ func (w *stagingWriterImpl) writeKVs(ctx context.Context, kvrs []encoded.KVRecor
 		}
 
 		return crw.WriteCatchpointStagingKVs(ctx, keys, values, hashes)
+	})
+}
+
+func (w *stagingWriterImpl) writeOnlineAccounts(ctx context.Context, accts []encoded.OnlineAccountRecordV6) error {
+	return w.wdb.Transaction(func(ctx context.Context, tx trackerdb.TransactionScope) (err error) {
+		crw, err := tx.MakeCatchpointReaderWriter()
+		if err != nil {
+			return err
+		}
+
+		hashes := make([][]byte, len(accts))
+		for i := 0; i < len(accts); i++ {
+			hashes[i] = trackerdb.OnlineAccountHashBuilderV6(accts[i].Address, accts[i].UpdateRound, accts[i].NormalizedOnlineBalance, accts[i].VoteLastValid, accts[i].Data)
+		}
+		return crw.WriteCatchpointStagingOnlineAccounts(ctx, accts, hashes)
+	})
+}
+
+func (w *stagingWriterImpl) writeOnlineRoundParams(ctx context.Context, params []encoded.OnlineRoundParamsRecordV6) error {
+	return w.wdb.Transaction(func(ctx context.Context, tx trackerdb.TransactionScope) (err error) {
+		cr, err := tx.MakeCatchpointReaderWriter()
+		if err != nil {
+			return err
+		}
+		hashes := make([][]byte, len(params))
+		for i := 0; i < len(params); i++ {
+			hashes[i] = trackerdb.OnlineRoundParamsHashBuilderV6(params[i].Round, params[i].Data)
+		}
+		return cr.WriteCatchpointStagingOnlineRoundParams(ctx, params, hashes)
 	})
 }
 
@@ -346,24 +377,30 @@ func (c *catchpointCatchupAccessorImpl) ResetStagingBalances(ctx context.Context
 
 // CatchpointCatchupAccessorProgress is used by the caller of ProcessStagingBalances to obtain progress information
 type CatchpointCatchupAccessorProgress struct {
-	TotalAccounts      uint64
-	ProcessedAccounts  uint64
-	ProcessedBytes     uint64
-	TotalKVs           uint64
-	ProcessedKVs       uint64
-	TotalChunks        uint64
-	SeenHeader         bool
-	Version            uint64
-	TotalAccountHashes uint64
+	TotalAccounts              uint64
+	ProcessedAccounts          uint64
+	ProcessedBytes             uint64
+	TotalKVs                   uint64
+	ProcessedKVs               uint64
+	TotalOnlineAccounts        uint64
+	ProcessedOnlineAccounts    uint64
+	TotalOnlineRoundParams     uint64
+	ProcessedOnlineRoundParams uint64
+	TotalChunks                uint64
+	SeenHeader                 bool
+	Version                    uint64
+	TotalAccountHashes         uint64
 
 	// Having the cachedTrie here would help to accelerate the catchup process since the trie maintain an internal cache of nodes.
 	// While rebuilding the trie, we don't want to force and reload (some) of these nodes into the cache for each catchpoint file chunk.
 	cachedTrie *merkletrie.Trie
 
-	BalancesWriteDuration   time.Duration
-	CreatablesWriteDuration time.Duration
-	HashesWriteDuration     time.Duration
-	KVWriteDuration         time.Duration
+	BalancesWriteDuration          time.Duration
+	CreatablesWriteDuration        time.Duration
+	HashesWriteDuration            time.Duration
+	KVWriteDuration                time.Duration
+	OnlineAccountsWriteDuration    time.Duration
+	OnlineRoundParamsWriteDuration time.Duration
 }
 
 // ProcessStagingBalances deserialize the given bytes as a temporary staging balances
@@ -459,6 +496,8 @@ func (c *catchpointCatchupAccessorImpl) processStagingContent(ctx context.Contex
 		progress.SeenHeader = true
 		progress.TotalAccounts = fileHeader.TotalAccounts
 		progress.TotalKVs = fileHeader.TotalKVs
+		progress.TotalOnlineAccounts = fileHeader.TotalOnlineAccounts
+		progress.TotalOnlineRoundParams = fileHeader.TotalOnlineRoundParams
 
 		progress.TotalChunks = fileHeader.TotalChunks
 		progress.Version = fileHeader.Version
@@ -480,6 +519,8 @@ func (c *catchpointCatchupAccessorImpl) processStagingBalances(ctx context.Conte
 	var normalizedAccountBalances []trackerdb.NormalizedAccountBalance
 	var expectingMoreEntries []bool
 	var chunkKVs []encoded.KVRecordV6
+	var chunkOnlineAccounts []encoded.OnlineAccountRecordV6
+	var chunkOnlineRoundParams []encoded.OnlineRoundParamsRecordV6
 
 	switch progress.Version {
 	default:
@@ -509,8 +550,8 @@ func (c *catchpointCatchupAccessorImpl) processStagingBalances(ctx context.Conte
 			return err
 		}
 
-		if len(chunk.Balances) == 0 && len(chunk.KVs) == 0 {
-			return fmt.Errorf("processStagingBalances received a chunk with no accounts or KVs")
+		if chunk.empty() {
+			return fmt.Errorf("processStagingBalances received an empty chunk")
 		}
 
 		normalizedAccountBalances, err = prepareNormalizedBalancesV6(chunk.Balances, c.ledger.GenesisProto())
@@ -519,6 +560,8 @@ func (c *catchpointCatchupAccessorImpl) processStagingBalances(ctx context.Conte
 			expectingMoreEntries[i] = balance.ExpectingMoreEntries
 		}
 		chunkKVs = chunk.KVs
+		chunkOnlineAccounts = chunk.OnlineAccounts
+		chunkOnlineRoundParams = chunk.OnlineRoundParams
 	}
 
 	if err != nil {
@@ -594,14 +637,8 @@ func (c *catchpointCatchupAccessorImpl) processStagingBalances(ctx context.Conte
 
 	wg := sync.WaitGroup{}
 
-	var errBalances error
-	var errCreatables error
-	var errHashes error
-	var errKVs error
-	var durBalances time.Duration
-	var durCreatables time.Duration
-	var durHashes time.Duration
-	var durKVs time.Duration
+	var errBalances, errCreatables, errHashes, errKVs, errOnlineAccounts, errOnlineRoundParams error
+	var durBalances, durCreatables, durHashes, durKVs, durOnlineAccounts, durOnlineRoundParams time.Duration
 
 	// start the balances writer
 	wg.Add(1)
@@ -666,6 +703,26 @@ func (c *catchpointCatchupAccessorImpl) processStagingBalances(ctx context.Conte
 		durKVs = time.Since(writeKVsStart)
 	}()
 
+	// start the online accounts writer
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+
+		writeOnlineAccountsStart := time.Now()
+		errOnlineAccounts = c.stagingWriter.writeOnlineAccounts(ctx, chunkOnlineAccounts)
+		durOnlineAccounts = time.Since(writeOnlineAccountsStart)
+	}()
+
+	// start the kv store writer
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+
+		writeOnlineRoundParamsStart := time.Now()
+		errOnlineRoundParams = c.stagingWriter.writeOnlineRoundParams(ctx, chunkOnlineRoundParams)
+		durOnlineRoundParams = time.Since(writeOnlineRoundParamsStart)
+	}()
+
 	wg.Wait()
 
 	if errBalances != nil {
@@ -680,15 +737,25 @@ func (c *catchpointCatchupAccessorImpl) processStagingBalances(ctx context.Conte
 	if errKVs != nil {
 		return errKVs
 	}
+	if errOnlineAccounts != nil {
+		return errOnlineAccounts
+	}
+	if errOnlineRoundParams != nil {
+		return errOnlineRoundParams
+	}
 
 	progress.BalancesWriteDuration += durBalances
 	progress.CreatablesWriteDuration += durCreatables
 	progress.HashesWriteDuration += durHashes
 	progress.KVWriteDuration += durKVs
+	progress.OnlineAccountsWriteDuration += durOnlineAccounts
+	progress.OnlineRoundParamsWriteDuration += durOnlineRoundParams
 
 	ledgerProcessstagingbalancesMicros.AddMicrosecondsSince(start, nil)
 	progress.ProcessedBytes += uint64(len(bytes))
 	progress.ProcessedKVs += uint64(len(chunkKVs))
+	progress.ProcessedOnlineAccounts += uint64(len(chunkOnlineAccounts))
+	progress.ProcessedOnlineRoundParams += uint64(len(chunkOnlineRoundParams))
 	for _, acctBal := range normalizedAccountBalances {
 		progress.TotalAccountHashes += uint64(len(acctBal.AccountHashes))
 		if !acctBal.PartialBalance {
@@ -713,19 +780,23 @@ func (c *catchpointCatchupAccessorImpl) processStagingBalances(ctx context.Conte
 // * KVs
 //
 // The function is _not_ a general purpose way to count hashes by hash kind.
-func countHashes(hashes [][]byte) (accountCount, kvCount uint64) {
+func countHashes(hashes [][]byte) (accountCount, kvCount, onlineAccountCount, onlineRoundParamsCount uint64) {
 	for _, hash := range hashes {
 		if hash[trackerdb.HashKindEncodingIndex] == byte(trackerdb.KvHK) {
 			kvCount++
+		} else if hash[trackerdb.HashKindEncodingIndex] == byte(trackerdb.OnlineAccountHK) {
+			onlineAccountCount++
+		} else if hash[trackerdb.HashKindEncodingIndex] == byte(trackerdb.OnlineRoundParamsHK) {
+			onlineRoundParamsCount++
 		} else {
 			accountCount++
 		}
 	}
-	return accountCount, kvCount
+	return
 }
 
 // BuildMerkleTrie would process the catchpointpendinghashes and insert all the items in it into the merkle trie
-func (c *catchpointCatchupAccessorImpl) BuildMerkleTrie(ctx context.Context, progressUpdates func(uint64, uint64)) (err error) {
+func (c *catchpointCatchupAccessorImpl) BuildMerkleTrie(ctx context.Context, progressUpdates func(uint64, uint64, uint64, uint64)) (err error) {
 	dbs := c.ledger.trackerDB()
 	err = dbs.Transaction(func(ctx context.Context, tx trackerdb.TransactionScope) (err error) {
 		crw, err := tx.MakeCatchpointWriter()
@@ -794,7 +865,7 @@ func (c *catchpointCatchupAccessorImpl) BuildMerkleTrie(ctx context.Context, pro
 		var trie *merkletrie.Trie
 		uncommitedHashesCount := 0
 		keepWriting := true
-		accountHashesWritten, kvHashesWritten := uint64(0), uint64(0)
+		var accountHashesWritten, kvHashesWritten, onlineAccountHashesWritten, onlineRoundParamsHashesWritten uint64
 		var mc trackerdb.MerkleCommitter
 
 		txErr := dbs.Transaction(func(transactionCtx context.Context, tx trackerdb.TransactionScope) (err error) {
@@ -845,9 +916,11 @@ func (c *catchpointCatchupAccessorImpl) BuildMerkleTrie(ctx context.Context, pro
 				}
 				uncommitedHashesCount += len(hashesToWrite)
 
-				accounts, kvs := countHashes(hashesToWrite)
-				kvHashesWritten += kvs
+				accounts, kvs, oas, orps := countHashes(hashesToWrite)
 				accountHashesWritten += accounts
+				kvHashesWritten += kvs
+				onlineAccountHashesWritten += oas
+				onlineRoundParamsHashesWritten += orps
 
 				return nil
 			})
@@ -881,7 +954,7 @@ func (c *catchpointCatchupAccessorImpl) BuildMerkleTrie(ctx context.Context, pro
 			}
 
 			if progressUpdates != nil {
-				progressUpdates(accountHashesWritten, kvHashesWritten)
+				progressUpdates(accountHashesWritten, kvHashesWritten, onlineAccountHashesWritten, onlineRoundParamsHashesWritten)
 			}
 		}
 		if txErr != nil {

@@ -125,6 +125,9 @@ type CatchpointFirstStageInfo struct {
 	// data files are generated.
 	TotalKVs uint64 `codec:"kvsCount"`
 
+	TotalOnlineAccounts    uint64 `codec:"onlineAccountsCount"`
+	TotalOnlineRoundParams uint64 `codec:"onlineRoundParamsCount"`
+
 	// Total number of chunks in the catchpoint data file. Only set when catchpoint
 	// data files are generated.
 	TotalChunks uint64 `codec:"chunksCount"`

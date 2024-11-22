@@ -40,6 +40,8 @@ const (
 	AssetHK
 	AppHK
 	KvHK
+	OnlineAccountHK
+	OnlineRoundParamsHK
 )
 
 // HashKindEncodingIndex defines the []byte offset where the hash kind is
@@ -110,6 +112,29 @@ func KvHashBuilderV6(key string, value []byte) []byte {
 	prehash := make([]byte, len(key)+len(value))
 	copy(prehash[:], key)
 	copy(prehash[len(key):], value)
+
+	return finishV6(hash, prehash)
+}
+
+// OnlineAccountHashBuilderV6 calculates the hash key used for the trie by using the data from OnlineAccountRecordV6
+func OnlineAccountHashBuilderV6(addr basics.Address, updateRound basics.Round, normBalance uint64, lastValid basics.Round, encodedOnlineAccountData []byte) []byte {
+	hash := hashBufV6(0, OnlineAccountHK)
+	prehash := make([]byte, 0, crypto.DigestSize+8+8+8+len(encodedOnlineAccountData))
+	prehash = append(prehash, addr[:]...)
+	prehash = binary.LittleEndian.AppendUint64(prehash, uint64(updateRound))
+	prehash = binary.LittleEndian.AppendUint64(prehash, normBalance)
+	prehash = binary.LittleEndian.AppendUint64(prehash, uint64(lastValid))
+	prehash = append(prehash, encodedOnlineAccountData...)
+
+	return finishV6(hash, prehash)
+}
+
+// OnlineRoundParamsHashBuilderV6 calculates the hash key used for the trie by using the data from OnlineRoundParamsRecordV6
+func OnlineRoundParamsHashBuilderV6(round basics.Round, encodedOnlineRoundParamsData []byte) []byte {
+	hash := hashBufV6(0, OnlineRoundParamsHK)
+	prehash := make([]byte, 0, 8+len(encodedOnlineRoundParamsData))
+	prehash = binary.LittleEndian.AppendUint64(prehash, uint64(round))
+	prehash = append(prehash, encodedOnlineRoundParamsData...)
 
 	return finishV6(hash, prehash)
 }

@@ -190,14 +190,24 @@ func (r *sqlReader) MakeCatchpointReader() (trackerdb.CatchpointReader, error) {
 	return makeCatchpointReader(r.q), nil
 }
 
-// MakeEncodedAccoutsBatchIter implements trackerdb.Reader
-func (r *sqlReader) MakeEncodedAccoutsBatchIter() trackerdb.EncodedAccountsBatchIter {
-	return MakeEncodedAccoutsBatchIter(r.q)
+// MakeEncodedAccountsBatchIter implements trackerdb.Reader
+func (r *sqlReader) MakeEncodedAccountsBatchIter() trackerdb.EncodedAccountsBatchIter {
+	return MakeEncodedAccountsBatchIter(r.q)
 }
 
 // MakeKVsIter implements trackerdb.Reader
 func (r *sqlReader) MakeKVsIter(ctx context.Context) (trackerdb.KVsIter, error) {
 	return MakeKVsIter(ctx, r.q)
+}
+
+// MakeOnlineAccountsIter implements trackerdb.Reader
+func (r *sqlReader) MakeOnlineAccountsIter(ctx context.Context) (trackerdb.OnlineAccountsIter, error) {
+	return MakeOnlineAccountsIter(ctx, r.q)
+}
+
+// MakeOnlineRoundParamsIter implements trackerdb.Reader
+func (r *sqlReader) MakeOnlineRoundParamsIter(ctx context.Context) (trackerdb.OnlineRoundParamsIter, error) {
+	return MakeOnlineRoundParamsIter(ctx, r.q)
 }
 
 type sqlWriter struct {

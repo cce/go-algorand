@@ -62,3 +62,22 @@ type KVRecordV6 struct {
 	Key   []byte `codec:"k,allocbound=KVRecordV6MaxKeyLength"`
 	Value []byte `codec:"v,allocbound=KVRecordV6MaxValueLength"`
 }
+
+// OnlineAccountRecordV6 is an encoded row from the onlineaccounts table, used for catchpoint files.
+type OnlineAccountRecordV6 struct {
+	_struct struct{} `codec:",omitempty,omitemptyarray"`
+
+	Address                 basics.Address `codec:"addr,allocbound=crypto.DigestSize"`
+	UpdateRound             basics.Round   `codec:"upd"`
+	NormalizedOnlineBalance uint64         `codec:"nob"`
+	VoteLastValid           basics.Round   `codec:"vlv"`
+	Data                    msgp.Raw       `codec:"data"` // encoding of BaseOnlineAccountData
+}
+
+// OnlineRoundParamsRecordV6 is an encoded row from the onlineroundparams table, used for catchpoint files.
+type OnlineRoundParamsRecordV6 struct {
+	_struct struct{} `codec:",omitempty,omitemptyarray"`
+
+	Round basics.Round `codec:"rnd"`
+	Data  msgp.Raw     `codec:"data"` // encoding of OnlineRoundParamsData
+}

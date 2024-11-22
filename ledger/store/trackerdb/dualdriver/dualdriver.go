@@ -243,14 +243,26 @@ func (*reader) MakeCatchpointReader() (trackerdb.CatchpointReader, error) {
 	return nil, nil
 }
 
-// MakeEncodedAccoutsBatchIter implements trackerdb.Reader
-func (*reader) MakeEncodedAccoutsBatchIter() trackerdb.EncodedAccountsBatchIter {
+// MakeEncodedAccountsBatchIter implements trackerdb.Reader
+func (*reader) MakeEncodedAccountsBatchIter() trackerdb.EncodedAccountsBatchIter {
 	// TODO: catchpoint
 	return nil
 }
 
 // MakeKVsIter implements trackerdb.Reader
 func (*reader) MakeKVsIter(ctx context.Context) (trackerdb.KVsIter, error) {
+	// TODO: catchpoint
+	return nil, nil
+}
+
+// MakeOnlineAccountsIter implements trackerdb.Reader
+func (*reader) MakeOnlineAccountsIter(ctx context.Context) (trackerdb.OnlineAccountsIter, error) {
+	// TODO: catchpoint
+	return nil, nil
+}
+
+// MakeOnlineRoundParamsIter implements trackerdb.Reader
+func (*reader) MakeOnlineRoundParamsIter(ctx context.Context) (trackerdb.OnlineRoundParamsIter, error) {
 	// TODO: catchpoint
 	return nil, nil
 }

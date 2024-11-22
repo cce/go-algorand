@@ -210,7 +210,7 @@ func loadCatchpointIntoDatabase(ctx context.Context, catchupAccessor ledger.Catc
 		if err != nil {
 			if err == io.EOF {
 				if printDigests {
-					err = catchupAccessor.BuildMerkleTrie(ctx, func(uint64, uint64) {})
+					err = catchupAccessor.BuildMerkleTrie(ctx, func(_, _, _, _ uint64) {})
 					if err != nil {
 						return fileHeader, err
 					}

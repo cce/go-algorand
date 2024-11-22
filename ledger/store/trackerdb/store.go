@@ -61,8 +61,10 @@ type Reader interface {
 	MakeCatchpointPendingHashesIterator(hashCount int) CatchpointPendingHashesIter
 	// Note: Catchpoint tracker needs this on the reader handle in sqlite to not get locked by write txns
 	MakeCatchpointReader() (CatchpointReader, error)
-	MakeEncodedAccoutsBatchIter() EncodedAccountsBatchIter
+	MakeEncodedAccountsBatchIter() EncodedAccountsBatchIter
 	MakeKVsIter(ctx context.Context) (KVsIter, error)
+	MakeOnlineAccountsIter(ctx context.Context) (OnlineAccountsIter, error)
+	MakeOnlineRoundParamsIter(ctx context.Context) (OnlineRoundParamsIter, error)
 }
 
 // Writer is the interface for the trackerdb write operations.

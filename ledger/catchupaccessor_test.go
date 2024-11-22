@@ -299,7 +299,7 @@ func TestBuildMerkleTrie(t *testing.T) {
 	catchpointAccessor := MakeCatchpointCatchupAccessor(l, log)
 
 	progressCallCount := 0
-	progressNop := func(uint64, uint64) {
+	progressNop := func(_, _, _, _ uint64) {
 		progressCallCount++
 	}
 
@@ -418,7 +418,7 @@ func TestCatchupAccessorBlockdb(t *testing.T) {
 	ctx := context.Background()
 
 	// actual testing...
-	err = catchpointAccessor.BuildMerkleTrie(ctx, func(uint64, uint64) {})
+	err = catchpointAccessor.BuildMerkleTrie(ctx, func(_, _, _, _ uint64) {})
 	require.Error(t, err)
 }
 
@@ -538,6 +538,14 @@ func (w *testStagingWriter) writeCreatables(ctx context.Context, balances []trac
 }
 
 func (w *testStagingWriter) writeKVs(ctx context.Context, kvrs []encoded.KVRecordV6) error {
+	return nil
+}
+
+func (w *testStagingWriter) writeOnlineAccounts(ctx context.Context, accounts []encoded.OnlineAccountRecordV6) error {
+	return nil
+}
+
+func (w *testStagingWriter) writeOnlineRoundParams(ctx context.Context, params []encoded.OnlineRoundParamsRecordV6) error {
 	return nil
 }
 

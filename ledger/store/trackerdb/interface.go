@@ -126,6 +126,8 @@ type AccountsReaderExt interface {
 	TotalResources(ctx context.Context) (total uint64, err error)
 	TotalAccounts(ctx context.Context) (total uint64, err error)
 	TotalKVs(ctx context.Context) (total uint64, err error)
+	TotalOnlineAccountRows(ctx context.Context) (total uint64, err error)
+	TotalOnlineRoundParams(ctx context.Context) (total uint64, err error)
 	AccountsRound() (rnd basics.Round, err error)
 	LookupOnlineAccountDataByAddress(addr basics.Address) (ref OnlineAccountRef, data []byte, err error)
 	AccountsOnlineTop(rnd basics.Round, offset uint64, n uint64, proto config.ConsensusParams) (map[basics.Address]*ledgercore.OnlineAccount, error)
@@ -176,6 +178,8 @@ type CatchpointWriter interface {
 
 	WriteCatchpointStagingBalances(ctx context.Context, bals []NormalizedAccountBalance) error
 	WriteCatchpointStagingKVs(ctx context.Context, keys [][]byte, values [][]byte, hashes [][]byte) error
+	WriteCatchpointStagingOnlineAccounts(ctx context.Context, onlineAccounts []encoded.OnlineAccountRecordV6, hashes [][]byte) error
+	WriteCatchpointStagingOnlineRoundParams(ctx context.Context, onlineRoundParams []encoded.OnlineRoundParamsRecordV6, hashes [][]byte) error
 	WriteCatchpointStagingCreatable(ctx context.Context, bals []NormalizedAccountBalance) error
 	WriteCatchpointStagingHashes(ctx context.Context, bals []NormalizedAccountBalance) error
 
@@ -232,6 +236,20 @@ type AccountAddressHash struct {
 type KVsIter interface {
 	Next() bool
 	KeyValue() (k []byte, v []byte, err error)
+	Close()
+}
+
+// OnlineAccountsIter is an iterator for a online accounts, used to make catchpoint files.
+type OnlineAccountsIter interface {
+	Next() bool
+	OnlineAccount() (*encoded.OnlineAccountRecordV6, error)
+	Close()
+}
+
+// OnlineRoundParamsIter is an iterator for a online accounts, used to make catchpoint files.
+type OnlineRoundParamsIter interface {
+	Next() bool
+	OnlineRoundParams() (*encoded.OnlineRoundParamsRecordV6, error)
 	Close()
 }
 
