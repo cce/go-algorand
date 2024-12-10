@@ -1036,7 +1036,9 @@ func TestCatchpointAfterBoxTxns(t *testing.T) {
 	values, err := l.LookupKeysByPrefix(l.Latest(), "bx:", 10)
 	require.NoError(t, err)
 	require.Len(t, values, 1)
+	t.Log("Latest:", l.Latest())
 	v, err := l.LookupKv(l.Latest(), apps.MakeBoxKey(uint64(boxApp), "xxx"))
+	t.Log("Got value:", string(v))
 	require.NoError(t, err)
 	require.Equal(t, strings.Repeat("f", 24), string(v))
 }

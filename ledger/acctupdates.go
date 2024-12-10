@@ -349,7 +349,7 @@ func (au *accountUpdates) LookupKv(rnd basics.Round, key string) ([]byte, error)
 	return au.lookupKv(rnd, key, true /* take lock */)
 }
 
-func (au *accountUpdates) lookupKv(rnd basics.Round, key string, synchronized bool) ([]byte, error) {
+func (au *accountUpdates) lookupKv(rnd basics.Round, key string, synchronized bool) (ret []byte, err error) {
 	needUnlock := false
 	if synchronized {
 		au.accountsMu.RLock()
@@ -359,6 +359,7 @@ func (au *accountUpdates) lookupKv(rnd basics.Round, key string, synchronized bo
 		if needUnlock {
 			au.accountsMu.RUnlock()
 		}
+		fmt.Printf("lookupKv rnd %d key %x synchronized %v ret %s err %v\n", rnd, key, synchronized, ret, err)
 	}()
 
 	// TODO: This loop and round handling is copied from other routines like
