@@ -758,6 +758,7 @@ func TestCatchpointAfterTxns(t *testing.T) {
 
 	l = testNewLedgerFromCatchpoint(t, catchpointFilePath)
 	defer l.Close()
+	t.Log("Latest:", l.Latest())
 	values, err = l.LookupKeysByPrefix(l.Latest(), "bx:", 10)
 	require.NoError(t, err)
 	require.Len(t, values, 1)
