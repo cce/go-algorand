@@ -21,8 +21,9 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"maps"
 	"slices"
+
+	"github.com/algorand/go-algorand/util"
 )
 
 // storedNodeIdentifier is the "equivalent" of a node-ptr, but oriented around persisting the
@@ -447,7 +448,8 @@ func (mtc *merkleTrieCache) reallocatePendingPages(stats *CommitStats) (pagesToC
 	}
 
 	// create a sorted list of created pages
-	sortedCreatedPages := slices.Sorted(maps.Keys(createdPages))
+	sortedCreatedPages := util.PreallocatedKeys(createdPages)
+	slices.Sort(sortedCreatedPages)
 
 	mtc.reallocatedPages = make(map[uint64]map[storedNodeIdentifier]*node)
 
