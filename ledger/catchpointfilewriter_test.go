@@ -1126,15 +1126,23 @@ func (i *catchpointOnlineAccountsIterWrapper) GetItem() (*encoded.OnlineAccountR
 
 func TestCatchpointAfterStakeLookupTxns(t *testing.T) {
 	partitiontest.PartitionTest(t)
-	t.Parallel()
+	// t.Parallel() NO! config.Consensus is modified
 
 	genBalances, addrs, _ := ledgertesting.NewTestGenesis(func(cfg *ledgertesting.GenesisCfg) {
 		cfg.OnlineCount = 1
 		ledgertesting.TurnOffRewards(cfg)
 	})
 	cfg := config.GetDefaultLocal()
-	proto := protocol.ConsensusFuture
-	dl := NewDoubleLedger(t, genBalances, proto, cfg, simpleLedgerOnDisk())
+
+	testProtocolVersion := protocol.ConsensusVersion("test-protocol-TestCatchpointAfterStakeLookupTxns")
+	protoParams := config.Consensus[protocol.ConsensusFuture]
+	protoParams.StateProofInterval = 0
+	config.Consensus[testProtocolVersion] = protoParams
+	defer func() {
+		delete(config.Consensus, testProtocolVersion)
+	}()
+
+	dl := NewDoubleLedger(t, genBalances, testProtocolVersion, cfg, simpleLedgerOnDisk())
 	defer dl.Close()
 
 	initialStake := uint64(833333333333333)
@@ -1198,7 +1206,15 @@ assert
 	}
 	require.Equal(t, vb.Block().Round(), basics.Round(322))
 
-	for vb.Block().Round() <= 1500 {
+	max := func(a, b uint64) uint64 {
+		if a > b {
+			return a
+		}
+		return b
+	}
+
+	maxRound := max(protoParams.CatchpointLookback, protoParams.MaxBalLookback)
+	for vb.Block().Round() <= basics.Round(maxRound*2+50) {
 		expectedStake++ // add 1 microalgo to the expected stake for the next block
 
 		// the online_stake opcode in block 323 will look up OnlineCirculation(3, 323).
@@ -1223,7 +1239,7 @@ assert
 	require.NotZero(t, genDBRound)
 	require.NotZero(t, valDBRound)
 	require.Equal(t, genDBRound, valDBRound)
-	require.Equal(t, 1497, int(genDBRound))
+	require.Equal(t, 687, int(genDBRound))
 	genLatestRound := dl.generator.Latest()
 	valLatestRound := dl.validator.Latest()
 	require.NotZero(t, genLatestRound)
@@ -1238,13 +1254,13 @@ assert
 	oaGenIterWrapper := catchpointOnlineAccountsIterWrapper{
 		ts:            dl.generator.trackerDB(),
 		accountsRound: genDBRound,
-		params:        config.Consensus[proto],
+		params:        config.Consensus[testProtocolVersion],
 	}
 
 	oaValIterWrapper := catchpointOnlineAccountsIterWrapper{
 		ts:            dl.validator.trackerDB(),
 		accountsRound: valDBRound,
-		params:        config.Consensus[proto],
+		params:        config.Consensus[testProtocolVersion],
 	}
 
 	genOAHash, genOARows, err := calculateVerificationHash(context.Background(), oaGenIterWrapper.makeCatchpointOrderedOnlineAccountsIter, 0, false)
@@ -1269,8 +1285,8 @@ assert
 	catchpointDataFilePath := filepath.Join(tempDir, t.Name()+".data")
 	catchpointFilePath := filepath.Join(tempDir, t.Name()+".catchpoint.tar.gz")
 
-	cph := testWriteCatchpoint(t, config.Consensus[proto], dl.generator.trackerDB(), catchpointDataFilePath, catchpointFilePath, 0, 0)
-	require.EqualValues(t, 7, cph.TotalChunks)
+	cph := testWriteCatchpoint(t, config.Consensus[testProtocolVersion], dl.generator.trackerDB(), catchpointDataFilePath, catchpointFilePath, 0, 0)
+	require.EqualValues(t, 3, cph.TotalChunks)
 
 	l := testNewLedgerFromCatchpoint(t, dl.generator.trackerDB(), catchpointFilePath)
 	defer l.Close()
@@ -1290,12 +1306,12 @@ assert
 	oar, err := l.trackerDBs.MakeOnlineAccountsOptimizedReader()
 	require.NoError(t, err)
 
-	for i := genDBRound; i >= (genDBRound - 1000); i-- {
+	for i := genDBRound; i >= (genDBRound - basics.Round(protoParams.CatchpointLookback)); i-- {
 		oad, err := oar.LookupOnline(addrs[0], basics.Round(i))
 		require.NoError(t, err)
 		// block 3 started paying 1 microalgo to addrs[0] per round
 		expected := initialStake + uint64(i) - 2
-		require.Equal(t, expected, oad.AccountData.MicroAlgos.Raw)
+		require.Equal(t, expected, oad.AccountData.MicroAlgos.Raw, "failed at round %d, dbRound %d", i, genDBRound)
 	}
 
 }
