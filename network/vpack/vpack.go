@@ -21,8 +21,6 @@ import (
 	"io"
 )
 
-const defaultCompressCapacity = 1024
-
 type compressWriter interface {
 	writeStatic(idx uint8)
 	writeDynamicVaruint(b []byte) error
@@ -31,33 +29,80 @@ type compressWriter interface {
 	writeLiteralBin80(b [80]byte)
 }
 
-// CompressVote appends a compressed vote in src to dst.
-// If dst is nil, a new slice is allocated.
-// The returned slice may be the same as dst.
-// To re-use dst, run like: dst = enc.CompressVote(dst[:0], src)
+// CompressVoteBound estimates the maximum size needed for compressed vote data
+func CompressVoteBound(srcSize int) int {
+	// Vote messages typically get ~80% smaller, but we will use
+	// the input size as the worst case. If this is too small, CompressVote
+	// will return ErrBufferTooSmall (and the caller will send the uncompressed
+	// message instead).
+	return srcSize
+}
+
+// ErrBufferTooSmall is returned when the destination buffer is too small
+var ErrBufferTooSmall = fmt.Errorf("destination buffer too small")
+
+// CompressVote compresses a vote in src and writes it to dst.
+// If the provided buffer dst is nil or too small, a new slice is allocated.
 func (s *StaticEncoder) CompressVote(dst, src []byte) ([]byte, error) {
-	if dst == nil {
-		dst = make([]byte, 0, defaultCompressCapacity)
+	bound := CompressVoteBound(len(src))
+	// Reuse dst if it's big enough, otherwise allocate a new buffer
+	if cap(dst) >= bound {
+		dst = dst[0:bound] // Reuse dst buffer with its full capacity
+	} else {
+		dst = make([]byte, bound)
 	}
+
+	// Reset our position to the beginning
 	s.cur = dst
+	s.pos = 0
+
+	// Compress the data
 	err := parseVote(src, s)
 	if err != nil {
 		return nil, err
 	}
-	return s.cur, nil
+
+	// Check if we overflowed the buffer
+	if s.pos > len(dst) {
+		return nil, ErrBufferTooSmall
+	}
+
+	// Return only the portion that was used
+	return dst[:s.pos], nil
 }
 
 // StaticEncoder uses a static table to shorten vote messages.
 // It is not thread-safe.
 type StaticEncoder struct {
-	cur []byte
+	cur []byte // Current buffer we're writing to
+	pos int    // Current position in the buffer
 }
 
 // NewStaticEncoder returns a new StaticEncoder.
 func NewStaticEncoder() *StaticEncoder { return &StaticEncoder{} }
 
+// writeByte writes a single byte to the current buffer
+func (s *StaticEncoder) writeByte(b byte) {
+	if s.pos < len(s.cur) {
+		s.cur[s.pos] = b
+	}
+	// Always increment pos, so CompressVote can return ErrBufferTooSmall
+	s.pos++
+}
+
+// writeBytes writes multiple bytes to the current buffer
+// This is optimized to avoid per-byte bounds checking when possible
+func (s *StaticEncoder) writeBytes(bytes []byte) {
+	// If we have enough room in the buffer, use direct copy
+	if s.pos+len(bytes) <= len(s.cur) {
+		copy(s.cur[s.pos:], bytes)
+	}
+	// Always increment pos, so CompressVote will return ErrBufferTooSmall
+	s.pos += len(bytes)
+}
+
 func (s *StaticEncoder) writeStatic(idx uint8) {
-	s.cur = append(s.cur, idx)
+	s.writeByte(idx)
 }
 
 // writeDynamicVaruint writes a dynamic varuint to the writer.
@@ -68,16 +113,16 @@ func (s *StaticEncoder) writeDynamicVaruint(b []byte) error {
 	switch b[0] {
 	case uint8tag:
 		expectedLength = 2
-		s.cur = append(s.cur, markerDynamicUint8)
+		s.writeByte(markerDynamicUint8)
 	case uint16tag:
 		expectedLength = 3
-		s.cur = append(s.cur, markerDynamicUint16)
+		s.writeByte(markerDynamicUint16)
 	case uint32tag:
 		expectedLength = 5
-		s.cur = append(s.cur, markerDynamicUint32)
+		s.writeByte(markerDynamicUint32)
 	case uint64tag:
 		expectedLength = 9
-		s.cur = append(s.cur, markerDynamicUint64)
+		s.writeByte(markerDynamicUint64)
 	default:
 		if isfixint(b[0]) {
 			if len(b) != 1 {
@@ -85,7 +130,8 @@ func (s *StaticEncoder) writeDynamicVaruint(b []byte) error {
 			}
 			// prefix with fixuint marker, so 0x00-0x7f isn't used by fixint
 			// this is slightly inefficient, but we have low-numbered period & step fields in the static table
-			s.cur = append(s.cur, markerDynamicFixuint, b[0])
+			s.writeByte(markerDynamicFixuint)
+			s.writeByte(b[0])
 			return nil
 		} else {
 			return fmt.Errorf("unexpected dynamic varuint marker %x", b[0])
@@ -94,23 +140,23 @@ func (s *StaticEncoder) writeDynamicVaruint(b []byte) error {
 	if len(b) != expectedLength {
 		return fmt.Errorf("unexpected dynamic varuint length %d", len(b))
 	}
-	s.cur = append(s.cur, b[1:]...)
+	s.writeBytes(b[1:])
 	return nil
 }
 
 func (s *StaticEncoder) writeDynamicBin32(b [32]byte) {
-	s.cur = append(s.cur, markerDynamicBin32)
-	s.cur = append(s.cur, b[:]...)
+	s.writeByte(markerDynamicBin32)
+	s.writeBytes(b[:])
 }
 
 func (s *StaticEncoder) writeLiteralBin64(b [64]byte) {
-	s.cur = append(s.cur, markerLiteralBin64)
-	s.cur = append(s.cur, b[:]...)
+	s.writeByte(markerLiteralBin64)
+	s.writeBytes(b[:])
 }
 
 func (s *StaticEncoder) writeLiteralBin80(b [80]byte) {
-	s.cur = append(s.cur, markerLiteralBin80)
-	s.cur = append(s.cur, b[:]...)
+	s.writeByte(markerLiteralBin80)
+	s.writeBytes(b[:])
 }
 
 // StaticDecoder decodes votes encoded by StaticEncoder using a static table.
