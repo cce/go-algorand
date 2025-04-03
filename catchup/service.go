@@ -236,7 +236,7 @@ func (s *Service) innerFetch(ctx context.Context, r basics.Round, peer network.P
 	}
 
 	ctx, cf := context.WithCancel(ctx)
-	fetcher := makeUniversalBlockFetcher(s.log, s.net, s.cfg)
+	fetcher := MakeUniversalBlockFetcher(s.log, s.net, s.cfg)
 	defer cf()
 	go func() {
 		select {
@@ -245,7 +245,7 @@ func (s *Service) innerFetch(ctx context.Context, r basics.Round, peer network.P
 			cf()
 		}
 	}()
-	blk, cert, ddur, err = fetcher.fetchBlock(ctx, r, peer)
+	blk, cert, ddur, err = fetcher.FetchBlock(ctx, r, peer)
 	// check to see if we aborted due to ledger.
 	if err != nil {
 		select {
