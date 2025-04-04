@@ -230,8 +230,9 @@ func (ct *catchpointTracker) finishFirstStage(ctx context.Context, dbRound basic
 	// We want to only write MaxBalLookback rounds of history to the catchpoint file.
 	var onlineExcludeBefore basics.Round
 	if normalOnlineHorizon := catchpointLookbackHorizonForNextRound(dbRound, params); normalOnlineHorizon == onlineAccountsForgetBefore {
-		// this is the common case, so we pass 0 so the DB dumps the full table, as is
-		onlineExcludeBefore = 0
+		// this is the common case, but for some reason the dcc.lowestRound / onlineAccountsForgetBefore value might not signal that
+		// there is still more history in the onlineaccounts & onlineroundparams tables?
+		onlineExcludeBefore = normalOnlineHorizon
 	} else if normalOnlineHorizon > onlineAccountsForgetBefore {
 		// the previous flush left more online-related rows than we want in the DB. we need to tell
 		// the catchpoint writer to exclude the rows that are older than the ones we want to keep.
