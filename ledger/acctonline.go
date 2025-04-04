@@ -407,9 +407,11 @@ func (ao *onlineAccounts) prepareCommitInternal(dcc *deferredCommitContext) erro
 
 	maxOnlineLookback := basics.Round(ao.maxBalLookback())
 	dcc.onlineAccountsForgetBefore = (dcc.newBase() + 1).SubSaturate(maxOnlineLookback)
+	ao.log.Infof("onlineAccounts: prepareCommit(old %d new %d): flushing %d rounds, forgetBefore %d", dcc.oldBase, dcc.newBase(), offset, dcc.onlineAccountsForgetBefore)
 	if dcc.lowestRound > 0 && dcc.lowestRound < dcc.onlineAccountsForgetBefore {
 		// extend history as needed
 		dcc.onlineAccountsForgetBefore = dcc.lowestRound
+		ao.log.Infof("onlineAccounts: prepareCommit(old %d new %d): flushing %d rounds, lowering forgetBefore to lowestRound %d", dcc.oldBase, dcc.newBase(), offset, dcc.lowestRound)
 	}
 
 	return nil

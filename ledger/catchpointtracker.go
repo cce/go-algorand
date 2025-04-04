@@ -214,7 +214,7 @@ func (ct *catchpointTracker) getSPVerificationData() (encodedData []byte, spVeri
 }
 
 func (ct *catchpointTracker) finishFirstStage(ctx context.Context, dbRound basics.Round, onlineAccountsForgetBefore basics.Round, blockProto protocol.ConsensusVersion, updatingBalancesDuration time.Duration) error {
-	ct.log.Infof("finishing catchpoint's first stage dbRound: %d", dbRound)
+	ct.log.Infof("finishing catchpoint's first stage dbRound: %d onlineAccountsForgetBefore: %d", dbRound, onlineAccountsForgetBefore)
 
 	var totalAccounts, totalKVs, totalOnlineAccounts, totalOnlineRoundParams uint64
 	var totalChunks uint64
@@ -999,6 +999,7 @@ func (ct *catchpointTracker) postCommitUnlocked(ctx context.Context, dcc *deferr
 	if dcc.catchpointFirstStage {
 		round := dcc.newBase()
 		blockProto := dcc.committedProtocolVersion[round-dcc.oldBase-1]
+		ct.log.Infof("postCommitUnlocked calling finishFirstStage: newBase %d onlineAccountsForgetBefore %d", round, dcc.onlineAccountsForgetBefore)
 		err := ct.finishFirstStage(ctx, round, dcc.onlineAccountsForgetBefore, blockProto, dcc.updatingBalancesDuration)
 		if err != nil {
 			ct.log.Warnf(
@@ -1232,7 +1233,7 @@ func (ct *catchpointTracker) isWritingCatchpointDataFile() bool {
 //     ...
 //   - Balance and KV chunk (named balances.x.msgpack).
 func (ct *catchpointTracker) generateCatchpointData(ctx context.Context, params config.ConsensusParams, accountsRound basics.Round, onlineExcludeBefore basics.Round, catchpointGenerationStats *telemetryspec.CatchpointGenerationEventDetails, encodedSPData []byte) (totalAccounts, totalKVs, totalOnlineAccounts, totalOnlineRoundParams, totalChunks, biggestChunkLen uint64, err error) {
-	ct.log.Debugf("catchpointTracker.generateCatchpointData() writing catchpoint accounts for round %d", accountsRound)
+	ct.log.Infof("catchpointTracker.generateCatchpointData() writing catchpoint accounts for round %d onlineExcludeBefore %d", accountsRound, onlineExcludeBefore)
 
 	startTime := time.Now()
 
