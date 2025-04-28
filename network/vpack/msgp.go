@@ -20,9 +20,6 @@ import (
 	"fmt"
 )
 
-// generates parse_gen.go
-//go:generate go run gen.go
-
 // Minimal msgpack constants used here
 const (
 	fixMapMask    = 0x80

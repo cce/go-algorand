@@ -76,12 +76,13 @@ func (e *StatelessEncoder) CompressVote(dst, src []byte) ([]byte, error) {
 	e.buf = append(e.buf, byte(0), byte(0))
 	e.mask = 0
 	e.requiredFields = 0
-	err := parseVote(src, e)
+	//err := parseVote(src, e)
+	err := processVote(src, e)
 	if err != nil {
 		return nil, err
 	}
 	if e.requiredFields != totalRequiredFields {
-		return nil, fmt.Errorf("missing required fields")
+		return nil, fmt.Errorf("missing required fields (got %d, want %d)", e.requiredFields, totalRequiredFields)
 	}
 	// fill in header's first byte with mask
 	e.buf[0] = e.mask

@@ -43,10 +43,10 @@ func checkVoteValid(vote *agreement.UnauthenticatedVote) (ok bool, expectedError
 		return false, "expected empty array for ps"
 	}
 	if vote.R.Round == 0 {
-		return false, "missing required fields"
+		return false, "missing required field rnd"
 	}
 	if vote.R.Sender.IsZero() {
-		return false, "missing required fields"
+		return false, "missing required field snd"
 	}
 
 	return true, ""
