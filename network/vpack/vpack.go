@@ -38,7 +38,46 @@ const (
 	totalRequiredFields       = 8
 )
 
-const headerSize = 2 // 1 byte for mask, 1 byte for future use
+const (
+	headerSize = 2 // 1 byte for mask, 1 byte for future use
+
+	maxMsgpVaruintSize   = 9 // max size of a varuint is 8 bytes + 1 byte for the marker
+	msgpBin8Len32Size    = len(msgpBin8Len32) + 32
+	msgpBin8Len64Size    = len(msgpBin8Len64) + 64
+	msgpBin8Len80Size    = len(msgpBin8Len80) + 80
+	msgpFixMapMarkerSize = 1
+
+	// MaxMsgpackVoteSize is the maximum size of a vote, including msgpack control characters
+	// and all required and optional data fields.
+	MaxMsgpackVoteSize = msgpFixMapMarkerSize + // top-level fixmap
+		len(msgpFixstrCred) + msgpFixMapMarkerSize + // cred: fixmap
+		len(msgpFixstrPf) + msgpBin8Len80Size + // cred.pf: bin8(80)
+		len(msgpFixstrR) + msgpFixMapMarkerSize + // r: fixmap
+		len(msgpFixstrPer) + maxMsgpVaruintSize + // r.per: varuint
+		len(msgpFixstrProp) + msgpFixMapMarkerSize + // r.prop: fixmap
+		len(msgpFixstrDig) + msgpBin8Len32Size + // r.prop.dig: bin8(32)
+		len(msgpFixstrEncdig) + msgpBin8Len32Size + // r.prop.encdig: bin8(32)
+		len(msgpFixstrOper) + maxMsgpVaruintSize + // r.prop.oper: varuint
+		len(msgpFixstrOprop) + msgpBin8Len32Size + // r.prop.oprop: bin8(32)
+		len(msgpFixstrRnd) + maxMsgpVaruintSize + // r.rnd: varuint
+		len(msgpFixstrSnd) + msgpBin8Len32Size + // r.snd: bin8(32)
+		len(msgpFixstrStep) + maxMsgpVaruintSize + // r.step: varuint
+		len(msgpFixstrSig) + msgpFixMapMarkerSize + // sig: fixmap
+		len(msgpFixstrP) + msgpBin8Len32Size + // sig.p: bin8(32)
+		len(msgpFixstrP1s) + msgpBin8Len64Size + // sig.p1s: bin8(64)
+		len(msgpFixstrP2) + msgpBin8Len32Size + // sig.p2: bin8(32)
+		len(msgpFixstrP2s) + msgpBin8Len64Size + // sig.p2s: bin8(64)
+		len(msgpFixstrPs) + msgpBin8Len64Size + // sig.ps: bin8(64)
+		len(msgpFixstrS) + msgpBin8Len64Size // sig.s: bin8(64)
+
+	// MaxCompressedVoteSize is the maximum size of a compressed vote using StatelessEncoder,
+	// including all required and optional fields.
+	MaxCompressedVoteSize = headerSize +
+		80 + // cred.pf
+		maxMsgpVaruintSize*4 + // r.rnd, r.per, r.step, r.prop.oper
+		32*6 + // r.prop.dig, r.prop.encdig, r.prop.oprop, r.snd, sig.p, sig.p2
+		64*3 // sig.p1s, sig.p2s, sig.s (sig.ps is omitted)
+)
 
 // StatelessEncoder compresses a msgpack-encoded vote by stripping all msgpack
 // formatting and field names, replacing them with a bitmask indicating which
@@ -56,15 +95,6 @@ func NewStatelessEncoder() *StatelessEncoder {
 	return &StatelessEncoder{}
 }
 
-// CompressVoteBound estimates the maximum size needed for compressed vote data
-func CompressVoteBound(srcSize int) int {
-	// Vote messages typically get ~80% smaller, but we will use
-	// the input size as the worst case. If this is too small, CompressVote
-	// will return ErrBufferTooSmall (and the caller will send the uncompressed
-	// message instead).
-	return srcSize + headerSize
-}
-
 // ErrBufferTooSmall is returned when the destination buffer is too small
 var ErrBufferTooSmall = fmt.Errorf("destination buffer too small")
 
@@ -73,7 +103,7 @@ var ErrBufferTooSmall = fmt.Errorf("destination buffer too small")
 // The returned slice may be the same as dst.
 // To re-use dst, run like: dst = enc.CompressVote(dst[:0], src)
 func (e *StatelessEncoder) CompressVote(dst, src []byte) ([]byte, error) {
-	bound := CompressVoteBound(len(src))
+	bound := MaxCompressedVoteSize
 	// Reuse dst if it's big enough, otherwise allocate a new buffer
 	if cap(dst) >= bound {
 		dst = dst[0:bound] // Reuse dst buffer with its full capacity
@@ -87,7 +117,7 @@ func (e *StatelessEncoder) CompressVote(dst, src []byte) ([]byte, error) {
 	e.requiredFields = 0
 	// put empty header at beginning, to fill in later
 	e.pos = headerSize
-	err := parseVote(src, e)
+	err := parseMsgpVote(src, e)
 	if err != nil {
 		return nil, err
 	}
@@ -185,12 +215,6 @@ func (d *StatelessDecoder) proposalValueMapSize(mask uint8) uint8 {
 	return uint8(bits.OnesCount8(mask & (bitDig | bitEncDig | bitOper | bitOprop)))
 }
 
-// StaticDecoder decodes votes encoded by StaticEncoder using a static table.
-type StaticDecoder struct{}
-
-// NewStaticDecoder returns a new StaticDecoder.
-func NewStaticDecoder() *StaticDecoder { return &StaticDecoder{} }
-
 // DecompressVote decodes a compressed vote in src and appends it to dst.
 // To re-use dst, run like: dst = dec.DecompressVote(dst[:0], src)
 func (d *StatelessDecoder) DecompressVote(dst, src []byte) ([]byte, error) {
@@ -201,9 +225,8 @@ func (d *StatelessDecoder) DecompressVote(dst, src []byte) ([]byte, error) {
 	d.pos = 2
 	d.src = src
 	d.dst = dst
-	if d.dst == nil {
-		// typical compressed vote is 25% smaller
-		d.dst = make([]byte, 0, len(d.src)*4/3)
+	if d.dst == nil { // allocate a new buffer if dst is nil
+		d.dst = make([]byte, 0, MaxMsgpackVoteSize)
 	}
 
 	// top-level UnauthenticatedVote: fixmap(3) { cred, rawVote, sig }

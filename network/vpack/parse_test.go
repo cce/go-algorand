@@ -55,6 +55,8 @@ var parseVoteTestCases = []struct {
 		"expected string pf, got invalid"},
 	{map[string]any{"cred": map[string]any{"pf": []byte{1, 2, 3}}, "r": "2", "sig": "3"},
 		"reading pf"},
+	{map[string]any{"cred": map[string]any{"pf": [100]byte{1, 2, 3}}, "r": "2", "sig": "3"},
+		"reading pf: expected bin8 length 80, got 100"},
 
 	// rawVote
 	{map[string]any{"cred": map[string]any{"pf": crypto.VrfProof{1}}, "r": []int{1, 2, 3}, "sig": "3"},
@@ -76,7 +78,7 @@ var parseVoteTestCases = []struct {
 	{map[string]any{"cred": map[string]any{"pf": crypto.VrfProof{1}}, "r": map[string]any{"prop": "not-a-map"}, "sig": "3"},
 		"reading map for proposalValue"},
 	{map[string]any{"cred": map[string]any{"pf": crypto.VrfProof{1}}, "r": map[string]any{"snd": []int{1, 2, 3}}, "sig": "3"},
-		"reading snd: expected bin8 length 32"},
+		"reading snd: unexpected EOF"},
 
 	// proposalValue
 	{map[string]any{"cred": map[string]any{"pf": crypto.VrfProof{1}}, "r": map[string]any{"prop": map[string]string{"invalid": "1"}}, "sig": "3"},
@@ -124,7 +126,7 @@ var parseVoteTestCases = []struct {
 		"reading ps: expected bin8 length 64"},
 	{map[string]any{"cred": map[string]any{"pf": crypto.VrfProof{1}}, "r": map[string]any{"rnd": 1}, "sig": map[string]any{
 		"p": [32]byte{}, "p1s": [64]byte{}, "p2": [32]byte{}, "p2s": [64]byte{}, "ps": [64]byte{}, "s": []int{1}}},
-		"reading s: expected bin8 length 64"},
+		"reading s: unexpected EOF"},
 	{map[string]any{"cred": map[string]any{"pf": crypto.VrfProof{}}, "ra": 1, "sig": map[string]any{}},
 		"expected string r"},
 	{map[string]any{"cred": map[string]any{"pf": crypto.VrfProof{}}, "r": map[string]any{"rnd": uint64(1)}, "snd": 1},
@@ -149,7 +151,7 @@ var parseVoteTestCases = []struct {
 		"expected string s, got sa"},
 }
 
-// TestParseVoteErrors tests error cases of the parseVote function
+// TestParseVoteErrors tests error cases of the parseMsgpVote function
 func TestParseVoteErrors(t *testing.T) {
 	partitiontest.PartitionTest(t)
 
