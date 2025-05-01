@@ -3833,6 +3833,10 @@
         "global-state": {
           "description": "\\[gs\\] global state",
           "$ref": "#/definitions/TealKeyValueStore"
+        },
+        "version": {
+          "description": "\\[v\\] the number of updates to the application programs",
+          "type": "integer"
         }
       }
     },
