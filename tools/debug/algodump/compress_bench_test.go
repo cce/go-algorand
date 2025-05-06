@@ -576,6 +576,142 @@ func benchmarkTagSpecificContexts(b *testing.B, level int, avWindow, txppWindow 
 	b.SetBytes(origBytes / int64(b.N)) // For MB/s calculation, use per-iteration bytes
 }
 
+// Decompression benchmark helpers and wrapper benchmark functions
+
+// benchmarkGozstdDecompression benchmarks valyala/gozstd decompression performance.
+// It first compresses the selected corpus with the requested compression level and
+// then measures the throughput of gozstd.Decompress.
+func benchmarkGozstdDecompression(b *testing.B, level int, onlyAV bool) {
+	corpus := loadTestCorpus(b)
+	filtered := filterMessages(b, corpus, onlyAV)
+
+	compressedData := make([][]byte, len(filtered))
+	var encCnt int64
+	for i, msg := range filtered {
+		comp := gozstd.CompressLevel(nil, msg.Data, level)
+		compressedData[i] = comp
+		encCnt += int64(len(comp))
+	}
+	if len(compressedData) == 0 {
+		b.Fatal("No compressed data to benchmark")
+	}
+
+	b.ResetTimer()
+	decompressed := make([]byte, 0, 4096)
+	for i := 0; i < b.N; i++ {
+		comp := compressedData[i%len(compressedData)]
+		var err error
+		decompressed, err = gozstd.Decompress(decompressed[:0], comp)
+		if err != nil {
+			b.Fatalf("gozstd Decompress failed: %v", err)
+		}
+		_ = decompressed
+	}
+	b.StopTimer()
+	b.SetBytes(encCnt / int64(b.N))
+}
+
+// benchmarkZstdDecompression benchmarks datadog/zstd decompression performance.
+func benchmarkZstdDecompression(b *testing.B, level int, onlyAV bool) {
+	corpus := loadTestCorpus(b)
+	filtered := filterMessages(b, corpus, onlyAV)
+
+	compressedData := make([][]byte, len(filtered))
+	var encCnt int64
+	for i, msg := range filtered {
+		comp, _ := zstd.CompressLevel(nil, msg.Data, level)
+		compressedData[i] = comp
+		encCnt += int64(len(comp))
+	}
+	if len(compressedData) == 0 {
+		b.Fatal("No compressed data to benchmark")
+	}
+
+	b.ResetTimer()
+	decompressed := make([]byte, 0, 4096)
+	for i := 0; i < b.N; i++ {
+		comp := compressedData[i%len(compressedData)]
+		var err error
+		decompressed, err = zstd.Decompress(decompressed[:0], comp)
+		if err != nil {
+			b.Fatalf("zstd Decompress failed: %v", err)
+		}
+		_ = decompressed
+	}
+	b.StopTimer()
+	b.SetBytes(encCnt / int64(b.N))
+}
+
+// benchmarkKlauspostDecompression benchmarks klauspost/compress/zstd decompression performance.
+func benchmarkKlauspostDecompression(b *testing.B, level int, onlyAV bool) {
+	corpus := loadTestCorpus(b)
+	filtered := filterMessages(b, corpus, onlyAV)
+
+	enc, _ := kzstd.NewWriter(nil, kzstd.WithEncoderLevel(kzstd.EncoderLevel(level)))
+	defer enc.Close()
+
+	dec, _ := kzstd.NewReader(nil)
+	defer dec.Close()
+
+	compressedData := make([][]byte, len(filtered))
+	var encCnt int64
+	for i, msg := range filtered {
+		compressedData[i] = enc.EncodeAll(msg.Data, make([]byte, 0, 4096))
+		encCnt += int64(len(compressedData[i]))
+	}
+	if len(compressedData) == 0 {
+		b.Fatal("No compressed data to benchmark")
+	}
+
+	b.ResetTimer()
+	var decompressed []byte
+	for i := 0; i < b.N; i++ {
+		comp := compressedData[i%len(compressedData)]
+		var err error
+		decompressed, err = dec.DecodeAll(comp, decompressed[:0])
+		if err != nil {
+			b.Fatalf("klauspost DecodeAll failed: %v", err)
+		}
+		_ = decompressed
+	}
+	b.StopTimer()
+	b.SetBytes(encCnt / int64(b.N))
+}
+
+// ---------------- Wrapper benchmark functions ----------------
+
+// Gozstd decompression benchmarks (all messages)
+func BenchmarkGozstdDecompress1(b *testing.B)  { benchmarkGozstdDecompression(b, 1, false) }
+func BenchmarkGozstdDecompress3(b *testing.B)  { benchmarkGozstdDecompression(b, 3, false) }
+func BenchmarkGozstdDecompress7(b *testing.B)  { benchmarkGozstdDecompression(b, 7, false) }
+func BenchmarkGozstdDecompress11(b *testing.B) { benchmarkGozstdDecompression(b, 11, false) }
+
+// Gozstd decompression benchmarks (AV messages only)
+func BenchmarkGozstdDecompressAV1(b *testing.B)  { benchmarkGozstdDecompression(b, 1, true) }
+func BenchmarkGozstdDecompressAV3(b *testing.B)  { benchmarkGozstdDecompression(b, 3, true) }
+func BenchmarkGozstdDecompressAV7(b *testing.B)  { benchmarkGozstdDecompression(b, 7, true) }
+func BenchmarkGozstdDecompressAV11(b *testing.B) { benchmarkGozstdDecompression(b, 11, true) }
+
+// Datadog zstd decompression benchmarks (all messages)
+func BenchmarkZstdDecompress1(b *testing.B)  { benchmarkZstdDecompression(b, 1, false) }
+func BenchmarkZstdDecompress3(b *testing.B)  { benchmarkZstdDecompression(b, 3, false) }
+func BenchmarkZstdDecompress7(b *testing.B)  { benchmarkZstdDecompression(b, 7, false) }
+func BenchmarkZstdDecompress11(b *testing.B) { benchmarkZstdDecompression(b, 11, false) }
+
+// Datadog zstd decompression benchmarks (AV messages only)
+func BenchmarkZstdDecompressAV1(b *testing.B)  { benchmarkZstdDecompression(b, 1, true) }
+func BenchmarkZstdDecompressAV3(b *testing.B)  { benchmarkZstdDecompression(b, 3, true) }
+func BenchmarkZstdDecompressAV7(b *testing.B)  { benchmarkZstdDecompression(b, 7, true) }
+func BenchmarkZstdDecompressAV11(b *testing.B) { benchmarkZstdDecompression(b, 11, true) }
+
+// Klauspost zstd decompression benchmarks (all messages)
+func BenchmarkKlauspostDecompress1(b *testing.B) { benchmarkKlauspostDecompression(b, 1, false) }
+func BenchmarkKlauspostDecompress3(b *testing.B) { benchmarkKlauspostDecompression(b, 3, false) }
+
+// Klauspost zstd decompression benchmarks (AV messages only)
+func BenchmarkKlauspostDecompressAV1(b *testing.B) { benchmarkKlauspostDecompression(b, 1, true) }
+func BenchmarkKlauspostDecompressAV3(b *testing.B) { benchmarkKlauspostDecompression(b, 3, true) }
+
 // Gozstd Simple Benchmarks (no window control)
 // Using C zstd levels: 1, 3, 7, 11
 func BenchmarkGozstdSimple1(b *testing.B)  { benchmarkGozstdSimple(b, 1, false) }
