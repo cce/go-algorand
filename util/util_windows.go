@@ -17,7 +17,6 @@
 package util
 
 import (
-	"errors"
 	"math"
 	"syscall"
 	"time"
@@ -39,17 +38,6 @@ func RaiseFdSoftLimit(_ uint64) error {
 // SetFdSoftLimit sets a new file descriptors soft limit.
 func SetFdSoftLimit(_ uint64) error {
 	return nil
-}
-
-// Getrusage gets file descriptors usage statistics
-func Getrusage(who int, rusage *syscall.Rusage) (err error) {
-	if rusage != nil {
-		*rusage = syscall.Rusage{}
-		err = nil
-	} else {
-		err = errors.New("invalid parameter")
-	}
-	return
 }
 
 // GetCurrentProcessTimes gets current process kernel and usermode times

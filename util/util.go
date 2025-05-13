@@ -70,12 +70,6 @@ func SetFdSoftLimit(newLimit uint64) error {
 	return nil
 }
 
-// Getrusage gets file descriptors usage statistics
-func Getrusage(who int, rusage *syscall.Rusage) (err error) {
-	err = syscall.Getrusage(who, rusage)
-	return
-}
-
 // GetCurrentProcessTimes gets current process kernel and usermode times
 func GetCurrentProcessTimes() (utime int64, stime int64, err error) {
 	var usage syscall.Rusage

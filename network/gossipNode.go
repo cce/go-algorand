@@ -249,12 +249,6 @@ type TaggedMessageHandler = taggedMessageDispatcher[MessageHandler]
 // and performs two stage processing: validating and handling
 type TaggedMessageValidatorHandler = taggedMessageDispatcher[MessageValidatorHandler]
 
-// Propagate is a convenience function to save typing in the common case of a message handler telling us to propagate an incoming message
-// "return network.Propagate(msg)" instead of "return network.OutgoingMsg{network.Broadcast, msg.Tag, msg.Data}"
-func Propagate(msg IncomingMessage) OutgoingMessage {
-	return OutgoingMessage{Action: Broadcast, Tag: msg.Tag, Payload: msg.Data, Topics: nil}
-}
-
 // SubstituteGenesisID substitutes the "{genesisID}" with their network-specific genesisID.
 func SubstituteGenesisID(net GossipNode, rawURL string) string {
 	return strings.Replace(rawURL, "{genesisID}", net.GetGenesisID(), -1)
