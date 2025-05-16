@@ -6,23 +6,15 @@ import (
 	"errors"
 )
 
-// ─────────────────────────────────────────────────────────────────────────────
-// 0 · Per-peer decoder state (same structs as encoder)
-// ─────────────────────────────────────────────────────────────────────────────
-
 type StatefulDecoder struct {
 	// 2-way caches holding FULL VALUES (not handles) – must mirror encoder
-	sndTab table2[[32]byte]
-	pkTab  table2[pkBundle]
-	pk2Tab table2[pk2Bundle]
+	sndTab lruTable[[32]byte]
+	pkTab  lruTable[pkBundle]
+	pk2Tab lruTable[pk2Bundle]
 
 	propWin propWindow
 	lastRnd uint64
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// 1 · Tiny helpers
-// ─────────────────────────────────────────────────────────────────────────────
 
 func decodeDynamicRef(src []byte, pos *int) (uint16, error) {
 	if *pos+2 > len(src) {
@@ -32,48 +24,6 @@ func decodeDynamicRef(src []byte, pos *int) (uint16, error) {
 	*pos += 2
 	return id, nil
 }
-
-// msg-pack varuint encoder (≤ 64-bit)
-func appendMsgpVaruint(dst []byte, v uint64) []byte {
-	switch {
-	case v < 0x80:
-		return append(dst, byte(v))
-	case v <= 0xff:
-		return append(dst, 0xcc, byte(v))
-	case v <= 0xffff:
-		var tmp [3]byte
-		tmp[0] = 0xcd
-		binary.BigEndian.PutUint16(tmp[1:], uint16(v))
-		return append(dst, tmp[:]...)
-	case v <= 0xffffffff:
-		var tmp [5]byte
-		tmp[0] = 0xce
-		binary.BigEndian.PutUint32(tmp[1:], uint32(v))
-		return append(dst, tmp[:]...)
-	default:
-		var tmp [9]byte
-		tmp[0] = 0xcf
-		binary.BigEndian.PutUint64(tmp[1:], v)
-		return append(dst, tmp[:]...)
-	}
-}
-
-// fetch by id and set MRU (table2 helper)
-func (t *table2[K]) fetch(id uint16) (K, bool) {
-	b := id >> 1
-	slot := id & 1
-	if b >= buckets1024 {
-		var zero K
-		return zero, false
-	}
-	// touch MRU bit
-	t.setMRU(uint32(b), uint32(slot)^1)
-	return t.bkt[b].key[slot], true
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// 2 · Decompress
-// ─────────────────────────────────────────────────────────────────────────────
 
 // Decompress reverses StatefulEncoder and *writes* a valid stateless-vpack
 // buffer into dst.  Caller can then pass it to StatelessDecoder.
@@ -89,21 +39,21 @@ func (d *StatefulDecoder) Decompress(dst, src []byte) ([]byte, error) {
 	out := dst[:0]
 	out = append(out, maskP, 0) // second byte reserved = 0
 
-	// ---- cred.pf  ----------------------------------------------------
+	// cred.pf
 	if pos+80 > len(src) {
 		return nil, errors.New("truncated pf")
 	}
 	out = append(out, src[pos:pos+80]...)
 	pos += 80
 
-	// ---- r.per -------------------------------------------------------
+	// r.per
 	if maskP&bitPer != 0 {
 		n := msgpVaruintLen(src[pos])
 		out = append(out, src[pos:pos+n]...)
 		pos += n
 	}
 
-	// ---- proposal ----------------------------------------------------
+	// r.prop
 	propOp := (hdr1 >> 2) & 0x7
 	var prop proposalBundle
 
@@ -168,7 +118,7 @@ func (d *StatefulDecoder) Decompress(dst, src []byte) ([]byte, error) {
 		}
 	}
 
-	// ---- r.rnd -------------------------------------------------------
+	// r.rnd
 	rndOp := hdr1 & 0x3
 	var rnd uint64
 	switch rndOp {
@@ -189,7 +139,7 @@ func (d *StatefulDecoder) Decompress(dst, src []byte) ([]byte, error) {
 	}
 	d.lastRnd = rnd
 
-	// ---- r.snd -------------------------------------------------------
+	// r.snd
 	if hdr1&(1<<5) != 0 { // reference
 		id, err := decodeDynamicRef(src, &pos)
 		if err != nil {
@@ -211,14 +161,14 @@ func (d *StatefulDecoder) Decompress(dst, src []byte) ([]byte, error) {
 		pos += 32
 	}
 
-	// ---- r.step ------------------------------------------------------
+	// r.step
 	if maskP&bitStep != 0 {
 		n := msgpVaruintLen(src[pos])
 		out = append(out, src[pos:pos+n]...)
 		pos += n
 	}
 
-	// ---- sig.p + p1s (pk bundle) ------------------------------------
+	// sig.p + p1s
 	if hdr1&(1<<6) != 0 { // reference
 		id, err := decodeDynamicRef(src, &pos)
 		if err != nil {
@@ -243,7 +193,7 @@ func (d *StatefulDecoder) Decompress(dst, src []byte) ([]byte, error) {
 		pos += 96
 	}
 
-	// ---- sig.p2 + p2s ----------------------------------------------
+	// sig.p2 + p2s
 	if hdr1&(1<<7) != 0 { // reference
 		id, err := decodeDynamicRef(src, &pos)
 		if err != nil {
@@ -268,7 +218,7 @@ func (d *StatefulDecoder) Decompress(dst, src []byte) ([]byte, error) {
 		pos += 96
 	}
 
-	// ---- sig.s -------------------------------------------------------
+	// sig.s
 	if pos+64 > len(src) {
 		return nil, errors.New("truncated sig.s")
 	}
