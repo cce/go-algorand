@@ -1,0 +1,129 @@
+// Copyright (C) 2019-2025 Algorand, Inc.
+// This file is part of go-algorand
+//
+// go-algorand is free software: you can redistribute it and/or modify
+// it under the terms of the GNU Affero General Public License as
+// published by the Free Software Foundation, either version 3 of the
+// License, or (at your option) any later version.
+//
+// go-algorand is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU Affero General Public License for more details.
+//
+// You should have received a copy of the GNU Affero General Public License
+// along with go-algorand.  If not, see <https://www.gnu.org/licenses/>.
+
+package vpack
+
+import (
+	"testing"
+
+	"github.com/algorand/go-algorand/agreement"
+	"github.com/algorand/go-algorand/protocol"
+	"github.com/algorand/go-algorand/test/partitiontest"
+	"github.com/stretchr/testify/require"
+)
+
+// TestCompressionMetrics verifies that the CompressionMetrics struct
+// correctly collects statistics about the compression process.
+func TestCompressionMetrics(t *testing.T) {
+	partitiontest.PartitionTest(t)
+
+	// Use fewer votes to keep test fast but enough to generate cache hits
+	const numVotes = 50
+
+	// Stateless encoder/decoder used as front/back before Stateful layer
+	stEnc := NewStatelessEncoder()
+	stDec := NewStatelessDecoder()
+
+	// Create the StatefulEncoder with metrics collection
+	metrics := &CompressionMetrics{}
+	enc := &StatefulEncoder{}
+	enc.SetMetrics(metrics)
+	
+	dec := &StatefulDecoder{}
+
+	// Create a vote generator - this is critical for creating valid input data
+	voteGen := generateRandomVote()
+
+	for i := 0; i < numVotes; i++ {
+		v0 := voteGen.Example(i)
+
+		// Ensure PKSigOld is zero to satisfy encoder expectations
+		v0.Sig.PKSigOld = [64]byte{}
+
+		// Encode to msgpack and bounds-check size
+		msgpackBuf := protocol.EncodeMsgp(v0)
+		require.LessOrEqual(t, len(msgpackBuf), MaxMsgpackVoteSize)
+
+		// First layer: stateless compression
+		statelessBuf, err := stEnc.CompressVote(nil, msgpackBuf)
+		require.NoError(t, err)
+
+		// Second layer: stateful compression - this will update metrics
+		encBuf, err := enc.Compress(nil, statelessBuf)
+		require.NoError(t, err, "Vote %d failed to compress", i)
+		
+		// size sanity: compressed should not exceed stateless size
+		require.LessOrEqual(t, len(encBuf), len(statelessBuf))
+
+		// Reverse: stateful decompress → stateless
+		statelessOut, err := dec.Decompress(nil, encBuf)
+		require.NoError(t, err, "Vote %d failed to decompress", i)
+
+		// Reverse: stateless decompress → msgpack
+		msgpackOut, err := stDec.DecompressVote(nil, statelessOut)
+		require.NoError(t, err)
+
+		// Decode and compare objects for round-trip integrity
+		var v1 agreement.UnauthenticatedVote
+		err = protocol.Decode(msgpackOut, &v1)
+		require.NoError(t, err)
+		require.Equal(t, *v0, v1, "Vote %d round-trip mismatch", i)
+	}
+
+	// Now check that metrics were actually collected
+	require.Equal(t, uint64(numVotes), metrics.TotalOps, "Expected to see exactly %d operations in metrics", numVotes)
+	
+	// We should have at least some hits for common reference types
+	// Sender hits should increase over iterations as we reuse addresses
+	t.Logf("Compression Metrics Results after %d messages:", numVotes)
+	
+	// Calculate hit rates manually since we don't have those methods
+	senderHitRate := float64(0)
+	if metrics.SenderHits+metrics.SenderMiss > 0 {
+		senderHitRate = float64(metrics.SenderHits) / float64(metrics.SenderHits+metrics.SenderMiss)
+	}
+	
+	pkHitRate := float64(0)
+	if metrics.PKHits+metrics.PKMiss > 0 {
+		pkHitRate = float64(metrics.PKHits) / float64(metrics.PKHits+metrics.PKMiss)
+	}
+	
+	t.Logf("Sender references: %d hits, %d misses, hit rate: %.2f%%", 
+		metrics.SenderHits, metrics.SenderMiss, senderHitRate*100)
+	t.Logf("PK references: %d hits, %d misses, hit rate: %.2f%%", 
+		metrics.PKHits, metrics.PKMiss, pkHitRate*100)
+	t.Logf("Round operations: same=%d, +1=%d, -1=%d, literal=%d", 
+		metrics.RoundSame, metrics.RoundPlus1, metrics.RoundMinus1, metrics.RoundLiteral)
+	
+	// Test that bytes saved calculations work correctly
+	var totalBytesSaved uint64 = metrics.SenderBytesSaved + metrics.PKBytesSaved + 
+		metrics.PK2BytesSaved + metrics.PropBytesSaved + metrics.RoundBytesSaved
+	
+	// Calculate bytes saved per message
+	var bytesPerMsg float64 = 0
+	if metrics.TotalOps > 0 {
+		bytesPerMsg = float64(totalBytesSaved) / float64(metrics.TotalOps)
+	}
+	
+	t.Logf("Total bytes saved: %d (%.2f bytes per message)", 
+		totalBytesSaved, bytesPerMsg)
+		
+	// Make sure our Reset function works correctly
+	metrics.Reset()
+	require.Equal(t, uint64(0), metrics.TotalOps, "Reset should zero out all metrics")
+	require.Equal(t, uint64(0), metrics.SenderHits, "Reset should zero out all metrics")
+	require.Equal(t, uint64(0), metrics.PKHits, "Reset should zero out all metrics")
+}

@@ -1,0 +1,197 @@
+// stateful_metrics.go
+package vpack
+
+import (
+	"fmt"
+	"io"
+)
+
+// CompressionMetrics collects statistics about stateful compression
+// to help analyze effectiveness of different reference types
+type CompressionMetrics struct {
+	// Total operations
+	TotalOps uint64
+
+	// Sender reference metrics
+	SenderHits uint64
+	SenderMiss uint64
+
+	// PK reference metrics
+	PKHits uint64
+	PKMiss uint64
+
+	// PK2 reference metrics
+	PK2Hits uint64
+	PK2Miss uint64
+
+	// Proposal reference metrics
+	PropHits uint64
+	PropMiss uint64
+
+	// Round reference metrics
+	RoundSame uint64
+	RoundPlus1 uint64
+	RoundMinus1 uint64
+	RoundLiteral uint64
+
+	// Bytes saved by each reference type
+	SenderBytesSaved uint64  // 32 bytes each hit
+	PKBytesSaved uint64      // 32+64 = 96 bytes each hit
+	PK2BytesSaved uint64     // 32+64 = 96 bytes each hit  
+	PropBytesSaved uint64    // varies based on proposal
+	RoundBytesSaved uint64   // varies based on encoding
+}
+
+// Reset zeros all counters
+func (m *CompressionMetrics) Reset() {
+	m.TotalOps = 0
+	m.SenderHits = 0
+	m.SenderMiss = 0
+	m.PKHits = 0
+	m.PKMiss = 0
+	m.PK2Hits = 0
+	m.PK2Miss = 0
+	m.PropHits = 0
+	m.PropMiss = 0
+	m.RoundSame = 0
+	m.RoundPlus1 = 0
+	m.RoundMinus1 = 0
+	m.RoundLiteral = 0
+	m.SenderBytesSaved = 0
+	m.PKBytesSaved = 0
+	m.PK2BytesSaved = 0
+	m.PropBytesSaved = 0
+	m.RoundBytesSaved = 0
+}
+
+// PrintReport outputs metrics to the provided writer
+func (m *CompressionMetrics) PrintReport(w io.Writer) {
+	total := m.TotalOps
+	if total == 0 {
+		fmt.Fprintln(w, "No compression operations recorded")
+		return
+	}
+
+	fmt.Fprintf(w, "Stateful Compression Metrics (operations: %d)\n", total)
+	fmt.Fprintln(w, "---------------------------------------------")
+	
+	// Sender stats
+	senderTotal := m.SenderHits + m.SenderMiss
+	if senderTotal > 0 {
+		senderHitRate := float64(m.SenderHits) / float64(senderTotal) * 100
+		fmt.Fprintf(w, "Sender:    %d hits, %d misses (%.2f%% hit rate)\n", 
+			m.SenderHits, m.SenderMiss, senderHitRate)
+		fmt.Fprintf(w, "           %.2f bytes saved per vote\n", 
+			float64(m.SenderBytesSaved)/float64(total))
+	}
+	
+	// PK stats
+	pkTotal := m.PKHits + m.PKMiss
+	if pkTotal > 0 {
+		pkHitRate := float64(m.PKHits) / float64(pkTotal) * 100
+		fmt.Fprintf(w, "PK:        %d hits, %d misses (%.2f%% hit rate)\n", 
+			m.PKHits, m.PKMiss, pkHitRate)
+		fmt.Fprintf(w, "           %.2f bytes saved per vote\n", 
+			float64(m.PKBytesSaved)/float64(total))
+	}
+	
+	// PK2 stats
+	pk2Total := m.PK2Hits + m.PK2Miss
+	if pk2Total > 0 {
+		pk2HitRate := float64(m.PK2Hits) / float64(pk2Total) * 100
+		fmt.Fprintf(w, "PK2:       %d hits, %d misses (%.2f%% hit rate)\n", 
+			m.PK2Hits, m.PK2Miss, pk2HitRate)
+		fmt.Fprintf(w, "           %.2f bytes saved per vote\n", 
+			float64(m.PK2BytesSaved)/float64(total))
+	}
+	
+	// Proposal stats
+	propTotal := m.PropHits + m.PropMiss
+	if propTotal > 0 {
+		propHitRate := float64(m.PropHits) / float64(propTotal) * 100
+		fmt.Fprintf(w, "Proposal:  %d hits, %d misses (%.2f%% hit rate)\n", 
+			m.PropHits, m.PropMiss, propHitRate)
+		fmt.Fprintf(w, "           %.2f bytes saved per vote\n", 
+			float64(m.PropBytesSaved)/float64(total))
+	}
+	
+	// Round stats
+	roundTotal := m.RoundSame + m.RoundPlus1 + m.RoundMinus1 + m.RoundLiteral
+	if roundTotal > 0 {
+		roundHitRate := float64(m.RoundSame+m.RoundPlus1+m.RoundMinus1) / float64(roundTotal) * 100
+		fmt.Fprintf(w, "Round:     %d same, %d +1, %d -1, %d literal (%.2f%% special encoding)\n", 
+			m.RoundSame, m.RoundPlus1, m.RoundMinus1, m.RoundLiteral, roundHitRate)
+		fmt.Fprintf(w, "           %.2f bytes saved per vote\n", 
+			float64(m.RoundBytesSaved)/float64(total))
+	}
+	
+	// Total bytes saved
+	totalSaved := m.SenderBytesSaved + m.PKBytesSaved + m.PK2BytesSaved + 
+		m.PropBytesSaved + m.RoundBytesSaved
+	fmt.Fprintf(w, "Total:     %.2f bytes saved per vote\n", 
+		float64(totalSaved)/float64(total))
+}
+
+// HitRatePercent returns the hit rate for a specific reference type
+func (m *CompressionMetrics) HitRatePercent(refType string) float64 {
+	switch refType {
+	case "sender":
+		total := m.SenderHits + m.SenderMiss
+		if total == 0 {
+			return 0
+		}
+		return float64(m.SenderHits) / float64(total) * 100
+	case "pk":
+		total := m.PKHits + m.PKMiss
+		if total == 0 {
+			return 0
+		}
+		return float64(m.PKHits) / float64(total) * 100
+	case "pk2":
+		total := m.PK2Hits + m.PK2Miss
+		if total == 0 {
+			return 0
+		}
+		return float64(m.PK2Hits) / float64(total) * 100
+	case "prop":
+		total := m.PropHits + m.PropMiss
+		if total == 0 {
+			return 0
+		}
+		return float64(m.PropHits) / float64(total) * 100
+	case "round":
+		total := m.RoundSame + m.RoundPlus1 + m.RoundMinus1 + m.RoundLiteral
+		if total == 0 {
+			return 0
+		}
+		return float64(m.RoundSame+m.RoundPlus1+m.RoundMinus1) / float64(total) * 100
+	default:
+		return 0
+	}
+}
+
+// BytesSavedPerMessage returns the average bytes saved per message for a reference type
+func (m *CompressionMetrics) BytesSavedPerMessage(refType string) float64 {
+	if m.TotalOps == 0 {
+		return 0
+	}
+	
+	switch refType {
+	case "sender":
+		return float64(m.SenderBytesSaved) / float64(m.TotalOps)
+	case "pk":
+		return float64(m.PKBytesSaved) / float64(m.TotalOps)
+	case "pk2":
+		return float64(m.PK2BytesSaved) / float64(m.TotalOps)
+	case "prop":
+		return float64(m.PropBytesSaved) / float64(m.TotalOps)
+	case "round":
+		return float64(m.RoundBytesSaved) / float64(m.TotalOps)
+	case "total":
+		totalSaved := m.SenderBytesSaved + m.PKBytesSaved + m.PK2BytesSaved + 
+			m.PropBytesSaved + m.RoundBytesSaved
+		return float64(totalSaved) / float64(m.TotalOps)
+	default:
+		return 0
+	}
+}

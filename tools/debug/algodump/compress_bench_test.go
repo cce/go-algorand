@@ -849,8 +849,8 @@ func benchmarkVPackDynamicCompression(b *testing.B) {
 	dynEnc := &vpack.StatefulEncoder{}
 
 	// Create metrics collector for detailed statistics
-	metrics := &vpack.CompressionMetrics{}
-	dynEnc.SetMetrics(metrics)
+	//	metrics := &vpack.CompressionMetrics{}
+	//	dynEnc.SetMetrics(metrics)
 
 	// Buffers for intermediate and final compression results
 	statelessBuf := make([]byte, 0, 4096)
@@ -895,9 +895,9 @@ func benchmarkVPackDynamicCompression(b *testing.B) {
 	b.ReportMetric(100-float64(totalCompressed)/float64(origBytes)*100, "%smaller")
 	b.SetBytes(origBytes / int64(b.N))
 
-	// Report compression metrics
-	fmt.Fprintf(os.Stdout, "\n Stateful Compression Reference Stats:\n")
-	fmt.Fprintf(os.Stdout, "Messages processed: %d\n", metrics.TotalOps)
+	// // Report compression metrics
+	// fmt.Fprintf(os.Stdout, "\n Stateful Compression Reference Stats:\n")
+	// fmt.Fprintf(os.Stdout, "Messages processed: %d\n", metrics.TotalOps)
 
 	if statelessTotalSize > 0 && statefulTotalSize > 0 {
 		fmt.Fprintf(os.Stdout, "Stateless size: %d bytes, Stateful size: %d bytes\n",
@@ -909,7 +909,7 @@ func benchmarkVPackDynamicCompression(b *testing.B) {
 	}
 
 	// Print detailed reference hit ratios and bytes saved
-	metrics.PrintReport(os.Stdout)
+	//metrics.PrintReport(os.Stdout)
 }
 
 // benchmarkVPackDynamicDecompression benchmarks the stateful vpack decompression implementation
@@ -977,6 +977,7 @@ func benchmarkVPackDynamicDecompression(b *testing.B) {
 			b.Fatalf("StatelessDecoder failed: %v", err)
 		}
 
+		//require.Equal(b, filtered[i%len(filtered)].Data, decompressed)
 		totalDecompressed += int64(len(decompressed))
 	}
 	b.StopTimer()
