@@ -83,18 +83,8 @@ func (t *lruTable[K]) insert(k K, h uint64) uint16 {
 	b := uint32(h) & lruTableBucketMask
 	evict := t.mruSlot(b) // LRU slot
 	t.bkt[b].key[evict] = k
-	t.setMRU(b, evict^1) // new key -> MRU
+	t.setMRU(b, evict) // new key -> MRU
 	return uint16(b<<1 | evict)
-}
-
-func (t *lruTable[K]) key(id uint16) (K, bool) {
-	b := id >> 1
-	slot := id & 1
-	if b >= lruTableBuckets {
-		var zero K
-		return zero, false
-	}
-	return t.bkt[b].key[slot], true
 }
 
 // fetch by id and set MRU
@@ -118,11 +108,6 @@ type propWindow struct {
 }
 
 func (w *propWindow) slotAt(pos int) uint8 { return uint8(w.order >> (pos * 3) & 7) }
-func (w *propWindow) setSlot(pos int, s uint8) {
-	shift := pos * 3
-	w.order &^= 7 << shift
-	w.order |= uint32(s) << shift
-}
 
 func (w *propWindow) indexOf(pb proposalBundle) (int, bool) {
 	for i := 0; i < w.size; i++ {
