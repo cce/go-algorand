@@ -829,3 +829,166 @@ func BenchmarkVPackCompression(b *testing.B) {
 func BenchmarkVPackDecompression(b *testing.B) {
 	benchmarkVPackDecompression(b)
 }
+
+// benchmarkVPackDynamicCompression benchmarks the stateful vpack compression implementation
+// This uses the two-layer compression: StatelessEncoder → StatefulEncoder
+func benchmarkVPackDynamicCompression(b *testing.B) {
+	corpus := loadTestCorpus(b)
+
+	// Filter messages to only include AV votes
+	filtered := filterMessages(b, corpus, true)
+
+	b.Logf("Number of messages: %d", len(filtered))
+	if b.N > len(filtered) {
+		//b.Fatalf("Number of iterations (%d) exceeds number of messages (%d)", b.N, len(filtered))
+		b.N = len(filtered)
+	}
+
+	// Create both encoder types - stateless for first layer, stateful for second
+	stEnc := vpack.NewStatelessEncoder()
+	dynEnc := &vpack.StatefulEncoder{}
+
+	// Create metrics collector for detailed statistics
+	metrics := &vpack.CompressionMetrics{}
+	dynEnc.SetMetrics(metrics)
+
+	// Buffers for intermediate and final compression results
+	statelessBuf := make([]byte, 0, 4096)
+	compressed := make([]byte, 0, 4096)
+
+	// For measuring stateless vs. stateful sizes
+	var statelessTotalSize, statefulTotalSize int64
+
+	b.ResetTimer()
+	var totalCompressed int64
+	var origBytes int64
+	for i := 0; i < b.N; i++ {
+		// Process one message per iteration, cycling through messages
+		msg := filtered[i%len(filtered)]
+
+		// First layer: stateless compression
+		var err error
+		statelessBuf, err = stEnc.CompressVote(statelessBuf[:0], msg.Data)
+		if err != nil {
+			b.Fatalf("StatelessEncoder failed: %v", err)
+		}
+
+		// Track total stateless size
+		statelessTotalSize += int64(len(statelessBuf))
+
+		// Second layer: stateful compression
+		compressed, err = dynEnc.Compress(compressed[:0], statelessBuf)
+		if err != nil {
+			b.Fatalf("StatefulEncoder failed: %v", err)
+		}
+
+		// Track total stateful size
+		statefulTotalSize += int64(len(compressed))
+
+		totalCompressed += int64(len(compressed))
+		origBytes += int64(len(msg.Data))
+	}
+	b.StopTimer()
+
+	// Report compression ratio and other metrics
+	b.ReportMetric(float64(origBytes)/float64(totalCompressed), "ratio")
+	b.ReportMetric(100-float64(totalCompressed)/float64(origBytes)*100, "%smaller")
+	b.SetBytes(origBytes / int64(b.N))
+
+	// Report compression metrics
+	fmt.Fprintf(os.Stdout, "\n Stateful Compression Reference Stats:\n")
+	fmt.Fprintf(os.Stdout, "Messages processed: %d\n", metrics.TotalOps)
+
+	if statelessTotalSize > 0 && statefulTotalSize > 0 {
+		fmt.Fprintf(os.Stdout, "Stateless size: %d bytes, Stateful size: %d bytes\n",
+			statelessTotalSize, statefulTotalSize)
+		fmt.Fprintf(os.Stdout, "Additional compression ratio: %.2fx\n",
+			float64(statelessTotalSize)/float64(statefulTotalSize))
+		fmt.Fprintf(os.Stdout, "Additional space reduction: %.2f%%\n\n",
+			(1.0-float64(statefulTotalSize)/float64(statelessTotalSize))*100)
+	}
+
+	// Print detailed reference hit ratios and bytes saved
+	metrics.PrintReport(os.Stdout)
+}
+
+// benchmarkVPackDynamicDecompression benchmarks the stateful vpack decompression implementation
+// This uses the two-layer decompression: StatefulDecoder → StatelessDecoder
+func benchmarkVPackDynamicDecompression(b *testing.B) {
+	corpus := loadTestCorpus(b)
+
+	// First compress all AV messages to have compressed data for benchmark
+	filtered := filterMessages(b, corpus, true)
+	compressedData := make([][]byte, 0, len(filtered))
+	var origCnt, encCnt int64
+
+	// Create both encoder types for pre-compression
+	stEnc := vpack.NewStatelessEncoder()
+	dynEnc := &vpack.StatefulEncoder{}
+
+	// Pre-compress the messages through both layers
+	for _, msg := range filtered {
+		// First layer: stateless
+		stBuf, err := stEnc.CompressVote(nil, msg.Data)
+		if err != nil {
+			b.Fatalf("StatelessEncoder failed during setup: %v", err)
+		}
+
+		// Second layer: stateful
+		encBytes, err := dynEnc.Compress(nil, stBuf)
+		if err != nil {
+			b.Fatalf("StatefulEncoder failed during setup: %v", err)
+		}
+
+		compressedData = append(compressedData, encBytes)
+		origCnt += int64(len(msg.Data))
+		encCnt += int64(len(encBytes))
+	}
+
+	if len(compressedData) == 0 {
+		b.Fatal("No compressed data to benchmark")
+	}
+
+	b.ResetTimer()
+	var totalDecompressed int64
+
+	// Create both decoder types for benchmark
+	dynDec := &vpack.StatefulDecoder{}
+	stDec := vpack.NewStatelessDecoder()
+
+	// Intermediate and final buffers
+	statelessBuf := make([]byte, 0, 1024)
+	decompressed := make([]byte, 0, 1024)
+
+	for i := 0; i < b.N; i++ {
+		// Process one compressed message per iteration, cycling through compressedData
+		compressed := compressedData[i%len(compressedData)]
+
+		// First layer: stateful decompression
+		var err error
+		statelessBuf, err = dynDec.Decompress(statelessBuf[:0], compressed)
+		if err != nil {
+			b.Fatalf("StatefulDecoder failed: %v", err)
+		}
+
+		// Second layer: stateless decompression
+		decompressed, err = stDec.DecompressVote(decompressed[:0], statelessBuf)
+		if err != nil {
+			b.Fatalf("StatelessDecoder failed: %v", err)
+		}
+
+		totalDecompressed += int64(len(decompressed))
+	}
+	b.StopTimer()
+
+	b.SetBytes(encCnt / int64(b.N))
+}
+
+// VPack dynamic benchmark functions
+func BenchmarkVPackDynamicCompression(b *testing.B) {
+	benchmarkVPackDynamicCompression(b)
+}
+
+func BenchmarkVPackDynamicDecompression(b *testing.B) {
+	benchmarkVPackDynamicDecompression(b)
+}

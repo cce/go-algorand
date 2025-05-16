@@ -4,6 +4,7 @@ package vpack
 import (
 	"encoding/binary"
 	"errors"
+	"sync/atomic"
 )
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -166,11 +167,19 @@ type StatefulEncoder struct {
 
 	// last round number
 	lastRnd uint64
+
+	// Optional metrics collector
+	metrics *CompressionMetrics
 }
 
 func encodeDynamicRef(id uint16, dst *[]byte) {
 	// use binary AppendUint16
 	*dst = binary.BigEndian.AppendUint16(*dst, id)
+}
+
+// SetMetrics assigns a metrics collection object to the encoder
+func (e *StatefulEncoder) SetMetrics(metrics *CompressionMetrics) {
+	e.metrics = metrics
 }
 
 // compress takes stateless-encoded vote (canonical order) and
@@ -187,6 +196,11 @@ func (e *StatefulEncoder) Compress(dst, src []byte) ([]byte, error) {
 	out = append(out, 0, 0) // placeholder
 
 	var hdr1 byte
+
+	// Collect metrics if enabled
+	if e.metrics != nil {
+		atomic.AddUint64(&e.metrics.TotalOps, 1)
+	}
 
 	// ---- cred.pf  ----------------------------------------------------
 	out = append(out, src[pos:pos+80]...)
@@ -227,6 +241,24 @@ func (e *StatefulEncoder) Compress(dst, src []byte) ([]byte, error) {
 		// reference
 		hdr1 |= byte(idx+1) << 2 // 001..111  (000 will mean literal)
 		e.propWin.pushFront(prop, e.propWin.slotAt(idx))
+		// Metrics: proposal hit
+		if e.metrics != nil {
+			atomic.AddUint64(&e.metrics.PropHits, 1)
+			var bytesSaved uint64
+			if (maskP & bitDig) != 0 {
+				bytesSaved += 32
+			}
+			if (maskP & bitEncDig) != 0 {
+				bytesSaved += 32
+			}
+			if (maskP & bitOper) != 0 {
+				bytesSaved += uint64(prop.operLen)
+			}
+			if (maskP & bitOprop) != 0 {
+				bytesSaved += 32
+			}
+			atomic.AddUint64(&e.metrics.PropBytesSaved, bytesSaved)
+		}
 	} else {
 		// literal
 		hdr1 |= 0 << 2 // 000
@@ -246,6 +278,10 @@ func (e *StatefulEncoder) Compress(dst, src []byte) ([]byte, error) {
 		if (maskP & bitOprop) != 0 {
 			out = append(out, prop.oprop[:]...)
 		}
+		// Metrics: proposal miss
+		if e.metrics != nil {
+			atomic.AddUint64(&e.metrics.PropMiss, 1)
+		}
 	}
 
 	// ---- r.rnd -------------------------------------------------------
@@ -257,14 +293,29 @@ func (e *StatefulEncoder) Compress(dst, src []byte) ([]byte, error) {
 	switch {
 	case rnd == e.lastRnd:
 		hdr1 |= 0b11 // rndOp = same
+		if e.metrics != nil {
+			atomic.AddUint64(&e.metrics.RoundSame, 1)
+			atomic.AddUint64(&e.metrics.RoundBytesSaved, uint64(n))
+		}
 	case rnd == e.lastRnd+1:
 		hdr1 |= 0b01
+		if e.metrics != nil {
+			atomic.AddUint64(&e.metrics.RoundPlus1, 1)
+			atomic.AddUint64(&e.metrics.RoundBytesSaved, uint64(n))
+		}
 	case rnd == e.lastRnd-1:
 		hdr1 |= 0b10
+		if e.metrics != nil {
+			atomic.AddUint64(&e.metrics.RoundMinus1, 1)
+			atomic.AddUint64(&e.metrics.RoundBytesSaved, uint64(n))
+		}
 	default:
 		// literal
 		hdr1 |= 0b00
 		out = append(out, src[rndStart:pos]...)
+		if e.metrics != nil {
+			atomic.AddUint64(&e.metrics.RoundLiteral, 1)
+		}
 	}
 	e.lastRnd = rnd
 
@@ -275,10 +326,17 @@ func (e *StatefulEncoder) Compress(dst, src []byte) ([]byte, error) {
 	if id, ok := e.sndTab.lookup(snd, hash32(&snd)); ok {
 		hdr1 |= 1 << 5 // sndRef
 		encodeDynamicRef(id, &out)
+		if e.metrics != nil {
+			atomic.AddUint64(&e.metrics.SenderHits, 1)
+			atomic.AddUint64(&e.metrics.SenderBytesSaved, 32-2)
+		}
 	} else {
 		out = append(out, snd[:]...)
 		id := e.sndTab.insert(snd, hash32(&snd))
 		_ = id
+		if e.metrics != nil {
+			atomic.AddUint64(&e.metrics.SenderMiss, 1)
+		}
 	}
 
 	// ---- optional r.step --------------------------------------------
@@ -295,14 +353,21 @@ func (e *StatefulEncoder) Compress(dst, src []byte) ([]byte, error) {
 	copy(pk.sig[:], src[pos:pos+64])
 	pos += 64
 
-	if id, ok := e.pkTab.lookup(pk, hashPK(pk)); ok {
-		hdr1 |= 1 << 6 // pkRef
-		encodeDynamicRef(id, &out)
-	} else {
-		out = append(out, pk.pk[:]...)
-		out = append(out, pk.sig[:]...)
-		_ = e.pkTab.insert(pk, hashPK(pk))
+	// if id, ok := e.pkTab.lookup(pk, hashPK(pk)); ok {
+	// 	hdr1 |= 1 << 6 // pkRef
+	// 	encodeDynamicRef(id, &out)
+	// 	if e.metrics != nil {
+	// 		atomic.AddUint64(&e.metrics.PKHits, 1)
+	// 		atomic.AddUint64(&e.metrics.PKBytesSaved, 96-2)
+	// 	}
+	// } else {
+	out = append(out, pk.pk[:]...)
+	out = append(out, pk.sig[:]...)
+	_ = e.pkTab.insert(pk, hashPK(pk))
+	if e.metrics != nil {
+		atomic.AddUint64(&e.metrics.PKMiss, 1)
 	}
+	// }
 
 	// ---- sig.p2 + sig.p2s (pk2 bundle) ------------------------------
 	var pk2 pk2Bundle
@@ -314,10 +379,17 @@ func (e *StatefulEncoder) Compress(dst, src []byte) ([]byte, error) {
 	if id, ok := e.pk2Tab.lookup(pk2, hashPK2(pk2)); ok {
 		hdr1 |= 1 << 7 // pk2Ref
 		encodeDynamicRef(id, &out)
+		if e.metrics != nil {
+			atomic.AddUint64(&e.metrics.PK2Hits, 1)
+			atomic.AddUint64(&e.metrics.PK2BytesSaved, 96-2)
+		}
 	} else {
 		out = append(out, pk2.pk2[:]...)
 		out = append(out, pk2.sig2[:]...)
 		_ = e.pk2Tab.insert(pk2, hashPK2(pk2))
+		if e.metrics != nil {
+			atomic.AddUint64(&e.metrics.PK2Miss, 1)
+		}
 	}
 
 	// ---- sig.s -------------------------------------------------------
