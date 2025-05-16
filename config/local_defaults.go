@@ -19,6 +19,9 @@
 
 package config
 
+var falseBoolValue bool = false
+var trueBoolValue bool = true
+
 var defaultLocal = Local{
 	Version:                                    36,
 	AccountUpdatesStatsInterval:                5000000000,
@@ -76,7 +79,7 @@ var defaultLocal = Local{
 	EnableNetDevMetrics:                        false,
 	EnableOutgoingNetworkMessageFiltering:      true,
 	EnableP2P:                                  false,
-	EnableP2PHybridMode:                        false,
+	EnableP2PHybridMode:                        &falseBoolValue,
 	EnablePingHandler:                          true,
 	EnablePrivateNetworkAccessHeader:           false,
 	EnableProcessBlockStats:                    false,

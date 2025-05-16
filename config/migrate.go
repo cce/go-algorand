@@ -78,6 +78,27 @@ func migrate(cfg Local) (newCfg Local, err error) {
 					boolVal, _ := strconv.ParseBool(nextVersionDefaultValue)
 					reflect.ValueOf(&newCfg).Elem().FieldByName(field.Name).SetBool(boolVal)
 				}
+			case reflect.Ptr:
+				// Generic handling for pointer-to-bool fields whose default value changed in the next version.
+				// We need to distinguish between three cases:
+				//   1. Field is nil  -> treat as unset, apply new default.
+				//   2. Field pointer equals the default pointer of the current version -> still using default, apply new default.
+				//   3. Any other case (custom pointer) -> explicitly set by user, keep as-is.
+				if reflect.ValueOf(&defaultCurrentConfig).Elem().FieldByName(field.Name).Type().Elem().Kind() == reflect.Bool {
+					curVal := reflect.ValueOf(&newCfg).Elem().FieldByName(field.Name)
+
+					// Update if the field is unset (nil) or points at one of the sentinel default pointers.
+					if curVal.IsNil() || curVal.Pointer() == reflect.ValueOf(&falseBoolValue).Pointer() || curVal.Pointer() == reflect.ValueOf(&trueBoolValue).Pointer() {
+						boolVal, _ := strconv.ParseBool(nextVersionDefaultValue)
+						var pb *bool
+						if boolVal {
+							pb = &trueBoolValue
+						} else {
+							pb = &falseBoolValue
+						}
+						curVal.Set(reflect.ValueOf(pb))
+					}
+				}
 			case reflect.Int32:
 				fallthrough
 			case reflect.Int:
@@ -158,6 +179,21 @@ func GetVersionedDefaultLocalConfig(version uint32) (local Local) {
 				panic(err)
 			}
 			reflect.ValueOf(&local).Elem().FieldByName(field.Name).SetBool(boolVal)
+		case reflect.Ptr:
+			if reflect.ValueOf(&local).Elem().FieldByName(field.Name).Type().Elem().Kind() == reflect.Bool {
+				boolVal, err := strconv.ParseBool(versionDefaultValue)
+				if err != nil {
+					panic(err)
+				}
+				// Use shared sentinel pointers for bool values to allow pointer equality checking.
+				var pb *bool
+				if boolVal {
+					pb = &trueBoolValue
+				} else {
+					pb = &falseBoolValue
+				}
+				reflect.ValueOf(&local).Elem().FieldByName(field.Name).Set(reflect.ValueOf(pb))
+			}
 
 		case reflect.Int32:
 			intVal, err := strconv.ParseInt(versionDefaultValue, 10, 32)

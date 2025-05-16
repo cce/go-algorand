@@ -620,7 +620,7 @@ type Local struct {
 
 	// EnableP2PHybridMode turns on both websockets and P2P networking.
 	// Enabling this setting also requires PublicAddress to be set.
-	EnableP2PHybridMode bool `version[34]:"false"`
+	EnableP2PHybridMode *bool `version[34]:"false" version[36]:"true"`
 
 	// P2PHybridNetAddress sets the listen address used for P2P networking, if hybrid mode is set.
 	P2PHybridNetAddress string `version[34]:""`
@@ -759,26 +759,31 @@ func (cfg Local) IsGossipServer() bool {
 	return cfg.IsWsGossipServer() || cfg.IsP2PGossipServer()
 }
 
+// IsP2PHybridModeEnabled returns true if the P2P hybrid mode is enabled
+func (cfg Local) IsP2PHybridModeEnabled() bool {
+	return cfg.EnableP2PHybridMode != nil && *cfg.EnableP2PHybridMode
+}
+
 // IsWsGossipServer returns true if a node is configured to run a listening ws net
 func (cfg Local) IsWsGossipServer() bool {
 	// 1. NetAddress is set and EnableP2P is not set
 	// 2. NetAddress is set and EnableP2PHybridMode is set then EnableP2P is overridden  by EnableP2PHybridMode
-	return cfg.NetAddress != "" && (!cfg.EnableP2P || cfg.EnableP2PHybridMode)
+	return cfg.NetAddress != "" && (!cfg.EnableP2P || cfg.IsP2PHybridModeEnabled())
 }
 
 // IsP2PGossipServer returns true if a node is configured to run a listening p2p net
 func (cfg Local) IsP2PGossipServer() bool {
-	return (cfg.EnableP2P && !cfg.EnableP2PHybridMode && cfg.NetAddress != "") || (cfg.EnableP2PHybridMode && cfg.P2PHybridNetAddress != "")
+	return (cfg.EnableP2P && !cfg.IsP2PHybridModeEnabled() && cfg.NetAddress != "") || (cfg.IsP2PHybridModeEnabled() && cfg.P2PHybridNetAddress != "")
 }
 
 // IsHybridServer returns true if a node configured to run a listening both ws and p2p networks
 func (cfg Local) IsHybridServer() bool {
-	return cfg.NetAddress != "" && cfg.P2PHybridNetAddress != "" && cfg.EnableP2PHybridMode
+	return cfg.NetAddress != "" && cfg.P2PHybridNetAddress != "" && cfg.IsP2PHybridModeEnabled()
 }
 
 // ValidateP2PHybridConfig checks if both NetAddress and P2PHybridNetAddress are set or unset in hybrid mode.
 func (cfg Local) ValidateP2PHybridConfig() error {
-	if cfg.EnableP2PHybridMode {
+	if cfg.IsP2PHybridModeEnabled() {
 		if cfg.NetAddress == "" && cfg.P2PHybridNetAddress != "" || cfg.NetAddress != "" && cfg.P2PHybridNetAddress == "" {
 			return errors.New("both NetAddress and P2PHybridNetAddress must be set or unset")
 		}

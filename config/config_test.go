@@ -35,6 +35,16 @@ import (
 	"github.com/algorand/go-algorand/util/codecs"
 )
 
+// Create boolean pointer constants for use in tests
+var (
+	trueBool  = true
+	falseBool = false
+
+	// Pointer references to use in tests
+	truePtr  = &trueBool
+	falsePtr = &falseBool
+)
+
 var defaultConfig = Local{
 	Archival:     false,
 	GossipFanout: 4,
@@ -140,33 +150,34 @@ func TestLocal_EnrichNetworkingConfig(t *testing.T) {
 	require.Equal(t, c2.GossipFanout, defaultRelayGossipFanout)
 
 	c1 = Local{
-		EnableP2PHybridMode: true,
+		EnableP2PHybridMode: truePtr,
 	}
 	c2, err = enrichNetworkingConfig(c1)
 	require.NoError(t, err)
 
 	c1 = Local{
 		NetAddress:          "test1",
-		EnableP2PHybridMode: true,
+		EnableP2PHybridMode: truePtr,
 	}
 	c2, err = enrichNetworkingConfig(c1)
 	require.ErrorContains(t, err, "PublicAddress must be specified when EnableP2PHybridMode is set")
 
 	c1 = Local{
 		P2PHybridNetAddress: "test1",
-		EnableP2PHybridMode: true,
+		EnableP2PHybridMode: truePtr,
 	}
 	c2, err = enrichNetworkingConfig(c1)
 	require.ErrorContains(t, err, "PublicAddress must be specified when EnableP2PHybridMode is set")
 
 	c1 = Local{
-		EnableP2PHybridMode: true,
+		EnableP2PHybridMode: truePtr,
 		PublicAddress:       "test2",
 	}
 	c2, err = enrichNetworkingConfig(c1)
 	require.NoError(t, err)
 	require.Equal(t, c1, c2)
-	require.True(t, c2.EnableP2PHybridMode)
+	require.NotNil(t, c2.EnableP2PHybridMode)
+	require.True(t, *c2.EnableP2PHybridMode)
 	require.NotEmpty(t, c2.PublicAddress)
 
 	c1 = Local{
@@ -263,6 +274,49 @@ func loadWithoutDefaults(cfg Local) (Local, error) {
 	}
 	cfg, err = loadConfigFromFile(name)
 	return cfg, err
+}
+
+func TestLocal_ConfigMigratePointerTypes(t *testing.T) {
+	partitiontest.PartitionTest(t)
+	a := require.New(t)
+
+	// --------------- Case 1: default sentinel (field present via defaults) ---------------
+	c0 := GetVersionedDefaultLocalConfig(35) // contains &falseBoolValue sentinel
+	c1, err := migrate(c0)
+	a.NoError(err)
+
+	a.NotNil(c0.EnableP2PHybridMode)
+	a.NotNil(c1.EnableP2PHybridMode)
+	a.Equal(false, *c0.EnableP2PHybridMode)
+	a.Equal(true, *c1.EnableP2PHybridMode) // should upgrade
+
+	// --------------- Case 2: user explicitly set "EnableP2PHybridMode": false ---------------
+	explicitFalseJSON := []byte(`{"Version":35, "EnableP2PHybridMode": false}`)
+	var c2 Local
+	err = json.Unmarshal(explicitFalseJSON, &c2)
+	a.NoError(err)
+
+	c3, err := migrate(c2)
+	a.NoError(err)
+
+	a.NotNil(c2.EnableP2PHybridMode)
+	a.NotNil(c3.EnableP2PHybridMode)
+	a.Equal(false, *c2.EnableP2PHybridMode)
+	a.Equal(false, *c3.EnableP2PHybridMode) // must stay false
+
+	// --------------- Case 3: field absent in JSON (nil pointer) ---------------
+	missingFieldJSON := []byte(`{"Version":35}`)
+	var c4 Local
+	err = json.Unmarshal(missingFieldJSON, &c4)
+	a.NoError(err)
+
+	a.Nil(c4.EnableP2PHybridMode) // confirm nil before migrate
+
+	c5, err := migrate(c4)
+	a.NoError(err)
+
+	a.NotNil(c5.EnableP2PHybridMode)
+	a.Equal(true, *c5.EnableP2PHybridMode) // upgraded to new default
 }
 
 func TestLocal_ConfigMigrate(t *testing.T) {
@@ -641,28 +695,28 @@ func TestLocal_IsGossipServer(t *testing.T) {
 
 	cfg.EnableP2P = false
 
-	cfg.EnableP2PHybridMode = true
+	cfg.EnableP2PHybridMode = truePtr
 	// with net address set it is ws net gossip server
 	require.True(t, cfg.IsGossipServer())
 	require.True(t, cfg.IsWsGossipServer())
 	require.False(t, cfg.IsP2PGossipServer())
 	require.False(t, cfg.IsHybridServer())
 
-	cfg.EnableP2PHybridMode = true
+	cfg.EnableP2PHybridMode = truePtr
 	cfg.NetAddress = ""
 	require.False(t, cfg.IsGossipServer())
 	require.False(t, cfg.IsWsGossipServer())
 	require.False(t, cfg.IsP2PGossipServer())
 	require.False(t, cfg.IsHybridServer())
 
-	cfg.EnableP2PHybridMode = true
+	cfg.EnableP2PHybridMode = truePtr
 	cfg.P2PHybridNetAddress = ":4190"
 	require.True(t, cfg.IsGossipServer())
 	require.False(t, cfg.IsWsGossipServer())
 	require.True(t, cfg.IsP2PGossipServer())
 	require.False(t, cfg.IsHybridServer())
 
-	cfg.EnableP2PHybridMode = true
+	cfg.EnableP2PHybridMode = truePtr
 	cfg.NetAddress = ":4160"
 	cfg.P2PHybridNetAddress = ":4190"
 	require.True(t, cfg.IsGossipServer())
@@ -670,7 +724,7 @@ func TestLocal_IsGossipServer(t *testing.T) {
 	require.True(t, cfg.IsP2PGossipServer())
 	require.True(t, cfg.IsHybridServer())
 
-	cfg.EnableP2PHybridMode = true
+	cfg.EnableP2PHybridMode = truePtr
 	cfg.EnableP2P = true
 	cfg.NetAddress = ":4160"
 	cfg.P2PHybridNetAddress = ":4190"
@@ -679,7 +733,7 @@ func TestLocal_IsGossipServer(t *testing.T) {
 	require.True(t, cfg.IsP2PGossipServer())
 	require.True(t, cfg.IsHybridServer())
 
-	cfg.EnableP2PHybridMode = true
+	cfg.EnableP2PHybridMode = truePtr
 	cfg.EnableP2P = true
 	cfg.NetAddress = ":4160"
 	cfg.P2PHybridNetAddress = ""
@@ -736,7 +790,7 @@ func TestLocal_RecalculateConnectionLimits(t *testing.T) {
 				P2PHybridIncomingConnectionsLimit: test.p2pIncomingIn,
 			}
 			if test.p2pIncomingIn > 0 {
-				c.EnableP2PHybridMode = true
+				c.EnableP2PHybridMode = truePtr
 				c.P2PHybridNetAddress = ":4190"
 			}
 			requireFDs := test.reservedIn + test.restHardIn + uint64(test.incomingIn) + uint64(test.p2pIncomingIn)
@@ -776,9 +830,14 @@ func TestLocal_ValidateP2PHybridConfig(t *testing.T) {
 			t.Parallel()
 
 			c := Local{
-				EnableP2PHybridMode: test.enableP2PHybridMode,
 				P2PHybridNetAddress: test.p2pHybridNetAddress,
 				NetAddress:          test.netAddress,
+			}
+			// Convert bool to *bool
+			if test.enableP2PHybridMode {
+				c.EnableP2PHybridMode = truePtr
+			} else {
+				c.EnableP2PHybridMode = falsePtr
 			}
 			err := c.ValidateP2PHybridConfig()
 			require.Equal(t, test.err, err != nil, name)
