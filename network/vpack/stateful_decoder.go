@@ -7,22 +7,16 @@ import (
 )
 
 type StatefulDecoder struct {
-	// 2-way caches holding FULL VALUES (not handles) – must mirror encoder
-	sndTab lruTable[[32]byte]
-	pkTab  lruTable[pkBundle]
-	pk2Tab lruTable[pk2Bundle]
-
-	propWin propWindow
-	lastRnd uint64
+	dynamicTableState
 }
 
-func decodeDynamicRef(src []byte, pos *int) (uint16, error) {
+func decodeDynamicRef(src []byte, pos *int) (lruTableReferenceID, error) {
 	if *pos+2 > len(src) {
 		return 0, errors.New("truncated ref id")
 	}
 	id := binary.BigEndian.Uint16(src[*pos : *pos+2])
 	*pos += 2
-	return id, nil
+	return lruTableReferenceID(id), nil
 }
 
 // Decompress reverses StatefulEncoder and *writes* a valid stateless-vpack
@@ -55,65 +49,64 @@ func (d *StatefulDecoder) Decompress(dst, src []byte) ([]byte, error) {
 
 	// r.prop
 	propOp := (hdr1 >> 2) & 0x7
-	var prop proposalBundle
+	var prop proposalEntry
 
 	switch propOp {
 	case 0: // literal follows
-		prop.maskP = maskP & propFieldsMask
-		if prop.maskP&bitDig != 0 {
+		prop.mask = maskP & propFieldsMask
+		if prop.mask&bitDig != 0 {
 			copy(prop.dig[:], src[pos:pos+32])
 			pos += 32
 		}
-		if prop.maskP&bitEncDig != 0 {
+		if prop.mask&bitEncDig != 0 {
 			copy(prop.encdig[:], src[pos:pos+32])
 			pos += 32
 		}
-		if prop.maskP&bitOper != 0 {
+		if prop.mask&bitOper != 0 {
 			n := msgpVaruintLen(src[pos])
 			copy(prop.operEnc[:], src[pos:pos+n])
 			prop.operLen = uint8(n)
 			pos += n
 		}
-		if prop.maskP&bitOprop != 0 {
+		if prop.mask&bitOprop != 0 {
 			copy(prop.oprop[:], src[pos:pos+32])
 			pos += 32
 		}
-		phys := d.propWin.lruSlot()
-		d.propWin.pushFront(prop, phys)
+		phys := d.proposalWindow.lruSlot()
+		d.proposalWindow.pushFront(prop, phys)
 
 		// emit literal bytes exactly as stateless order
-		if prop.maskP&bitDig != 0 {
+		if prop.mask&bitDig != 0 {
 			out = append(out, prop.dig[:]...)
 		}
-		if prop.maskP&bitEncDig != 0 {
+		if prop.mask&bitEncDig != 0 {
 			out = append(out, prop.encdig[:]...)
 		}
-		if prop.maskP&bitOper != 0 {
+		if prop.mask&bitOper != 0 {
 			out = append(out, prop.operEnc[:prop.operLen]...)
 		}
-		if prop.maskP&bitOprop != 0 {
+		if prop.mask&bitOprop != 0 {
 			out = append(out, prop.oprop[:]...)
 		}
 	default: // reference 1-7 => slot (op-1)
 		idx := int(propOp) - 1
-		if idx >= d.propWin.size {
+		if idx >= d.proposalWindow.size {
 			return nil, errors.New("bad proposal ref")
 		}
-		phys := d.propWin.slotAt(idx)
-		prop = d.propWin.key[phys]
-		d.propWin.pushFront(prop, phys)
+		prop, phys := d.proposalWindow.getAt(idx)
+		d.proposalWindow.pushFront(prop, phys)
 
 		// write referenced bundle fields
-		if prop.maskP&bitDig != 0 {
+		if prop.mask&bitDig != 0 {
 			out = append(out, prop.dig[:]...)
 		}
-		if prop.maskP&bitEncDig != 0 {
+		if prop.mask&bitEncDig != 0 {
 			out = append(out, prop.encdig[:]...)
 		}
-		if prop.maskP&bitOper != 0 {
+		if prop.mask&bitOper != 0 {
 			out = append(out, prop.operEnc[:prop.operLen]...)
 		}
-		if prop.maskP&bitOprop != 0 {
+		if prop.mask&bitOprop != 0 {
 			out = append(out, prop.oprop[:]...)
 		}
 	}
@@ -145,7 +138,7 @@ func (d *StatefulDecoder) Decompress(dst, src []byte) ([]byte, error) {
 		if err != nil {
 			return nil, err
 		}
-		addr, ok := d.sndTab.fetch(id)
+		addr, ok := d.sndTable.fetch(id)
 		if !ok {
 			return nil, errors.New("bad sender ref")
 		}
@@ -154,10 +147,10 @@ func (d *StatefulDecoder) Decompress(dst, src []byte) ([]byte, error) {
 		if pos+32 > len(src) {
 			return nil, errors.New("truncated sender")
 		}
-		var addr [32]byte
+		var addr addressValue
 		copy(addr[:], src[pos:pos+32])
 		out = append(out, addr[:]...)
-		_ = d.sndTab.insert(addr, hash32(&addr))
+		_ = d.sndTable.insert(addr, addr.hash())
 		pos += 32
 	}
 
@@ -174,7 +167,7 @@ func (d *StatefulDecoder) Decompress(dst, src []byte) ([]byte, error) {
 		if err != nil {
 			return nil, err
 		}
-		pkb, ok := d.pkTab.fetch(id)
+		pkb, ok := d.pkTable.fetch(id)
 		if !ok {
 			return nil, errors.New("bad pk ref")
 		}
@@ -184,12 +177,12 @@ func (d *StatefulDecoder) Decompress(dst, src []byte) ([]byte, error) {
 		if pos+96 > len(src) {
 			return nil, errors.New("truncated pk bundle")
 		}
-		var pkb pkBundle
+		var pkb pkSigPair
 		copy(pkb.pk[:], src[pos:pos+32])
 		copy(pkb.sig[:], src[pos+32:pos+96])
 		out = append(out, pkb.pk[:]...)
 		out = append(out, pkb.sig[:]...)
-		_ = d.pkTab.insert(pkb, hashPK(pkb))
+		_ = d.pkTable.insert(pkb, pkb.hash())
 		pos += 96
 	}
 
@@ -199,22 +192,22 @@ func (d *StatefulDecoder) Decompress(dst, src []byte) ([]byte, error) {
 		if err != nil {
 			return nil, err
 		}
-		pk2b, ok := d.pk2Tab.fetch(id)
+		pk2b, ok := d.pk2Table.fetch(id)
 		if !ok {
 			return nil, errors.New("bad pk2 ref")
 		}
-		out = append(out, pk2b.pk2[:]...)
-		out = append(out, pk2b.sig2[:]...)
+		out = append(out, pk2b.pk[:]...)
+		out = append(out, pk2b.sig[:]...)
 	} else {
 		if pos+96 > len(src) {
 			return nil, errors.New("truncated pk2 bundle")
 		}
-		var pk2b pk2Bundle
-		copy(pk2b.pk2[:], src[pos:pos+32])
-		copy(pk2b.sig2[:], src[pos+32:pos+96])
-		out = append(out, pk2b.pk2[:]...)
-		out = append(out, pk2b.sig2[:]...)
-		_ = d.pk2Tab.insert(pk2b, hashPK2(pk2b))
+		var pk2b pkSigPair
+		copy(pk2b.pk[:], src[pos:pos+32])
+		copy(pk2b.sig[:], src[pos+32:pos+96])
+		out = append(out, pk2b.pk[:]...)
+		out = append(out, pk2b.sig[:]...)
+		_ = d.pk2Table.insert(pk2b, pk2b.hash())
 		pos += 96
 	}
 

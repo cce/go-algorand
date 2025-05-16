@@ -10,20 +10,11 @@ import (
 // StatefulEncoder compresses votes by using references to previously seen values
 // from earlier votes.
 type StatefulEncoder struct {
-	// 2-way tables
-	sndTab lruTable[[32]byte]
-	pkTab  lruTable[pkBundle]
-	pk2Tab lruTable[pk2Bundle]
-
-	// proposal 8-slot window
-	propWin propWindow
-
-	// last round number
-	lastRnd uint64
+	dynamicTableState
 }
 
-func encodeDynamicRef(id uint16, dst *[]byte) {
-	*dst = binary.BigEndian.AppendUint16(*dst, id)
+func encodeDynamicRef(id lruTableReferenceID, dst *[]byte) {
+	*dst = binary.BigEndian.AppendUint16(*dst, uint16(id))
 }
 
 // Compress takes stateless-encoded vote (canonical order) and
@@ -54,8 +45,8 @@ func (e *StatefulEncoder) Compress(dst, src []byte) ([]byte, error) {
 
 	// r.prop
 	// copy proposal fields for table lookup
-	var prop proposalBundle
-	prop.maskP = maskP & propFieldsMask
+	var prop proposalEntry
+	prop.mask = maskP & propFieldsMask
 	if (maskP & bitDig) != 0 {
 		copy(prop.dig[:], src[pos:pos+32])
 		pos += 32
@@ -76,15 +67,15 @@ func (e *StatefulEncoder) Compress(dst, src []byte) ([]byte, error) {
 	}
 
 	// look up in sliding window
-	if idx, ok := e.propWin.indexOf(prop); ok {
+	if idx, ok := e.proposalWindow.indexOf(prop); ok {
 		// reference
 		hdr1 |= byte(idx+1) << 2 // 001..111  (000 will mean literal)
-		e.propWin.pushFront(prop, e.propWin.slotAt(idx))
+		e.proposalWindow.pushFront(prop, e.proposalWindow.slotAt(idx))
 	} else {
 		// literal
 		hdr1 |= 0 << 2 // 000
-		phys := e.propWin.lruSlot()
-		e.propWin.pushFront(prop, phys)
+		phys := e.proposalWindow.lruSlot()
+		e.proposalWindow.pushFront(prop, phys)
 
 		// write the literal bytes exactly as in stateless stream
 		if (maskP & bitDig) != 0 {
@@ -122,16 +113,15 @@ func (e *StatefulEncoder) Compress(dst, src []byte) ([]byte, error) {
 	e.lastRnd = rnd
 
 	// r.snd
-	var snd [32]byte
+	var snd addressValue
 	copy(snd[:], src[pos:pos+32])
 	pos += 32
-	if id, ok := e.sndTab.lookup(snd, hash32(&snd)); ok {
+	if id, ok := e.sndTable.lookup(snd, snd.hash()); ok {
 		hdr1 |= 1 << 5 // sndRef
 		encodeDynamicRef(id, &out)
 	} else {
 		out = append(out, snd[:]...)
-		id := e.sndTab.insert(snd, hash32(&snd))
-		_ = id
+		e.sndTable.insert(snd, snd.hash())
 	}
 
 	// r.step
@@ -142,35 +132,35 @@ func (e *StatefulEncoder) Compress(dst, src []byte) ([]byte, error) {
 	}
 
 	// sig.p + sig.p1s
-	var pk pkBundle
+	var pk pkSigPair
 	copy(pk.pk[:], src[pos:pos+32])
 	pos += 32
 	copy(pk.sig[:], src[pos:pos+64])
 	pos += 64
 
-	if id, ok := e.pkTab.lookup(pk, hashPK(pk)); ok {
+	if id, ok := e.pkTable.lookup(pk, pk.hash()); ok {
 		hdr1 |= 1 << 6 // pkRef
 		encodeDynamicRef(id, &out)
 	} else {
 		out = append(out, pk.pk[:]...)
 		out = append(out, pk.sig[:]...)
-		_ = e.pkTab.insert(pk, hashPK(pk))
+		_ = e.pkTable.insert(pk, pk.hash())
 	}
 
 	// sig.p2 + sig.p2s
-	var pk2 pk2Bundle
-	copy(pk2.pk2[:], src[pos:pos+32])
+	var pk2 pkSigPair
+	copy(pk2.pk[:], src[pos:pos+32])
 	pos += 32
-	copy(pk2.sig2[:], src[pos:pos+64])
+	copy(pk2.sig[:], src[pos:pos+64])
 	pos += 64
 
-	if id, ok := e.pk2Tab.lookup(pk2, hashPK2(pk2)); ok {
+	if id, ok := e.pk2Table.lookup(pk2, pk2.hash()); ok {
 		hdr1 |= 1 << 7 // pk2Ref
 		encodeDynamicRef(id, &out)
 	} else {
-		out = append(out, pk2.pk2[:]...)
-		out = append(out, pk2.sig2[:]...)
-		_ = e.pk2Tab.insert(pk2, hashPK2(pk2))
+		out = append(out, pk2.pk[:]...)
+		out = append(out, pk2.sig[:]...)
+		_ = e.pk2Table.insert(pk2, pk2.hash())
 	}
 
 	// sig.s
