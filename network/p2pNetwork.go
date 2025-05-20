@@ -259,6 +259,7 @@ func NewP2PNetwork(log logging.Logger, cfg config.Local, datadir string, phonebo
 		config:                 cfg,
 		broadcastQueueHighPrio: make(chan broadcastRequest, outgoingMessagesBufferSize),
 		broadcastQueueBulk:     make(chan broadcastRequest, 100),
+		enableVoteCompression:  wn.config.EnableVoteCompression,
 	}
 
 	if identityOpts != nil {
