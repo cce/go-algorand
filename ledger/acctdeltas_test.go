@@ -2888,11 +2888,11 @@ func testOnlineAccountsDeletion(t *testing.T, addrA, addrB basics.Address, tx *s
 
 		history, validThrough, err = queries.LookupOnlineHistory(addrA)
 		require.NoError(t, err)
-		require.Equal(t, basics.Round(0), validThrough) // not set
+		require.Zero(t, validThrough) // not set
 		require.Len(t, history, 3)
 		history, validThrough, err = queries.LookupOnlineHistory(addrB)
 		require.NoError(t, err)
-		require.Equal(t, basics.Round(0), validThrough)
+		require.Zero(t, validThrough)
 		require.Len(t, history, 2)
 	}
 
@@ -2906,11 +2906,11 @@ func testOnlineAccountsDeletion(t *testing.T, addrA, addrB basics.Address, tx *s
 
 		history, validThrough, err = queries.LookupOnlineHistory(addrA)
 		require.NoError(t, err)
-		require.Equal(t, basics.Round(0), validThrough)
+		require.Zero(t, validThrough)
 		require.Len(t, history, 1)
 		history, validThrough, err = queries.LookupOnlineHistory(addrB)
 		require.NoError(t, err)
-		require.Equal(t, basics.Round(0), validThrough)
+		require.Zero(t, validThrough)
 		require.Len(t, history, 2)
 	}
 
@@ -2924,11 +2924,11 @@ func testOnlineAccountsDeletion(t *testing.T, addrA, addrB basics.Address, tx *s
 
 		history, validThrough, err = queries.LookupOnlineHistory(addrA)
 		require.NoError(t, err)
-		require.Equal(t, basics.Round(0), validThrough)
+		require.Zero(t, validThrough)
 		require.Len(t, history, 1)
 		history, validThrough, err = queries.LookupOnlineHistory(addrB)
 		require.NoError(t, err)
-		require.Equal(t, basics.Round(0), validThrough)
+		require.Zero(t, validThrough)
 		require.Len(t, history, 1)
 	}
 }
