@@ -38,8 +38,10 @@ func TestStatefulEncoderDecoderSequence(t *testing.T) {
 	stEnc := NewStatelessEncoder()
 	stDec := NewStatelessDecoder()
 
-	enc := &StatefulEncoder{}
-	dec := &StatefulDecoder{}
+	enc, err := NewStatefulEncoder(1024)
+	require.NoError(t, err)
+	dec, err := NewStatefulDecoder(1024)
+	require.NoError(t, err)
 
 	voteGen := generateRandomVote()
 
@@ -97,8 +99,10 @@ func TestStatefulEncoderReuse(t *testing.T) {
 
 	stEnc := NewStatelessEncoder()
 	stDec := NewStatelessDecoder()
-	enc := &StatefulEncoder{}
-	dec := &StatefulDecoder{}
+	enc, err := NewStatefulEncoder(1024)
+	require.NoError(t, err)
+	dec, err := NewStatefulDecoder(1024)
+	require.NoError(t, err)
 
 	// 1) Compress into new buffers each time
 	var compressed [][]byte
@@ -174,8 +178,10 @@ func TestStatefulRndDelta(t *testing.T) {
 	rounds := []uint64{10, 10, 11, 10, 11, 11, 20}
 	expected := []byte{hdr1RndLiteral, hdr1RndDeltaSame, hdr1RndDeltaPlus1, hdr1RndDeltaMinus1, hdr1RndDeltaPlus1, hdr1RndDeltaSame, hdr1RndLiteral}
 
-	enc := &StatefulEncoder{}
-	dec := &StatefulDecoder{}
+	enc, err := NewStatefulEncoder(1024)
+	require.NoError(t, err)
+	dec, err := NewStatefulDecoder(1024)
+	require.NoError(t, err)
 	stEnc := NewStatelessEncoder()
 	stDec := NewStatelessDecoder()
 	voteGen := generateRandomVote()
@@ -283,8 +289,9 @@ func TestStatefulDecoderErrors(t *testing.T) {
 		{"length mismatch: expected", slices.Concat(fullVote, []byte{0xFF, 0xFF})},
 	} {
 		t.Run(tc.want, func(t *testing.T) {
-			dec := &StatefulDecoder{}
-			_, err := dec.Decompress(nil, tc.buf)
+			dec, err := NewStatefulDecoder(1024)
+			require.NoError(t, err)
+			_, err = dec.Decompress(nil, tc.buf)
 			require.ErrorContains(t, err, tc.want)
 		})
 	}
@@ -293,10 +300,11 @@ func TestStatefulDecoderErrors(t *testing.T) {
 func TestStatefulEncoderErrors(t *testing.T) {
 	partitiontest.PartitionTest(t)
 
-	enc := &StatefulEncoder{}
+	enc, err := NewStatefulEncoder(1024)
+	require.NoError(t, err)
 
 	// Source too short error
-	_, err := enc.Compress(nil, []byte{0x00})
+	_, err = enc.Compress(nil, []byte{0x00})
 	require.ErrorContains(t, err, "src too short")
 
 	// Length mismatch error
