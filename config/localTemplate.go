@@ -646,6 +646,10 @@ type Local struct {
 
 	// EnableVoteCompression controls whether vote compression is enabled for websocket networks
 	EnableVoteCompression bool `version[36]:"true"`
+
+	// VoteCompressionDynamicTableSize controls the size of the dynamic table used for vote compression.
+	// If 0, dynamic vote compression is disabled.
+	VoteCompressionDynamicTableSize int `version[36]:"512"`
 }
 
 // DNSBootstrapArray returns an array of one or more DNS Bootstrap identifiers

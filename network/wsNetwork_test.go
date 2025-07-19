@@ -573,6 +573,132 @@ func TestWebsocketVoteCompression(t *testing.T) {
 	}
 }
 
+// TestWebsocketVoteDynamicCompression tests dynamic vote compression negotiation
+func TestWebsocketVoteDynamicCompression(t *testing.T) {
+	partitiontest.PartitionTest(t)
+
+	type testCase struct {
+		name           string
+		netATableSize  int
+		netBTableSize  int
+		expectedSize   uint32
+		expectDynamic  bool
+	}
+
+	testCases := []testCase{
+		// Both nodes disabled
+		{"disabled_disabled", 0, 0, 0, false},
+		
+		// One node disabled
+		{"disabled_16", 0, 16, 0, false},
+		{"16_disabled", 16, 0, 0, false},
+		{"disabled_1024", 0, 1024, 0, false},
+		{"1024_disabled", 1024, 0, 0, false},
+		
+		// Same sizes
+		{"16_16", 16, 16, 16, true},
+		{"32_32", 32, 32, 32, true},
+		{"64_64", 64, 64, 64, true},
+		{"128_128", 128, 128, 128, true},
+		{"256_256", 256, 256, 256, true},
+		{"512_512", 512, 512, 512, true},
+		{"1024_1024", 1024, 1024, 1024, true},
+		
+		// Different sizes - should negotiate to minimum
+		{"16_32", 16, 32, 16, true},
+		{"32_16", 32, 16, 16, true},
+		{"16_1024", 16, 1024, 16, true},
+		{"1024_16", 1024, 16, 16, true},
+		{"64_256", 64, 256, 64, true},
+		{"256_64", 256, 64, 64, true},
+		{"128_512", 128, 512, 128, true},
+		{"512_128", 512, 128, 128, true},
+		{"256_1024", 256, 1024, 256, true},
+		{"1024_256", 1024, 256, 256, true},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Configure node A
+			cfgA := defaultConfig
+			cfgA.GossipFanout = 1
+			cfgA.EnableVoteCompression = true
+			cfgA.VoteCompressionDynamicTableSize = tc.netATableSize
+			netA := makeTestWebsocketNodeWithConfig(t, cfgA)
+			netA.Start()
+			defer netStop(t, netA, "A")
+
+			// Configure node B
+			cfgB := defaultConfig
+			cfgB.GossipFanout = 1
+			cfgB.EnableVoteCompression = true
+			cfgB.VoteCompressionDynamicTableSize = tc.netBTableSize
+			netB := makeTestWebsocketNodeWithConfig(t, cfgB)
+
+			addrA, postListen := netA.Address()
+			require.True(t, postListen)
+			t.Log(addrA)
+			netB.phonebook.ReplacePeerList([]string{addrA}, "default", phonebook.RelayRole)
+			netB.Start()
+			defer netStop(t, netB, "B")
+
+			// Wait for connection
+			readyTimeout := time.NewTimer(2 * time.Second)
+			waitReady(t, netA, readyTimeout.C)
+			waitReady(t, netB, readyTimeout.C)
+
+			// Check negotiated features on both sides
+			require.Equal(t, 1, len(netA.peers))
+			require.Equal(t, 1, len(netB.peers))
+			
+			peerAtoB := netA.peers[0]
+			peerBtoA := netB.peers[0]
+
+			// Check if dynamic compression is enabled
+			if tc.expectDynamic {
+				require.True(t, peerAtoB.vpackDynamicCompressionSupported(), 
+					"A->B peer should support dynamic compression")
+				require.True(t, peerBtoA.vpackDynamicCompressionSupported(),
+					"B->A peer should support dynamic compression")
+				
+				// Check negotiated table size
+				require.Equal(t, tc.expectedSize, peerAtoB.getBestVpackTableSize(),
+					"A->B peer should have expected table size")
+				require.Equal(t, tc.expectedSize, peerBtoA.getBestVpackTableSize(),
+					"B->A peer should have expected table size")
+			} else {
+				require.False(t, peerAtoB.vpackDynamicCompressionSupported(),
+					"A->B peer should not support dynamic compression")
+				require.False(t, peerBtoA.vpackDynamicCompressionSupported(),
+					"B->A peer should not support dynamic compression")
+			}
+
+			// Test actual vote compression works
+			vote := map[string]any{
+				"cred": map[string]any{"pf": crypto.VrfProof{1}},
+				"r":    map[string]any{"rnd": uint64(2), "snd": [32]byte{3}},
+				"sig": map[string]any{
+					"p": [32]byte{4}, "p1s": [64]byte{5}, "p2": [32]byte{6},
+					"p2s": [64]byte{7}, "ps": [64]byte{}, "s": [64]byte{9},
+				},
+			}
+			message := protocol.EncodeReflect(vote)
+			
+			counter := newMessageCounter(t, 1)
+			counterDone := counter.done
+			netB.RegisterHandlers([]TaggedMessageHandler{{Tag: protocol.AgreementVoteTag, MessageHandler: counter}})
+
+			netA.Broadcast(context.Background(), protocol.AgreementVoteTag, message, true, nil)
+
+			select {
+			case <-counterDone:
+			case <-time.After(2 * time.Second):
+				t.Errorf("timeout waiting for vote message")
+			}
+		})
+	}
+}
+
 // Repeat basic, but test a unicast
 func TestWebsocketNetworkUnicast(t *testing.T) {
 	partitiontest.PartitionTest(t)

@@ -117,10 +117,6 @@ func (s *dynamicTableState) initTables(tableSize uint32) error {
 	return nil
 }
 
-func encodeDynamicRef(id lruTableReferenceID, dst *[]byte) {
-	*dst = binary.BigEndian.AppendUint16(*dst, uint16(id))
-}
-
 // statefulReader helps StatefulEncoder and StatefulDecoder to read from a
 // source buffer with bounds checking.
 type statefulReader struct {

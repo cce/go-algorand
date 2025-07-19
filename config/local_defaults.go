@@ -165,4 +165,5 @@ var defaultLocal = Local{
 	TxSyncTimeoutSeconds:                       30,
 	UseXForwardedForAddressField:               "",
 	VerifiedTranscationsCacheSize:              150000,
+	VoteCompressionDynamicTableSize:            512,
 }

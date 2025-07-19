@@ -1093,12 +1093,58 @@ func (wp *wsPeer) vpackVoteCompressionSupported() bool {
 	return wp.features&pfCompressedVoteVpack != 0
 }
 
+func (wp *wsPeer) vpackDynamicCompressionSupported() bool {
+	return wp.features&(pfCompressedVoteVpackDynamic1024|
+		pfCompressedVoteVpackDynamic512|
+		pfCompressedVoteVpackDynamic256|
+		pfCompressedVoteVpackDynamic128|
+		pfCompressedVoteVpackDynamic64|
+		pfCompressedVoteVpackDynamic32|
+		pfCompressedVoteVpackDynamic16) != 0
+}
+
+// getBestVpackTableSize returns the negotiated table size.
+// With the new protocol, the peer features contain exactly one size (the negotiated size).
+func (wp *wsPeer) getBestVpackTableSize() uint32 {
+	// Find which single size flag is set (the negotiated size)
+	if wp.features&pfCompressedVoteVpackDynamic1024 != 0 {
+		return 1024
+	}
+	if wp.features&pfCompressedVoteVpackDynamic512 != 0 {
+		return 512
+	}
+	if wp.features&pfCompressedVoteVpackDynamic256 != 0 {
+		return 256
+	}
+	if wp.features&pfCompressedVoteVpackDynamic128 != 0 {
+		return 128
+	}
+	if wp.features&pfCompressedVoteVpackDynamic64 != 0 {
+		return 64
+	}
+	if wp.features&pfCompressedVoteVpackDynamic32 != 0 {
+		return 32
+	}
+	if wp.features&pfCompressedVoteVpackDynamic16 != 0 {
+		return 16
+	}
+	// Fall back to default if no dynamic size negotiated
+	return 1024
+}
+
 //msgp:ignore peerFeatureFlag
 type peerFeatureFlag int
 
 const (
 	pfCompressedProposal peerFeatureFlag = 1 << iota
 	pfCompressedVoteVpack
+	pfCompressedVoteVpackDynamic1024
+	pfCompressedVoteVpackDynamic512
+	pfCompressedVoteVpackDynamic256
+	pfCompressedVoteVpackDynamic128
+	pfCompressedVoteVpackDynamic64
+	pfCompressedVoteVpackDynamic32
+	pfCompressedVoteVpackDynamic16
 )
 
 // versionPeerFeatures defines protocol version when peer features were introduced
@@ -1145,6 +1191,27 @@ func decodePeerFeatures(version string, announcedFeatures string) peerFeatureFla
 		}
 		if part == PeerFeatureVoteVpackCompression {
 			features |= pfCompressedVoteVpack
+		}
+		if part == PeerFeatureVoteVpackDynamic1024 {
+			features |= pfCompressedVoteVpackDynamic1024
+		}
+		if part == PeerFeatureVoteVpackDynamic512 {
+			features |= pfCompressedVoteVpackDynamic512
+		}
+		if part == PeerFeatureVoteVpackDynamic256 {
+			features |= pfCompressedVoteVpackDynamic256
+		}
+		if part == PeerFeatureVoteVpackDynamic128 {
+			features |= pfCompressedVoteVpackDynamic128
+		}
+		if part == PeerFeatureVoteVpackDynamic64 {
+			features |= pfCompressedVoteVpackDynamic64
+		}
+		if part == PeerFeatureVoteVpackDynamic32 {
+			features |= pfCompressedVoteVpackDynamic32
+		}
+		if part == PeerFeatureVoteVpackDynamic16 {
+			features |= pfCompressedVoteVpackDynamic16
 		}
 	}
 	return features
