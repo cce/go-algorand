@@ -22,6 +22,7 @@ import (
 	"encoding/binary"
 	"fmt"
 
+	"github.com/algorand/go-algorand/config"
 	"github.com/algorand/go-algorand/crypto"
 	"github.com/algorand/go-algorand/data/basics"
 	"github.com/algorand/go-algorand/ledger/ledgercore"
@@ -161,7 +162,7 @@ func (r *accountsReader) LookupOnlineAccountDataByAddress(addr basics.Address) (
 		ref = onlineAccountRef{
 			addr:        addr,
 			round:       rnd,
-			normBalance: oa.NormalizedOnlineBalance(r.proto.RewardUnit),
+			normBalance: oa.NormalizedOnlineBalance(r.proto),
 		}
 	} else {
 		err = trackerdb.ErrNotFound
@@ -180,7 +181,7 @@ func (r *accountsReader) LookupOnlineAccountDataByAddress(addr basics.Address) (
 //
 // Note that this does not check if the accounts have a vote key valid for any
 // particular round (past, present, or future).
-func (r *accountsReader) AccountsOnlineTop(rnd basics.Round, offset uint64, n uint64, rewardUnit uint64) (data map[basics.Address]*ledgercore.OnlineAccount, err error) {
+func (r *accountsReader) AccountsOnlineTop(rnd basics.Round, offset uint64, n uint64, proto config.ConsensusParams) (data map[basics.Address]*ledgercore.OnlineAccount, err error) {
 	// The SQL before the impl
 	// SELECT
 	// 		address, normalizedonlinebalance, data, max(updround) FROM onlineaccounts
@@ -238,7 +239,7 @@ func (r *accountsReader) AccountsOnlineTop(rnd basics.Round, offset uint64, n ui
 			Address:                 addr,
 			MicroAlgos:              oa.MicroAlgos,
 			RewardsBase:             oa.RewardsBase,
-			NormalizedOnlineBalance: oa.NormalizedOnlineBalance(rewardUnit),
+			NormalizedOnlineBalance: oa.NormalizedOnlineBalance(proto),
 			VoteFirstValid:          oa.VoteFirstValid,
 			VoteLastValid:           oa.VoteLastValid,
 			StateProofID:            oa.StateProofID,
@@ -339,7 +340,7 @@ func (r *accountsReader) OnlineAccountsAll(maxAccounts uint64) ([]trackerdb.Pers
 			return nil, err
 		}
 		// set ref
-		normBalance := pitem.AccountData.NormalizedOnlineBalance(r.proto.RewardUnit)
+		normBalance := pitem.AccountData.NormalizedOnlineBalance(r.proto)
 		pitem.Ref = onlineAccountRef{addr, normBalance, pitem.UpdRound}
 		// if maxAccounts is supplied, potentially stop reading data if we've collected enough
 		if maxAccounts > 0 {
@@ -362,7 +363,7 @@ func (r *accountsReader) OnlineAccountsAll(maxAccounts uint64) ([]trackerdb.Pers
 }
 
 // ExpiredOnlineAccountsForRound implements trackerdb.AccountsReaderExt
-func (r *accountsReader) ExpiredOnlineAccountsForRound(rnd basics.Round, voteRnd basics.Round, rewardUnit uint64, rewardsLevel uint64) (data map[basics.Address]*basics.OnlineAccountData, err error) {
+func (r *accountsReader) ExpiredOnlineAccountsForRound(rnd basics.Round, voteRnd basics.Round, proto config.ConsensusParams, rewardsLevel uint64) (data map[basics.Address]*basics.OnlineAccountData, err error) {
 	// The SQL at the time of writing:
 	//
 	// SELECT address, data, max(updround)
@@ -424,7 +425,7 @@ func (r *accountsReader) ExpiredOnlineAccountsForRound(rnd basics.Round, voteRnd
 		}
 
 		// load the data as a ledgercore OnlineAccount
-		oadata := oa.GetOnlineAccountData(rewardUnit, rewardsLevel)
+		oadata := oa.GetOnlineAccountData(proto, rewardsLevel)
 		data[addr] = &oadata
 	}
 

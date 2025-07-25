@@ -53,12 +53,7 @@ var loggingCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, _ []string) {
 		reportWarnln("`goal logging` deprecated, use `diagcfg telemetry status`")
 		dataDir := datadir.EnsureSingleDataDir()
-		root, err := config.GetGlobalConfigFileRoot()
-		var cfgDir *string
-		if err == nil {
-			cfgDir = &root
-		}
-		cfg, err := logging.EnsureTelemetryConfig(&dataDir, cfgDir)
+		cfg, err := logging.EnsureTelemetryConfig(&dataDir, "")
 
 		// If error loading config, can't disable / no need to disable
 		if err != nil {
@@ -80,12 +75,7 @@ var enableCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, _ []string) {
 		reportWarnln("`goal logging enable` deprecated, use `diagcfg telemetry enable`")
 		dataDir := datadir.EnsureSingleDataDir()
-		root, err := config.GetGlobalConfigFileRoot()
-		var cfgDir *string
-		if err == nil {
-			cfgDir = &root
-		}
-		cfg, err := logging.EnsureTelemetryConfig(&dataDir, cfgDir)
+		cfg, err := logging.EnsureTelemetryConfig(&dataDir, "")
 		if err != nil {
 			fmt.Println(err)
 			return
@@ -106,12 +96,7 @@ var disableCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, _ []string) {
 		reportWarnf("`goal logging disable` deprecated, use `diagcfg telemetry disable`")
 		dataDir := datadir.EnsureSingleDataDir()
-		root, err := config.GetGlobalConfigFileRoot()
-		var cfgDir *string
-		if err == nil {
-			cfgDir = &root
-		}
-		cfg, err := logging.EnsureTelemetryConfig(&dataDir, cfgDir)
+		cfg, err := logging.EnsureTelemetryConfig(&dataDir, "")
 
 		// If error loading config, can't disable / no need to disable
 		if err != nil {
@@ -142,12 +127,7 @@ var loggingSendCmd = &cobra.Command{
 		errcount := 0
 		var firsterr error = nil
 		datadir.OnDataDirs(func(dataDir string) {
-			root, err := config.GetGlobalConfigFileRoot()
-			var cfgDir *string
-			if err == nil {
-				cfgDir = &root
-			}
-			cfg, err := logging.EnsureTelemetryConfig(&dataDir, cfgDir)
+			cfg, err := logging.EnsureTelemetryConfig(&dataDir, "")
 			if err != nil {
 				fmt.Println(err)
 				return

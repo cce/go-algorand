@@ -23,6 +23,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"os/user"
 	"path/filepath"
 	"strings"
 
@@ -259,15 +260,18 @@ func resolveKmdDataDir(dataDir string) string {
 		algodKmdPath, _ := filepath.Abs(filepath.Join(dataDir, libgoal.DefaultKMDDataDir))
 		return algodKmdPath
 	}
-	cfgRoot, err := config.GetGlobalConfigFileRoot()
+	cu, err := user.Current()
 	if err != nil {
-		reportErrorf("unable to find config root: %v", err)
+		reportErrorf("could not look up current user while looking for kmd dir: %s", err)
+	}
+	if cu.HomeDir == "" {
+		reportErrorln("user has no home dir while looking for kmd dir")
 	}
 	genesis, err := readGenesis(dataDir)
 	if err != nil {
 		reportErrorf("could not read genesis.json: %s", err)
 	}
-	return filepath.Join(cfgRoot, genesis.ID(), libgoal.DefaultKMDDataDir)
+	return filepath.Join(cu.HomeDir, ".algorand", genesis.ID(), libgoal.DefaultKMDDataDir)
 }
 
 func ensureCacheDir(dataDir string) string {
@@ -281,7 +285,7 @@ func ensureCacheDir(dataDir string) string {
 		return cacheDir
 	}
 	// Put the cache in the user's home directory
-	algorandDir, err := config.GetGlobalConfigFileRoot()
+	algorandDir, err := config.GetDefaultConfigFilePath()
 	if err != nil {
 		reportErrorf("config error %s", err)
 	}

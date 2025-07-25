@@ -20,6 +20,8 @@ import (
 	"encoding/hex"
 	"fmt"
 	"maps"
+
+	"github.com/algorand/go-algorand/config"
 )
 
 // DeltaAction is an enum of actions that may be performed when applying a
@@ -109,22 +111,25 @@ func (sm StateSchema) NumEntries() (tot uint64) {
 }
 
 // MinBalance computes the MinBalance requirements for a StateSchema based on
-// the requirements for the state values in the schema.
-func (sm StateSchema) MinBalance(reqs BalanceRequirements) MicroAlgos {
+// the consensus parameters
+func (sm StateSchema) MinBalance(proto *config.ConsensusParams) (res MicroAlgos) {
 	// Flat cost for each key/value pair
-	flatCost := MulSaturate(reqs.SchemaMinBalancePerEntry, sm.NumEntries())
+	flatCost := MulSaturate(proto.SchemaMinBalancePerEntry, sm.NumEntries())
 
 	// Cost for uints
-	uintCost := MulSaturate(reqs.SchemaUintMinBalance, sm.NumUint)
+	uintCost := MulSaturate(proto.SchemaUintMinBalance, sm.NumUint)
 
 	// Cost for byte slices
-	bytesCost := MulSaturate(reqs.SchemaBytesMinBalance, sm.NumByteSlice)
+	bytesCost := MulSaturate(proto.SchemaBytesMinBalance, sm.NumByteSlice)
 
 	// Sum the separate costs
-	min := AddSaturate(flatCost, uintCost)
+	var min uint64
+	min = AddSaturate(min, flatCost)
+	min = AddSaturate(min, uintCost)
 	min = AddSaturate(min, bytesCost)
 
-	return MicroAlgos{Raw: min}
+	res.Raw = min
+	return res
 }
 
 // TealType is an enum of the types in a TEAL program: Bytes and Uint

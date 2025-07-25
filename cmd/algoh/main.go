@@ -88,7 +88,7 @@ func main() {
 
 	dataDir := ensureDataDir()
 	absolutePath, absPathErr := filepath.Abs(dataDir)
-	config.DataDirectory = absolutePath
+	config.UpdateVersionDataDir(absolutePath)
 
 	if *versionCheck {
 		fmt.Println(config.FormatVersionAndLicense())
@@ -334,13 +334,7 @@ func initTelemetry(genesis bookkeeping.Genesis, log logging.Logger, dataDirector
 	// If ALGOTEST env variable is set, telemetry is disabled - allows disabling telemetry for tests
 	isTest := os.Getenv("ALGOTEST") != ""
 	if !isTest {
-		root, err := config.GetGlobalConfigFileRoot()
-		var cfgDir *string
-		if err == nil {
-			cfgDir = &root
-		}
-		telemetryConfig, err := logging.EnsureTelemetryConfig(&dataDirectory, cfgDir)
-		config.AnnotateTelemetry(&telemetryConfig, genesis.ID())
+		telemetryConfig, err := logging.EnsureTelemetryConfig(&dataDirectory, genesis.ID())
 		if err != nil {
 			fmt.Fprintln(os.Stdout, "error loading telemetry config", err)
 			return

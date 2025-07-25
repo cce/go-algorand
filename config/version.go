@@ -58,6 +58,9 @@ type Version struct {
 
 	// Branch-derived release channel the build is based on
 	Channel string
+
+	// DataDirectory for the current instance
+	DataDirectory string
 }
 
 func (v Version) String() string {
@@ -92,13 +95,14 @@ func convertToInt(val string) int {
 }
 
 var currentVersion = Version{
-	Major:       VersionMajor,
-	Minor:       VersionMinor,
-	BuildNumber: convertToInt(BuildNumber), // set using -ldflags
-	Suffix:      "",
-	CommitHash:  CommitHash,
-	Branch:      Branch,
-	Channel:     Channel,
+	Major:         VersionMajor,
+	Minor:         VersionMinor,
+	BuildNumber:   convertToInt(BuildNumber), // set using -ldflags
+	Suffix:        "",
+	CommitHash:    CommitHash,
+	Branch:        Branch,
+	Channel:       Channel,
+	DataDirectory: "",
 }
 
 // GetCurrentVersion retrieves a copy of the current global Version structure (for the application)
@@ -116,6 +120,14 @@ func FormatVersionAndLicense() string {
 // SetCurrentVersion allows replacing the current global Version structure (for the application)
 func SetCurrentVersion(version Version) {
 	currentVersion = version
+}
+
+// UpdateVersionDataDir is a convenience method for setting the data dir on the global Version struct
+// Used by algod and algoh to set built-time ephemeral version component e.g. data directory
+func UpdateVersionDataDir(dataDir string) {
+	v := GetCurrentVersion()
+	v.DataDirectory = dataDir
+	SetCurrentVersion(v)
 }
 
 // GetAlgorandVersion retrieves the current version formatted as a simple version string (Major.Minor.BuildNumber)
