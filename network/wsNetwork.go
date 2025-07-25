@@ -1009,34 +1009,23 @@ func (wn *WebsocketNetwork) ServeHTTP(response http.ResponseWriter, request *htt
 		features = append(features, PeerFeatureVoteVpackCompression)
 	}
 	if wn.config.VoteCompressionDynamicTableSize > 0 {
-		// HTTP Response: Negotiate table size with client
-		ourMaxSize := uint32(wn.config.VoteCompressionDynamicTableSize)
-		clientFeatures := request.Header.Get(PeerFeaturesHeader)
-		clientMaxSize := getClientMaxTableSize(clientFeatures)
-
-		if clientMaxSize > 0 {
-			// Use minimum of our max and client's max
-			negotiatedSize := ourMaxSize
-			if clientMaxSize < ourMaxSize {
-				negotiatedSize = clientMaxSize
-			}
-
-			// Respond with the negotiated size
-			if negotiatedSize >= 1024 {
-				features = append(features, PeerFeatureVoteVpackDynamic1024)
-			} else if negotiatedSize >= 512 {
-				features = append(features, PeerFeatureVoteVpackDynamic512)
-			} else if negotiatedSize >= 256 {
-				features = append(features, PeerFeatureVoteVpackDynamic256)
-			} else if negotiatedSize >= 128 {
-				features = append(features, PeerFeatureVoteVpackDynamic128)
-			} else if negotiatedSize >= 64 {
-				features = append(features, PeerFeatureVoteVpackDynamic64)
-			} else if negotiatedSize >= 32 {
-				features = append(features, PeerFeatureVoteVpackDynamic32)
-			} else if negotiatedSize >= 16 {
-				features = append(features, PeerFeatureVoteVpackDynamic16)
-			}
+		// HTTP Response: Announce our maximum supported table size
+		// Both sides will independently calculate min(ourSize, theirSize)
+		maxSize := uint32(wn.config.VoteCompressionDynamicTableSize)
+		if maxSize >= 1024 {
+			features = append(features, PeerFeatureVoteVpackDynamic1024)
+		} else if maxSize >= 512 {
+			features = append(features, PeerFeatureVoteVpackDynamic512)
+		} else if maxSize >= 256 {
+			features = append(features, PeerFeatureVoteVpackDynamic256)
+		} else if maxSize >= 128 {
+			features = append(features, PeerFeatureVoteVpackDynamic128)
+		} else if maxSize >= 64 {
+			features = append(features, PeerFeatureVoteVpackDynamic64)
+		} else if maxSize >= 32 {
+			features = append(features, PeerFeatureVoteVpackDynamic32)
+		} else if maxSize >= 16 {
+			features = append(features, PeerFeatureVoteVpackDynamic16)
 		}
 	}
 	responseHeader.Set(PeerFeaturesHeader, strings.Join(features, ","))
@@ -1086,8 +1075,10 @@ func (wn *WebsocketNetwork) ServeHTTP(response http.ResponseWriter, request *htt
 		identityVerified:      atomic.Uint32{},
 		features:              decodePeerFeatures(matchingVersion, request.Header.Get(PeerFeaturesHeader)),
 		enableVoteCompression: wn.config.EnableVoteCompression,
+		voteCompressionDynamicTableSize: uint32(wn.config.VoteCompressionDynamicTableSize),
 	}
 	peer.TelemetryGUID = trackedRequest.otherTelemetryGUID
+	wn.log.Debugf("Server: client features '%s', decoded %x, our response '%s'", request.Header.Get(PeerFeaturesHeader), peer.features, responseHeader.Get(PeerFeaturesHeader))
 	peer.init(wn.config, wn.outgoingMessagesBufferSize)
 	wn.addPeer(peer)
 	wn.log.With("event", "ConnectedIn").With("remote", trackedRequest.remoteAddress()).With("local", localAddr).Infof("Accepted incoming connection from peer %s", trackedRequest.remoteAddr)
@@ -1957,62 +1948,6 @@ var errBadAddr = errors.New("bad address")
 
 var errNetworkClosing = errors.New("WebsocketNetwork shutting down")
 
-// getClientMaxTableSize extracts the maximum table size from client's announced features
-func getClientMaxTableSize(featuresStr string) uint32 {
-	if featuresStr == "" {
-		return 0
-	}
-
-	parts := strings.Split(featuresStr, ",")
-	var maxSize uint32
-
-	for _, part := range parts {
-		part = strings.TrimSpace(part)
-		switch part {
-		case PeerFeatureVoteVpackDynamic1024:
-			if 1024 > maxSize {
-				maxSize = 1024
-			}
-		case PeerFeatureVoteVpackDynamic512:
-			if 512 > maxSize {
-				maxSize = 512
-			}
-		case PeerFeatureVoteVpackDynamic256:
-			if 256 > maxSize {
-				maxSize = 256
-			}
-		case PeerFeatureVoteVpackDynamic128:
-			if 128 > maxSize {
-				maxSize = 128
-			}
-		case PeerFeatureVoteVpackDynamic64:
-			if 64 > maxSize {
-				maxSize = 64
-			}
-		case PeerFeatureVoteVpackDynamic32:
-			if 32 > maxSize {
-				maxSize = 32
-			}
-		case PeerFeatureVoteVpackDynamic16:
-			if 16 > maxSize {
-				maxSize = 16
-			}
-		}
-	}
-
-	return maxSize
-}
-
-// validateServerTableSize ensures the server didn't respond with a size larger than client announced
-func validateServerTableSize(clientMaxSize uint32, serverFeaturesStr string) error {
-	serverNegotiatedSize := getClientMaxTableSize(serverFeaturesStr)
-	if serverNegotiatedSize > clientMaxSize {
-		return fmt.Errorf("server responded with table size %d larger than client max %d",
-			serverNegotiatedSize, clientMaxSize)
-	}
-	return nil
-}
-
 var errBcastCallerCancel = errors.New("caller cancelled broadcast")
 
 var errBcastQFull = errors.New("broadcast queue full")
@@ -2253,15 +2188,6 @@ func (wn *WebsocketNetwork) tryConnect(netAddr, gossipAddr string) {
 		wn.throttledOutgoingConnections.Add(int32(1))
 	}
 
-	// Validate server didn't respond with larger table size than we announced
-	if wn.config.VoteCompressionDynamicTableSize > 0 {
-		clientMaxSize := uint32(wn.config.VoteCompressionDynamicTableSize)
-		if err := validateServerTableSize(clientMaxSize, response.Header.Get(PeerFeaturesHeader)); err != nil {
-			wn.log.Warnf("ws connect(%s) table size validation failed: %s", gossipAddr, err)
-			// Continue anyway, just log the warning - don't break the connection over this
-		}
-	}
-
 	client, _ := wn.GetHTTPClient(netAddr)
 	peer := &wsPeer{
 		wsPeerCore:                  makePeerCore(wn.ctx, wn, wn.log, wn.handler.readBuffer, netAddr, client, "" /* origin */),
@@ -2275,8 +2201,10 @@ func (wn *WebsocketNetwork) tryConnect(netAddr, gossipAddr string) {
 		identity:                    peerID,
 		features:                    decodePeerFeatures(matchingVersion, response.Header.Get(PeerFeaturesHeader)),
 		enableVoteCompression:       wn.config.EnableVoteCompression,
+		voteCompressionDynamicTableSize: uint32(wn.config.VoteCompressionDynamicTableSize),
 	}
 	peer.TelemetryGUID, peer.InstanceName, _ = getCommonHeaders(response.Header)
+	wn.log.Debugf("Client: server features '%s', decoded %x", response.Header.Get(PeerFeaturesHeader), peer.features)
 
 	// if there is a final verification message to send, it means this peer has a verified identity,
 	// attempt to set the peer and identityTracker

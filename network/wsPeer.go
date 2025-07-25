@@ -240,6 +240,9 @@ type wsPeer struct {
 
 	// enableCompression specifies whether this node can compress or decompress votes (and whether it has advertised this)
 	enableVoteCompression bool
+	
+	// voteCompressionDynamicTableSize is this node's configured dynamic table size (0 means disabled)
+	voteCompressionDynamicTableSize uint32
 
 	// responseChannels used by the client to wait on the response of the request
 	responseChannels map[uint64]chan *Response
@@ -281,6 +284,9 @@ type wsPeer struct {
 	// peerType defines the peer's underlying connection type
 	// used for separate p2p vs ws metrics
 	peerType peerType
+
+	// msgCodec handles message compression/decompression for this peer
+	msgCodec *wsPeerMsgCodec
 }
 
 // HTTPPeer is what the opaque Peer might be.
@@ -493,6 +499,9 @@ func (wp *wsPeer) init(config config.Local, sendBufferLength int) {
 		wp.outgoingMsgFilter = makeMessageFilter(config.OutgoingMessageFilterBucketCount, config.OutgoingMessageFilterBucketSize)
 	}
 
+	// Initialize message codec for compression/decompression
+	wp.msgCodec = makeWsPeerMsgCodec(wp)
+
 	wp.wg.Add(2)
 	go wp.readLoop()
 	go wp.writeLoop()
@@ -525,7 +534,6 @@ func (wp *wsPeer) readLoop() {
 	}()
 	wp.conn.SetReadLimit(MaxMessageLength)
 	slurper := MakeLimitedReaderSlurper(averageMessageLength, MaxMessageLength)
-	dataConverter := makeWsPeerMsgDataDecoder(wp)
 
 	for {
 		msg := IncomingMessage{}
@@ -590,10 +598,12 @@ func (wp *wsPeer) readLoop() {
 		msg.processing = wp.processed
 		msg.Received = time.Now().UnixNano()
 		msg.Data = slurper.Bytes()
-		msg.Data, err = dataConverter.convert(msg.Tag, msg.Data)
-		if err != nil {
-			wp.reportReadErr(err)
-			return
+		if wp.msgCodec != nil {
+			msg.Data, err = wp.msgCodec.decompress(msg.Tag, msg.Data)
+			if err != nil {
+				wp.reportReadErr(err)
+				return
+			}
 		}
 		msg.Net = wp.net
 		wp.lastPacketTime.Store(msg.Received)
@@ -803,6 +813,17 @@ func (wp *wsPeer) writeLoopSendMsg(msg sendMessage) disconnectReason {
 		return disconnectReasonNone
 	}
 
+	// Check if we should apply compression
+	dataToSend := msg.data
+	if wp.msgCodec != nil {
+		compressed := wp.msgCodec.compress(tag, msg.data)
+		if compressed != nil {
+			// Successfully compressed, use the compressed data
+			dataToSend = compressed
+			tag = protocol.Tag(compressed[:2])
+		}
+	}
+
 	// check if this message was waiting in the queue for too long. If this is the case, return "true" to indicate that we want to close the connection.
 	now := time.Now()
 	msgWaitDuration := now.Sub(msg.enqueued)
@@ -814,7 +835,7 @@ func (wp *wsPeer) writeLoopSendMsg(msg sendMessage) disconnectReason {
 
 	wp.intermittentOutgoingMessageEnqueueTime.Store(msg.enqueued.UnixNano())
 	defer wp.intermittentOutgoingMessageEnqueueTime.Store(0)
-	err := wp.conn.WriteMessage(websocket.BinaryMessage, msg.data)
+	err := wp.conn.WriteMessage(websocket.BinaryMessage, dataToSend)
 	if err != nil {
 		if wp.didInnerClose.Load() == 0 {
 			wp.log.Warn("peer write error ", err)
@@ -824,14 +845,14 @@ func (wp *wsPeer) writeLoopSendMsg(msg sendMessage) disconnectReason {
 	}
 	wp.lastPacketTime.Store(time.Now().UnixNano())
 	if wp.peerType == peerTypeWs {
-		networkSentBytesTotal.AddUint64(uint64(len(msg.data)), nil)
-		networkSentBytesByTag.Add(string(tag), uint64(len(msg.data)))
+		networkSentBytesTotal.AddUint64(uint64(len(dataToSend)), nil)
+		networkSentBytesByTag.Add(string(tag), uint64(len(dataToSend)))
 		networkMessageSentTotal.AddUint64(1, nil)
 		networkMessageSentByTag.Add(string(tag), 1)
 		networkMessageQueueMicrosTotal.AddUint64(uint64(time.Since(msg.peerEnqueued).Nanoseconds()/1000), nil)
 	} else {
-		networkP2PSentBytesTotal.AddUint64(uint64(len(msg.data)), nil)
-		networkP2PSentBytesByTag.Add(string(tag), uint64(len(msg.data)))
+		networkP2PSentBytesTotal.AddUint64(uint64(len(dataToSend)), nil)
+		networkP2PSentBytesByTag.Add(string(tag), uint64(len(dataToSend)))
 		networkP2PMessageSentTotal.AddUint64(1, nil)
 		networkP2PMessageSentByTag.Add(string(tag), 1)
 		networkP2PMessageQueueMicrosTotal.AddUint64(uint64(time.Since(msg.peerEnqueued).Nanoseconds()/1000), nil)
@@ -1103,33 +1124,45 @@ func (wp *wsPeer) vpackDynamicCompressionSupported() bool {
 		pfCompressedVoteVpackDynamic16) != 0
 }
 
+// vpackDynamicCompressionEnabled returns true if stateful compression is actually enabled for this peer
+func (wp *wsPeer) vpackDynamicCompressionEnabled() bool {
+	return wp.msgCodec != nil && wp.msgCodec.statefulVoteEnabled
+}
+
 // getBestVpackTableSize returns the negotiated table size.
-// With the new protocol, the peer features contain exactly one size (the negotiated size).
+// This calculates the minimum between our max size and the peer's advertised max size.
 func (wp *wsPeer) getBestVpackTableSize() uint32 {
-	// Find which single size flag is set (the negotiated size)
+	// Get our max size
+	ourMaxSize := wp.voteCompressionDynamicTableSize
+	if ourMaxSize == 0 {
+		return 0
+	}
+	
+	// Get peer's max size from their features
+	var peerMaxSize uint32
 	if wp.features&pfCompressedVoteVpackDynamic1024 != 0 {
-		return 1024
+		peerMaxSize = 1024
+	} else if wp.features&pfCompressedVoteVpackDynamic512 != 0 {
+		peerMaxSize = 512
+	} else if wp.features&pfCompressedVoteVpackDynamic256 != 0 {
+		peerMaxSize = 256
+	} else if wp.features&pfCompressedVoteVpackDynamic128 != 0 {
+		peerMaxSize = 128
+	} else if wp.features&pfCompressedVoteVpackDynamic64 != 0 {
+		peerMaxSize = 64
+	} else if wp.features&pfCompressedVoteVpackDynamic32 != 0 {
+		peerMaxSize = 32
+	} else if wp.features&pfCompressedVoteVpackDynamic16 != 0 {
+		peerMaxSize = 16
+	} else {
+		return 0 // Peer doesn't support dynamic compression
 	}
-	if wp.features&pfCompressedVoteVpackDynamic512 != 0 {
-		return 512
+	
+	// Return the minimum of the two
+	if peerMaxSize < ourMaxSize {
+		return peerMaxSize
 	}
-	if wp.features&pfCompressedVoteVpackDynamic256 != 0 {
-		return 256
-	}
-	if wp.features&pfCompressedVoteVpackDynamic128 != 0 {
-		return 128
-	}
-	if wp.features&pfCompressedVoteVpackDynamic64 != 0 {
-		return 64
-	}
-	if wp.features&pfCompressedVoteVpackDynamic32 != 0 {
-		return 32
-	}
-	if wp.features&pfCompressedVoteVpackDynamic16 != 0 {
-		return 16
-	}
-	// Fall back to default if no dynamic size negotiated
-	return 1024
+	return ourMaxSize
 }
 
 //msgp:ignore peerFeatureFlag

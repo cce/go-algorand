@@ -510,6 +510,7 @@ func TestWebsocketVoteCompression(t *testing.T) {
 			cfgA := defaultConfig
 			cfgA.GossipFanout = 1
 			cfgA.EnableVoteCompression = test.netAEnableCompression
+			cfgA.VoteCompressionDynamicTableSize = 0 // Disable stateful compression
 			netA := makeTestWebsocketNodeWithConfig(t, cfgA)
 			netA.Start()
 			defer netStop(t, netA, "A")
@@ -517,6 +518,7 @@ func TestWebsocketVoteCompression(t *testing.T) {
 			cfgB := defaultConfig
 			cfgB.GossipFanout = 1
 			cfgB.EnableVoteCompression = test.netBEnableCompression
+			cfgB.VoteCompressionDynamicTableSize = 0 // Disable stateful compression
 			netB := makeTestWebsocketNodeWithConfig(t, cfgB)
 
 			addrA, postListen := netA.Address()
@@ -578,23 +580,23 @@ func TestWebsocketVoteDynamicCompression(t *testing.T) {
 	partitiontest.PartitionTest(t)
 
 	type testCase struct {
-		name           string
-		netATableSize  int
-		netBTableSize  int
-		expectedSize   uint32
-		expectDynamic  bool
+		name          string
+		netATableSize int
+		netBTableSize int
+		expectedSize  uint32
+		expectDynamic bool
 	}
 
 	testCases := []testCase{
 		// Both nodes disabled
 		{"disabled_disabled", 0, 0, 0, false},
-		
+
 		// One node disabled
 		{"disabled_16", 0, 16, 0, false},
 		{"16_disabled", 16, 0, 0, false},
 		{"disabled_1024", 0, 1024, 0, false},
 		{"1024_disabled", 1024, 0, 0, false},
-		
+
 		// Same sizes
 		{"16_16", 16, 16, 16, true},
 		{"32_32", 32, 32, 32, true},
@@ -603,7 +605,7 @@ func TestWebsocketVoteDynamicCompression(t *testing.T) {
 		{"256_256", 256, 256, 256, true},
 		{"512_512", 512, 512, 512, true},
 		{"1024_1024", 1024, 1024, 1024, true},
-		
+
 		// Different sizes - should negotiate to minimum
 		{"16_32", 16, 32, 16, true},
 		{"32_16", 32, 16, 16, true},
@@ -650,27 +652,27 @@ func TestWebsocketVoteDynamicCompression(t *testing.T) {
 			// Check negotiated features on both sides
 			require.Equal(t, 1, len(netA.peers))
 			require.Equal(t, 1, len(netB.peers))
-			
+
 			peerAtoB := netA.peers[0]
 			peerBtoA := netB.peers[0]
 
 			// Check if dynamic compression is enabled
 			if tc.expectDynamic {
-				require.True(t, peerAtoB.vpackDynamicCompressionSupported(), 
-					"A->B peer should support dynamic compression")
-				require.True(t, peerBtoA.vpackDynamicCompressionSupported(),
-					"B->A peer should support dynamic compression")
-				
+				require.True(t, peerAtoB.vpackDynamicCompressionEnabled(),
+					"A->B peer should have dynamic compression enabled")
+				require.True(t, peerBtoA.vpackDynamicCompressionEnabled(),
+					"B->A peer should have dynamic compression enabled")
+
 				// Check negotiated table size
 				require.Equal(t, tc.expectedSize, peerAtoB.getBestVpackTableSize(),
 					"A->B peer should have expected table size")
 				require.Equal(t, tc.expectedSize, peerBtoA.getBestVpackTableSize(),
 					"B->A peer should have expected table size")
 			} else {
-				require.False(t, peerAtoB.vpackDynamicCompressionSupported(),
-					"A->B peer should not support dynamic compression")
-				require.False(t, peerBtoA.vpackDynamicCompressionSupported(),
-					"B->A peer should not support dynamic compression")
+				require.False(t, peerAtoB.vpackDynamicCompressionEnabled(),
+					"A->B peer should not have dynamic compression enabled")
+				require.False(t, peerBtoA.vpackDynamicCompressionEnabled(),
+					"B->A peer should not have dynamic compression enabled")
 			}
 
 			// Test actual vote compression works
@@ -683,7 +685,7 @@ func TestWebsocketVoteDynamicCompression(t *testing.T) {
 				},
 			}
 			message := protocol.EncodeReflect(vote)
-			
+
 			counter := newMessageCounter(t, 1)
 			counterDone := counter.done
 			netB.RegisterHandlers([]TaggedMessageHandler{{Tag: protocol.AgreementVoteTag, MessageHandler: counter}})

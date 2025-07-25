@@ -76,16 +76,23 @@ func vpackCompressVote(tbytes []byte, d []byte) ([]byte, string) {
 // and should be larger.
 const MaxDecompressedMessageSize = 20 * 1024 * 1024 // some large enough value
 
-// wsPeerMsgDataDecoder performs optional incoming messages conversion.
-// At the moment it only supports zstd decompression for payload proposal,
-// and vpack decompression for votes.
-type wsPeerMsgDataDecoder struct {
+// wsPeerMsgCodec performs optional message compression/decompression.
+// It handles:
+// - zstd compression for proposals (outgoing not implemented)
+// - stateless vpack compression for votes (outgoing not implemented)
+// - stateful vpack compression for votes (both directions)
+type wsPeerMsgCodec struct {
 	log    logging.Logger
 	origin string
 
-	// actual converter(s)
+	// decompressors
 	ppdec zstdProposalDecompressor
 	avdec vpackVoteDecompressor
+
+	// stateful vote compression (if enabled)
+	statefulVoteEnabled bool
+	statefulVoteEnc     *vpack.StatefulEncoder
+	statefulVoteDec     *vpack.StatefulDecoder
 }
 
 type zstdProposalDecompressor struct{}
@@ -126,8 +133,10 @@ func (dec zstdProposalDecompressor) convert(data []byte) ([]byte, error) {
 	}
 }
 
-func (c *wsPeerMsgDataDecoder) convert(tag protocol.Tag, data []byte) ([]byte, error) {
-	if tag == protocol.ProposalPayloadTag {
+// decompress handles incoming message decompression based on tag type
+func (c *wsPeerMsgCodec) decompress(tag protocol.Tag, data []byte) ([]byte, error) {
+	switch tag {
+	case protocol.ProposalPayloadTag:
 		// sender might support compressed payload but fail to compress for whatever reason,
 		// in this case it sends non-compressed payload - the receiver decompress only if it is compressed.
 		if c.ppdec.accept(data) {
@@ -138,7 +147,8 @@ func (c *wsPeerMsgDataDecoder) convert(tag protocol.Tag, data []byte) ([]byte, e
 			return res, nil
 		}
 		c.log.Warnf("peer %s supported zstd but sent non-compressed data", c.origin)
-	} else if tag == protocol.AgreementVoteTag {
+
+	case protocol.AgreementVoteTag:
 		if c.avdec.enabled {
 			res, err := c.avdec.convert(data)
 			if err != nil {
@@ -148,12 +158,90 @@ func (c *wsPeerMsgDataDecoder) convert(tag protocol.Tag, data []byte) ([]byte, e
 			}
 			return res, nil
 		}
+
+	case protocol.VotePackedTag:
+		if c.statefulVoteEnabled && c.statefulVoteDec != nil {
+			// The data parameter does not include tag bytes
+			compressedData := data
+
+			// Prepare output buffer: AV tag + decompressed data
+			avTag := []byte(protocol.AgreementVoteTag)
+			result := make([]byte, len(avTag)+vpack.MaxMsgpackVoteSize)
+			copy(result, avTag)
+
+			// First decompress using stateful decoder
+			c.log.Debugf("Decompressing VP vote: %d bytes", len(compressedData))
+			statelessBuf := make([]byte, vpack.MaxCompressedVoteSize)
+			statelessCompressed, err := c.statefulVoteDec.Decompress(statelessBuf, compressedData)
+			if err != nil {
+				c.log.Warnf("stateful vote decompression failed: %v, compressed len=%d", err, len(compressedData))
+				return nil, err
+			}
+
+			// Then decompress using stateless decoder
+			var statelessDec vpack.StatelessDecoder
+			decompressed, err := statelessDec.DecompressVote(result[len(avTag):], statelessCompressed)
+			if err != nil {
+				c.log.Warnf("stateless vote decompression failed: %v", err)
+				return nil, err
+			}
+
+			// Return the final message: AV tag + decompressed data
+			c.log.Debugf("Decompressed vote: %d -> %d -> %d bytes", len(compressedData), len(statelessCompressed), len(decompressed))
+			return result[:len(avTag)+len(decompressed)], nil
+		}
+		return nil, fmt.Errorf("received VP message but stateful compression not enabled")
 	}
+
 	return data, nil
 }
 
-func makeWsPeerMsgDataDecoder(wp *wsPeer) *wsPeerMsgDataDecoder {
-	c := wsPeerMsgDataDecoder{
+// compress attempts to compress an outgoing message.
+// Currently only supports stateful vote compression.
+// Returns compressed data or nil if compression is not applicable/fails.
+func (c *wsPeerMsgCodec) compress(tag protocol.Tag, data []byte) []byte {
+	if tag == protocol.AgreementVoteTag && c.statefulVoteEnabled && c.statefulVoteEnc != nil {
+		// Skip the tag bytes (first 2 bytes are the AV tag)
+		if len(data) < 2 {
+			return nil
+		}
+		voteData := data[2:]
+
+		// Note: We don't need to check if the vote is already compressed because
+		// stateless compression is handled at the broadcast level and those messages
+		// are sent directly to peers that support compression, bypassing this codec
+
+		// First apply stateless compression
+		var statelessEnc vpack.StatelessEncoder
+		statelessBuf := make([]byte, vpack.MaxCompressedVoteSize)
+		statelessCompressed, err := statelessEnc.CompressVote(statelessBuf, voteData)
+		if err != nil {
+			c.log.Debugf("stateless vote compression failed: %v", err)
+			return nil
+		}
+
+		// Prepare output buffer: VP tag + compressed data
+		vpTag := []byte(protocol.VotePackedTag)
+		bound := vpack.MaxCompressedVoteSize
+		result := make([]byte, len(vpTag)+bound)
+		copy(result, vpTag)
+
+		// Apply stateful compression on top of stateless
+		compressed, err := c.statefulVoteEnc.Compress(result[len(vpTag):], statelessCompressed)
+		if err != nil {
+			c.log.Debugf("stateful vote compression failed: %v", err)
+			return nil
+		}
+
+		// Return the final message: VP tag + compressed data
+		c.log.Debugf("Compressed vote: %d -> %d -> %d bytes", len(voteData), len(statelessCompressed), len(compressed))
+		return result[:len(vpTag)+len(compressed)]
+	}
+	return nil
+}
+
+func makeWsPeerMsgCodec(wp *wsPeer) *wsPeerMsgCodec {
+	c := wsPeerMsgCodec{
 		log:    wp.log,
 		origin: wp.originAddress,
 	}
@@ -166,5 +254,32 @@ func makeWsPeerMsgDataDecoder(wp *wsPeer) *wsPeerMsgDataDecoder {
 			dec:     vpack.NewStatelessDecoder(),
 		}
 	}
+
+	// Initialize stateful compression if both nodes support it and have non-zero table sizes
+	if wp.enableVoteCompression && wp.voteCompressionDynamicTableSize > 0 && wp.vpackDynamicCompressionSupported() {
+		tableSize := wp.getBestVpackTableSize()
+		// Use the minimum of our configured size and the negotiated size
+		if tableSize > wp.voteCompressionDynamicTableSize {
+			tableSize = wp.voteCompressionDynamicTableSize
+		}
+		wp.log.Debugf("Initializing stateful compression with table size %d (our max: %d)", tableSize, wp.voteCompressionDynamicTableSize)
+		if tableSize > 0 {
+			enc, err := vpack.NewStatefulEncoder(tableSize)
+			if err != nil {
+				wp.log.Warnf("failed to initialize stateful encoder: %v", err)
+			} else {
+				dec, err := vpack.NewStatefulDecoder(tableSize)
+				if err != nil {
+					wp.log.Warnf("failed to initialize stateful decoder: %v", err)
+				} else {
+					c.statefulVoteEnabled = true
+					c.statefulVoteEnc = enc
+					c.statefulVoteDec = dec
+					wp.log.Debugf("Stateful compression enabled")
+				}
+			}
+		}
+	}
+
 	return &c
 }

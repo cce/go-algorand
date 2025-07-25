@@ -76,12 +76,12 @@ func (cl *converterTestLogger) Warnf(s string, args ...interface{}) {
 func TestWsPeerMsgDataConverterConvert(t *testing.T) {
 	partitiontest.PartitionTest(t)
 
-	c := wsPeerMsgDataDecoder{}
+	c := wsPeerMsgCodec{}
 	c.ppdec = zstdProposalDecompressor{}
 	tag := protocol.AgreementVoteTag
 	data := []byte("data")
 
-	r, err := c.convert(tag, data)
+	r, err := c.decompress(tag, data)
 	require.NoError(t, err)
 	require.Equal(t, data, r)
 
@@ -89,7 +89,7 @@ func TestWsPeerMsgDataConverterConvert(t *testing.T) {
 	l := converterTestLogger{}
 	c.log = &l
 	c.ppdec = zstdProposalDecompressor{}
-	r, err = c.convert(tag, data)
+	r, err = c.decompress(tag, data)
 	require.NoError(t, err)
 	require.Equal(t, data, r)
 	require.Equal(t, 1, l.warnMsgCount)
@@ -100,7 +100,7 @@ func TestWsPeerMsgDataConverterConvert(t *testing.T) {
 	comp, err := zstd.Compress(nil, data)
 	require.NoError(t, err)
 
-	r, err = c.convert(tag, comp)
+	r, err = c.decompress(tag, comp)
 	require.NoError(t, err)
 	require.Equal(t, data, r)
 	require.Equal(t, 0, l.warnMsgCount)
