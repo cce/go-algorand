@@ -18,6 +18,7 @@ package network
 
 import (
 	"net/url"
+	"sync"
 	"testing"
 	"time"
 
@@ -212,6 +213,10 @@ func TestHybridNetwork_HybridRelayStrategy(t *testing.T) {
 
 	genesisInfo := GenesisInfo{genesisID, "net"}
 
+	// WaitGroup to ensure all networks are fully stopped before test completes
+	var wg sync.WaitGroup
+	defer wg.Wait()
+
 	startNewRelayNode := func(name string, phonebook []string) (*HybridP2PNetwork, []string) {
 		relayCfg := cfg
 		relayCfg.ForceRelayMessages = true
@@ -257,17 +262,20 @@ func TestHybridNetwork_HybridRelayStrategy(t *testing.T) {
 	}
 
 	netA, netAddrs := startNewRelayNode("netA", nil)
-	defer netA.Stop()
+	wg.Add(1)
+	defer func() { netA.Stop(); wg.Done() }()
 
 	phoneBookAddresses := append([]string{}, netAddrs...)
 
 	netB, netAddrs := startNewRelayNode("netB", phoneBookAddresses)
-	defer netB.Stop()
+	wg.Add(1)
+	defer func() { netB.Stop(); wg.Done() }()
 
 	phoneBookAddresses = append(phoneBookAddresses, netAddrs...)
 
 	netC, _ := startNewRelayNode("netC", phoneBookAddresses)
-	defer netC.Stop()
+	wg.Add(1)
+	defer func() { netC.Stop(); wg.Done() }()
 
 	// ensure initial connections are done
 	require.Eventually(t, func() bool {
