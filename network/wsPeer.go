@@ -240,7 +240,7 @@ type wsPeer struct {
 
 	// enableCompression specifies whether this node can compress or decompress votes (and whether it has advertised this)
 	enableVoteCompression bool
-	
+
 	// voteCompressionDynamicTableSize is this node's configured dynamic table size (0 means disabled)
 	voteCompressionDynamicTableSize uint32
 
@@ -617,6 +617,16 @@ func (wp *wsPeer) readLoop() {
 			networkP2PMessageReceivedTotal.AddUint64(1, nil)
 			networkP2PReceivedBytesByTag.Add(string(tag[:]), uint64(len(msg.Data)+2))
 			networkP2PMessageReceivedByTag.Add(string(tag[:]), 1)
+		}
+		msg.Data, err = dataConverter.convert(msg.Tag, msg.Data)
+		if err != nil {
+			wp.reportReadErr(err)
+			return
+		}
+		if wp.peerType == peerTypeWs {
+			networkReceivedUncompressedBytesByTag.Add(string(tag[:]), uint64(len(msg.Data)+2))
+		} else {
+			networkP2PReceivedUncompressedBytesByTag.Add(string(tag[:]), uint64(len(msg.Data)+2))
 		}
 		msg.Sender = wp
 
@@ -1137,7 +1147,7 @@ func (wp *wsPeer) getBestVpackTableSize() uint32 {
 	if ourMaxSize == 0 {
 		return 0
 	}
-	
+
 	// Get peer's max size from their features
 	var peerMaxSize uint32
 	if wp.features&pfCompressedVoteVpackDynamic1024 != 0 {
@@ -1157,7 +1167,7 @@ func (wp *wsPeer) getBestVpackTableSize() uint32 {
 	} else {
 		return 0 // Peer doesn't support dynamic compression
 	}
-	
+
 	// Return the minimum of the two
 	if peerMaxSize < ourMaxSize {
 		return peerMaxSize
