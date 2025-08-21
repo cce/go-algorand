@@ -54,6 +54,9 @@ func spinNetwork(t *testing.T, nodesCount int, cfg config.Local) ([]*networkImpl
 	cfg.OutgoingMessageFilterBucketCount = 3
 	cfg.OutgoingMessageFilterBucketSize = 32
 	cfg.EnableOutgoingNetworkMessageFiltering = false
+	// These tests broadcast arbitrary byte slices for AgreementVoteTag; disable
+	// vote compression to avoid attempting to (de)compress non-vote payloads.
+	cfg.EnableVoteCompression = false
 	cfg.DNSBootstrapID = "" // prevent attempts of getting bootstrap SRV from DNS server(s)
 
 	log := logging.TestingLog(t)
@@ -366,6 +369,9 @@ func testNetworkImplFull(t *testing.T, nodesCount int) {
 	cfg.AgreementIncomingVotesQueueLength = 100
 	cfg.AgreementIncomingProposalsQueueLength = 100
 	cfg.AgreementIncomingBundlesQueueLength = 100
+	// Disable vote compression since this test uses dummy vote data (single bytes)
+	// which are not valid msgpack-encoded votes and cause compression errors
+	cfg.EnableVoteCompression = false
 	t.Run("AgreementVoteTag", func(t *testing.T) {
 		testNetworkImplAgreementVote(t, nodesCount, cfg)
 	})

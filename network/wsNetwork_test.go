@@ -1139,6 +1139,9 @@ func makeTestFilterWebsocketNode(t *testing.T, nodename string) *WebsocketNetwor
 	dc.IncomingMessageFilterBucketSize = 512
 	dc.OutgoingMessageFilterBucketCount = 3
 	dc.OutgoingMessageFilterBucketSize = 128
+	// Disable vote compression since these filter tests use arbitrary payloads
+	// under AgreementVoteTag, which are not real votes.
+	dc.EnableVoteCompression = false
 	wn := &WebsocketNetwork{
 		log:       logging.TestingLog(t).With("node", nodename),
 		config:    dc,
@@ -3123,7 +3126,10 @@ func TestWebsocketNetworkTXMessageOfInterestRelay(t *testing.T) {
 	// Tests that A->B follows MOI
 	partitiontest.PartitionTest(t)
 
-	netA := makeTestWebsocketNode(t)
+	// Disable vote compression since this test uses dummy vote data
+	aConfig := defaultConfig
+	aConfig.EnableVoteCompression = false
+	netA := makeTestWebsocketNodeWithConfig(t, aConfig)
 	netA.config.GossipFanout = 1
 	netA.config.EnablePingHandler = false
 
@@ -3132,6 +3138,8 @@ func TestWebsocketNetworkTXMessageOfInterestRelay(t *testing.T) {
 	bConfig := defaultConfig
 	bConfig.NetAddress = ""
 	bConfig.ForceRelayMessages = true
+	// Disable vote compression since this test uses dummy vote data
+	bConfig.EnableVoteCompression = false
 	netB := makeTestWebsocketNodeWithConfig(t, bConfig)
 	netB.config.GossipFanout = 1
 	netB.config.EnablePingHandler = false
@@ -3207,7 +3215,10 @@ func TestWebsocketNetworkTXMessageOfInterestForceTx(t *testing.T) {
 	// Tests that A->B follows MOI
 	partitiontest.PartitionTest(t)
 
-	netA := makeTestWebsocketNode(t)
+	// Disable vote compression since this test uses dummy vote data
+	aConfig := defaultConfig
+	aConfig.EnableVoteCompression = false
+	netA := makeTestWebsocketNodeWithConfig(t, aConfig)
 	netA.config.GossipFanout = 1
 	netA.config.EnablePingHandler = false
 
@@ -3216,6 +3227,8 @@ func TestWebsocketNetworkTXMessageOfInterestForceTx(t *testing.T) {
 	bConfig := defaultConfig
 	bConfig.NetAddress = ""
 	bConfig.ForceFetchTransactions = true
+	// Disable vote compression since this test uses dummy vote data
+	bConfig.EnableVoteCompression = false
 	netB := makeTestWebsocketNodeWithConfig(t, bConfig)
 	netB.config.GossipFanout = 1
 	netB.config.EnablePingHandler = false
@@ -3290,7 +3303,10 @@ func TestWebsocketNetworkTXMessageOfInterestNPN(t *testing.T) {
 	// Tests that A->B follows MOI
 	partitiontest.PartitionTest(t)
 
-	netA := makeTestWebsocketNode(t)
+	// Disable vote compression since this test uses dummy vote data
+	aConfig := defaultConfig
+	aConfig.EnableVoteCompression = false
+	netA := makeTestWebsocketNodeWithConfig(t, aConfig)
 	netA.config.GossipFanout = 1
 	netA.config.EnablePingHandler = false
 	netA.Start()
@@ -3298,6 +3314,8 @@ func TestWebsocketNetworkTXMessageOfInterestNPN(t *testing.T) {
 
 	bConfig := defaultConfig
 	bConfig.NetAddress = ""
+	// Disable vote compression since this test uses dummy vote data
+	bConfig.EnableVoteCompression = false
 	netB := makeTestWebsocketNodeWithConfig(t, bConfig)
 	netB.config.GossipFanout = 1
 	netB.config.EnablePingHandler = false
@@ -3395,7 +3413,10 @@ func TestWebsocketNetworkTXMessageOfInterestPN(t *testing.T) {
 	// Tests that A->B follows MOI
 	partitiontest.PartitionTest(t)
 
-	netA := makeTestWebsocketNode(t)
+	// Disable vote compression since this test uses dummy vote data
+	aConfig := defaultConfig
+	aConfig.EnableVoteCompression = false
+	netA := makeTestWebsocketNodeWithConfig(t, aConfig)
 	netA.config.GossipFanout = 1
 	netA.config.EnablePingHandler = false
 	netA.Start()
@@ -3403,6 +3424,8 @@ func TestWebsocketNetworkTXMessageOfInterestPN(t *testing.T) {
 
 	bConfig := defaultConfig
 	bConfig.NetAddress = ""
+	// Disable vote compression since this test uses dummy vote data
+	bConfig.EnableVoteCompression = false
 	netB := makeTestWebsocketNodeWithConfig(t, bConfig)
 	netB.nodeInfo = &participatingNodeInfo{}
 	netB.config.GossipFanout = 1

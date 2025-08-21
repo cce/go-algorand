@@ -328,7 +328,11 @@ func makewhiteholeNetwork(domain *whiteholeDomain) *whiteholeNetwork {
 
 func spinNetworkImpl(domain *whiteholeDomain) (whiteholeNet *whiteholeNetwork, counter *messageCounter) {
 	whiteholeNet = makewhiteholeNetwork(domain)
-	netImpl := WrapNetwork(whiteholeNet, logging.Base(), config.GetDefaultLocal()).(*networkImpl)
+	cfg := config.GetDefaultLocal()
+	// Disable vote compression since this test uses dummy vote data (single bytes)
+	// which are not valid msgpack-encoded votes and cause compression errors
+	cfg.EnableVoteCompression = false
+	netImpl := WrapNetwork(whiteholeNet, logging.Base(), cfg).(*networkImpl)
 	counter = startMessageCounter(netImpl)
 	whiteholeNet.Start()
 	netImpl.Start()
