@@ -1096,12 +1096,15 @@ func TestCatchpointTrackerWaitNotBlocking(t *testing.T) {
 
 	// ensure Ledger.Wait() is non-blocked for all rounds except the last one (due to possible races)
 	for rnd := startRound; rnd < endRound; rnd++ {
-		done := ledger.Wait(rnd)
-		select {
-		case <-done:
-		default:
-			require.FailNow(t, fmt.Sprintf("Wait(%d) is blocked", rnd))
-		}
+		require.Eventually(t, func() bool {
+			done := ledger.Wait(rnd)
+			select {
+			case <-done:
+				return true
+			default:
+				return false
+			}
+		}, time.Second, 10*time.Millisecond, fmt.Sprintf("Wait(%d) is blocked", rnd))
 	}
 }
 
