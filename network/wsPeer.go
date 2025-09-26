@@ -598,13 +598,6 @@ func (wp *wsPeer) readLoop() {
 		msg.processing = wp.processed
 		msg.Received = time.Now().UnixNano()
 		msg.Data = slurper.Bytes()
-		if wp.msgCodec != nil {
-			msg.Data, err = wp.msgCodec.decompress(msg.Tag, msg.Data)
-			if err != nil {
-				wp.reportReadErr(err)
-				return
-			}
-		}
 		msg.Net = wp.net
 		wp.lastPacketTime.Store(msg.Received)
 		if wp.peerType == peerTypeWs {
