@@ -160,33 +160,24 @@ func (c *wsPeerMsgCodec) decompress(tag protocol.Tag, data []byte) ([]byte, erro
 	case protocol.VotePackedTag:
 		if c.statefulVoteEnabled && c.statefulVoteDec != nil {
 			// The data parameter does not include tag bytes
-			compressedData := data
-
-			// Prepare output buffer: AV tag + decompressed data
-			avTag := []byte(protocol.AgreementVoteTag)
-			result := make([]byte, len(avTag)+vpack.MaxMsgpackVoteSize)
-			copy(result, avTag)
-
-			// First decompress using stateful decoder
-			c.log.Debugf("Decompressing VP vote: %d bytes", len(compressedData))
-			statelessBuf := make([]byte, vpack.MaxCompressedVoteSize)
-			statelessCompressed, err := c.statefulVoteDec.Decompress(statelessBuf, compressedData)
+			c.log.Debugf("Decompressing VP vote: %d bytes", len(data))
+			// First decompress to stateless form
+			statelessCompressed, err := c.statefulVoteDec.Decompress(make([]byte, 0, vpack.MaxCompressedVoteSize), data)
 			if err != nil {
-				c.log.Warnf("stateful vote decompression failed: %v, compressed len=%d", err, len(compressedData))
+				c.log.Warnf("stateful vote decompression failed: %v, compressed len=%d", err, len(data))
 				return nil, err
 			}
 
-			// Then decompress using stateless decoder
+			// Then decompress stateless form into the original vote body
 			var statelessDec vpack.StatelessDecoder
-			decompressed, err := statelessDec.DecompressVote(result[len(avTag):], statelessCompressed)
+			voteBody, err := statelessDec.DecompressVote(make([]byte, 0, vpack.MaxMsgpackVoteSize), statelessCompressed)
 			if err != nil {
 				c.log.Warnf("stateless vote decompression failed: %v", err)
 				return nil, err
 			}
 
-			// Return the final message: AV tag + decompressed data
-			c.log.Debugf("Decompressed vote: %d -> %d -> %d bytes", len(compressedData), len(statelessCompressed), len(decompressed))
-			return result[:len(avTag)+len(decompressed)], nil
+			c.log.Debugf("Decompressed vote: %d -> %d -> %d bytes", len(data), len(statelessCompressed), len(voteBody))
+			return voteBody, nil
 		}
 		return nil, fmt.Errorf("received VP message but stateful compression not enabled")
 	}

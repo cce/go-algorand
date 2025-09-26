@@ -611,15 +611,19 @@ func (wp *wsPeer) readLoop() {
 			networkP2PReceivedBytesByTag.Add(string(tag[:]), uint64(len(msg.Data)+2))
 			networkP2PMessageReceivedByTag.Add(string(tag[:]), 1)
 		}
+		originalTag := msg.Tag
 		msg.Data, err = wp.msgCodec.decompress(msg.Tag, msg.Data)
 		if err != nil {
 			wp.reportReadErr(err)
 			return
 		}
+		if originalTag == protocol.VotePackedTag {
+			msg.Tag = protocol.AgreementVoteTag
+		}
 		if wp.peerType == peerTypeWs {
-			networkReceivedUncompressedBytesByTag.Add(string(tag[:]), uint64(len(msg.Data)+2))
+			networkReceivedUncompressedBytesByTag.Add(string(msg.Tag), uint64(len(msg.Data)+2))
 		} else {
-			networkP2PReceivedUncompressedBytesByTag.Add(string(tag[:]), uint64(len(msg.Data)+2))
+			networkP2PReceivedUncompressedBytesByTag.Add(string(msg.Tag), uint64(len(msg.Data)+2))
 		}
 		msg.Sender = wp
 

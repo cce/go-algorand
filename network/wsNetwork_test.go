@@ -690,8 +690,8 @@ func TestWebsocketVoteDynamicCompression(t *testing.T) {
 					"B->A peer should not have dynamic compression enabled")
 			}
 
-			// Test actual vote compression works
-			vote := map[string]any{
+			// Test actual vote compression works with message verification
+			vote1 := map[string]any{
 				"cred": map[string]any{"pf": crypto.VrfProof{1}},
 				"r":    map[string]any{"rnd": uint64(2), "snd": [32]byte{3}},
 				"sig": map[string]any{
@@ -699,19 +699,33 @@ func TestWebsocketVoteDynamicCompression(t *testing.T) {
 					"p2s": [64]byte{7}, "ps": [64]byte{}, "s": [64]byte{9},
 				},
 			}
-			message := protocol.EncodeReflect(vote)
+			vote2 := map[string]any{
+				"cred": map[string]any{"pf": crypto.VrfProof{2}},
+				"r":    map[string]any{"rnd": uint64(3), "snd": [32]byte{4}},
+				"sig": map[string]any{
+					"p": [32]byte{5}, "p1s": [64]byte{6}, "p2": [32]byte{7},
+					"p2s": [64]byte{8}, "ps": [64]byte{}, "s": [64]byte{10},
+				},
+			}
+			// Include an invalid message to test fallback behavior
+			messages := [][]byte{protocol.EncodeReflect(vote1), protocol.EncodeReflect(vote2), []byte("invalid")}
 
-			counter := newMessageCounter(t, 1)
-			counterDone := counter.done
-			netB.RegisterHandlers([]TaggedMessageHandler{{Tag: protocol.AgreementVoteTag, MessageHandler: counter}})
+			matcher := newMessageMatcher(t, messages)
+			counterDone := matcher.done
+			netB.RegisterHandlers([]TaggedMessageHandler{{Tag: protocol.AgreementVoteTag, MessageHandler: matcher}})
 
-			netA.Broadcast(context.Background(), protocol.AgreementVoteTag, message, true, nil)
+			for _, msg := range messages {
+				netA.Broadcast(context.Background(), protocol.AgreementVoteTag, msg, true, nil)
+			}
 
 			select {
 			case <-counterDone:
 			case <-time.After(2 * time.Second):
-				t.Errorf("timeout waiting for vote message")
+				t.Errorf("timeout waiting for vote messages, count=%d, wanted %d", len(matcher.received), len(messages))
 			}
+
+			// Verify that all messages were received correctly
+			require.True(t, matcher.Match(), "Received messages don't match sent messages")
 		})
 	}
 }
