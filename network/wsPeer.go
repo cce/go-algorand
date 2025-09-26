@@ -618,7 +618,7 @@ func (wp *wsPeer) readLoop() {
 			networkP2PReceivedBytesByTag.Add(string(tag[:]), uint64(len(msg.Data)+2))
 			networkP2PMessageReceivedByTag.Add(string(tag[:]), 1)
 		}
-		msg.Data, err = dataConverter.convert(msg.Tag, msg.Data)
+		msg.Data, err = wp.msgCodec.decompress(msg.Tag, msg.Data)
 		if err != nil {
 			wp.reportReadErr(err)
 			return
