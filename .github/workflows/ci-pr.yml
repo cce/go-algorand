@@ -49,9 +49,9 @@ jobs:
       - name: Run tests
         run: |
           PACKAGES="$(go list ./... | grep -v /go-algorand/test/)"
-          export PACKAGE_NAMES=$(echo $PACKAGES | tr -d '\n')          
+          export PACKAGE_NAMES=$(echo $PACKAGES | tr -d '\n')
           mkdir -p test_results/${{ matrix.platform }}_test/${PARTITION_ID}
-          gotestsum --format standard-quiet \
+          go tool -modfile=tools.mod gotestsum --format standard-quiet \
             --junitfile ~/test_results/${{ matrix.platform }}_test/${PARTITION_ID}/results.xml \
             --jsonfile ~/test_results/${{ matrix.platform }}_test/${PARTITION_ID}/testresults.json \
             -- --tags "sqlite_unlock_notify sqlite_omit_load_extension" $SHORTTEST \

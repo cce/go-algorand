@@ -43,12 +43,8 @@ GOTAGSLIST          := sqlite_unlock_notify sqlite_omit_load_extension
 # e.g. make GOTAGSCUSTOM=msgtrace
 GOTAGSLIST += ${GOTAGSCUSTOM}
 
-# If available, use gotestsum instead of 'go test'.
-ifeq (, $(shell which gotestsum))
-export GOTESTCOMMAND=go test
-else
-export GOTESTCOMMAND=gotestsum --format pkgname --jsonfile testresults.json --
-endif
+# Use gotestsum from tools.mod
+export GOTESTCOMMAND=go tool -modfile=tools.mod gotestsum --format pkgname --jsonfile testresults.json --
 
 ifeq ($(OS_TYPE), darwin)
 # M1 Mac--homebrew install location in /opt/homebrew
@@ -109,8 +105,8 @@ fix: build
 modernize:
 	go run golang.org/x/tools/gopls/internal/analysis/modernize/cmd/modernize@latest -category minmax,slicescontains,sortslice,stringscutprefix,mapsloop -fix -test ./...
 
-lint: deps
-	$(GOBIN)/golangci-lint run -c .golangci.yml
+lint:
+	go tool -modfile=tools.mod golangci-lint run -c .golangci.yml
 
 expectlint:
 	cd test/e2e-go/cli/goal/expect && python3 expect_linter.py *.exp
@@ -140,7 +136,7 @@ cover:
 prof:
 	cd node && go test $(GOTAGS) -cpuprofile=cpu.out -memprofile=mem.out -mutexprofile=mutex.out
 
-generate: deps
+generate:
 	PATH=$(GOBIN):$$PATH go generate ./...
 
 msgp: $(patsubst %,%/msgp_gen.go,$(MSGP_GENERATE))
@@ -152,12 +148,12 @@ logic:
 	make -C data/transactions/logic
 
 
-%/msgp_gen.go: deps ALWAYS
+%/msgp_gen.go: ALWAYS
 		@set +e; \
 		printf "msgp: $(@D)..."; \
-		$(GOBIN)/msgp -file ./$(@D) -o $@ -warnmask github.com/algorand/go-algorand > ./$@.out 2>&1; \
+		go tool msgp -file ./$(@D) -o $@ -warnmask github.com/algorand/go-algorand > ./$@.out 2>&1; \
 		if [ "$$?" != "0" ]; then \
-			printf "failed:\n$(GOBIN)/msgp -file ./$(@D) -o $@ -warnmask github.com/algorand/go-algorand\n"; \
+			printf "failed:\ngo tool msgp -file ./$(@D) -o $@ -warnmask github.com/algorand/go-algorand\n"; \
 			cat ./$@.out; \
 			rm ./$@.out; \
 			exit 1; \
@@ -231,9 +227,6 @@ else
 	echo "OS_TYPE must be darwin for universal builds, skipping"
 endif
 
-deps:
-	./scripts/check_deps.sh
-
 # artifacts
 
 # Regenerate kmd swagger spec files
@@ -260,7 +253,7 @@ $(KMD_API_SWAGGER_SPEC): $(KMD_API_FILES) crypto/libs/$(OS_TYPE)/$(ARCH)/lib/lib
 		touch $@; \
 	fi
 
-$(KMD_API_SWAGGER_INJECT): deps $(KMD_API_SWAGGER_SPEC) $(KMD_API_SWAGGER_SPEC).validated
+$(KMD_API_SWAGGER_INJECT): $(KMD_API_SWAGGER_SPEC) $(KMD_API_SWAGGER_SPEC).validated
 	./daemon/kmd/lib/kmdapi/bundle_swagger_json.sh
 
 # generated files we should make sure we clean
@@ -268,7 +261,7 @@ GENERATED_FILES := \
 	$(KMD_API_SWAGGER_INJECT) \
 	$(KMD_API_SWAGGER_SPEC) $(KMD_API_SWAGGER_SPEC).validated
 
-rebuild_kmd_swagger: deps
+rebuild_kmd_swagger:
 	rm -f $(GENERATED_FILES)
 	# we need to invoke the make here since we want to ensure that the deletion and re-creating are sequential
 	make $(KMD_API_SWAGGER_INJECT)
@@ -415,7 +408,7 @@ dump: $(addprefix gen/,$(addsuffix /genesis.dump, $(NETWORKS)))
 install: build
 	scripts/dev_install.sh -p $(GOBIN)
 
-.PHONY: default fmt lint check_shell sanity cover prof deps build build-race build-e2e test fulltest shorttest clean cleango deploy node_exporter install %gen gen NONGO_BIN check-go-version rebuild_kmd_swagger universal libsodium modernize
+.PHONY: default fmt lint check_shell sanity cover prof build build-race build-e2e test fulltest shorttest clean cleango deploy node_exporter install %gen gen NONGO_BIN check-go-version rebuild_kmd_swagger universal libsodium modernize
 
 ###### TARGETS FOR CICD PROCESS ######
 include ./scripts/release/mule/Makefile.mule

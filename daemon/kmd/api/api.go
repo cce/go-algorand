@@ -59,8 +59,8 @@
 // Base path must be a fully specified package name (else, it seems that swagger feeds a relative path to
 // loader.Config.Import(), and that breaks the vendor directory if the source is symlinked from elsewhere)
 //
-//go:generate swagger generate spec -m -o="./swagger.json"
-//go:generate swagger validate ./swagger.json --stop-on-error
+//go:generate go tool -modfile=../../../tools.mod swagger generate spec -m -o="./swagger.json"
+//go:generate go tool -modfile=../../../tools.mod swagger validate ./swagger.json --stop-on-error
 //go:generate sh ../lib/kmdapi/bundle_swagger_json.sh
 package api
 
