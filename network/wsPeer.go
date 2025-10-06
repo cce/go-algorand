@@ -1131,11 +1131,6 @@ func (wp *wsPeer) vpackDynamicCompressionSupported() bool {
 		pfCompressedVoteVpackDynamic16) != 0
 }
 
-// vpackDynamicCompressionEnabled returns true if stateful compression is actually enabled for this peer
-func (wp *wsPeer) vpackDynamicCompressionEnabled() bool {
-	return wp.msgCodec != nil && wp.msgCodec.statefulVoteEnabled
-}
-
 // getBestVpackTableSize returns the negotiated table size.
 // This calculates the minimum between our max size and the peer's advertised max size.
 func (wp *wsPeer) getBestVpackTableSize() uint32 {

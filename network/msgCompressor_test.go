@@ -105,3 +105,41 @@ func TestWsPeerMsgDataConverterConvert(t *testing.T) {
 	require.Equal(t, data, r)
 	require.Equal(t, 0, l.warnMsgCount)
 }
+
+func TestMakeWsPeerMsgCodec_StatefulRequiresStateless(t *testing.T) {
+	partitiontest.PartitionTest(t)
+
+	// Create a mock wsPeer with dynamic compression features but WITHOUT stateless
+	wp := &wsPeer{}
+	wp.wsPeerCore.log = logging.TestingLog(t)
+	wp.wsPeerCore.originAddress = "test-peer"
+	wp.enableVoteCompression = true
+	wp.voteCompressionDynamicTableSize = 512
+	wp.features = pfCompressedVoteVpackDynamic512 // Dynamic enabled but NOT pfCompressedVoteVpack
+
+	codec := makeWsPeerMsgCodec(wp)
+
+	// Stateless should not be enabled (no pfCompressedVoteVpack)
+	require.False(t, codec.avdec.enabled,
+		"Stateless decompression should not be enabled when pfCompressedVoteVpack is not advertised")
+
+	// Stateful should not be enabled even though dynamic features are advertised
+	// because stateful requires stateless to work (VP → stateless → raw)
+	require.False(t, codec.statefulVoteEncEnabled,
+		"Stateful encoding should not be enabled without stateless support")
+	require.False(t, codec.statefulVoteDecEnabled,
+		"Stateful decoding should not be enabled without stateless support")
+
+	// Now test with both stateless AND dynamic enabled
+	wp.features = pfCompressedVoteVpack | pfCompressedVoteVpackDynamic512
+
+	codec = makeWsPeerMsgCodec(wp)
+
+	// Both stateless and stateful should be enabled
+	require.True(t, codec.avdec.enabled,
+		"Stateless decompression should be enabled when pfCompressedVoteVpack is advertised")
+	require.True(t, codec.statefulVoteEncEnabled,
+		"Stateful encoding should be enabled when both stateless and dynamic are supported")
+	require.True(t, codec.statefulVoteDecEnabled,
+		"Stateful decoding should be enabled when both stateless and dynamic are supported")
+}

@@ -885,24 +885,26 @@ func setHeaders(header http.Header, netProtoVer string, meta peerMetadataProvide
 	features := []string{PeerFeatureProposalCompression}
 	if meta.Config().EnableVoteCompression {
 		features = append(features, PeerFeatureVoteVpackCompression)
-	}
-	// HTTP Response: Announce our maximum supported table size
-	// Both sides will independently calculate min(ourSize, theirSize)
-	switch dtSize := uint32(meta.Config().VoteCompressionDynamicTableSize); {
-	case dtSize >= 1024:
-		features = append(features, PeerFeatureVoteVpackDynamic1024)
-	case dtSize >= 512:
-		features = append(features, PeerFeatureVoteVpackDynamic512)
-	case dtSize >= 256:
-		features = append(features, PeerFeatureVoteVpackDynamic256)
-	case dtSize >= 128:
-		features = append(features, PeerFeatureVoteVpackDynamic128)
-	case dtSize >= 64:
-		features = append(features, PeerFeatureVoteVpackDynamic64)
-	case dtSize >= 32:
-		features = append(features, PeerFeatureVoteVpackDynamic32)
-	case dtSize >= 16:
-		features = append(features, PeerFeatureVoteVpackDynamic16)
+
+		// Announce our maximum supported dynamic table size
+		// Both sides will independently calculate min(ourSize, theirSize)
+		// Only advertise dynamic features if stateless compression is enabled
+		switch dtSize := uint32(meta.Config().VoteCompressionDynamicTableSize); {
+		case dtSize >= 1024:
+			features = append(features, PeerFeatureVoteVpackDynamic1024)
+		case dtSize >= 512:
+			features = append(features, PeerFeatureVoteVpackDynamic512)
+		case dtSize >= 256:
+			features = append(features, PeerFeatureVoteVpackDynamic256)
+		case dtSize >= 128:
+			features = append(features, PeerFeatureVoteVpackDynamic128)
+		case dtSize >= 64:
+			features = append(features, PeerFeatureVoteVpackDynamic64)
+		case dtSize >= 32:
+			features = append(features, PeerFeatureVoteVpackDynamic32)
+		case dtSize >= 16:
+			features = append(features, PeerFeatureVoteVpackDynamic16)
+		}
 	}
 	header.Set(PeerFeaturesHeader, strings.Join(features, ","))
 

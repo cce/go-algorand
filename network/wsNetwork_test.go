@@ -594,6 +594,38 @@ func TestWebsocketVoteCompression(t *testing.T) {
 func TestWebsocketVoteDynamicCompression(t *testing.T) {
 	partitiontest.PartitionTest(t)
 
+	// Test actual vote compression works with message verification
+	vote1 := map[string]any{
+		"cred": map[string]any{"pf": crypto.VrfProof{1}},
+		"r":    map[string]any{"rnd": uint64(2), "snd": [32]byte{3}},
+		"sig": map[string]any{
+			"p": [32]byte{4}, "p1s": [64]byte{5}, "p2": [32]byte{6},
+			"p2s": [64]byte{7}, "ps": [64]byte{}, "s": [64]byte{9},
+		},
+	}
+	vote2 := map[string]any{
+		"cred": map[string]any{"pf": crypto.VrfProof{2}},
+		"r":    map[string]any{"rnd": uint64(3), "snd": [32]byte{4}},
+		"sig": map[string]any{
+			"p": [32]byte{5}, "p1s": [64]byte{6}, "p2": [32]byte{7},
+			"p2s": [64]byte{8}, "ps": [64]byte{}, "s": [64]byte{10},
+		},
+	}
+
+	testWebsocketVoteDynamicCompressionMessages(t,
+		[][]byte{protocol.EncodeReflect(vote1), protocol.EncodeReflect(vote2)}, true)
+}
+
+func TestWebsocketVoteDynamicCompressionInvalidMessages(t *testing.T) {
+	partitiontest.PartitionTest(t)
+
+	// Test that invalid messages (not valid msgpack votes) still get delivered
+	// but disable stateful compression
+	testWebsocketVoteDynamicCompressionMessages(t,
+		[][]byte{[]byte("hello1"), []byte("hello2"), []byte("hello3")}, false)
+}
+
+func testWebsocketVoteDynamicCompressionMessages(t *testing.T, msgs [][]byte, expectCompressionAfter bool) {
 	type testCase struct {
 		name          string
 		netATableSize int
@@ -673,10 +705,14 @@ func TestWebsocketVoteDynamicCompression(t *testing.T) {
 
 			// Check if dynamic compression is enabled
 			if tc.expectDynamic {
-				require.True(t, peerAtoB.vpackDynamicCompressionEnabled(),
-					"A->B peer should have dynamic compression enabled")
-				require.True(t, peerBtoA.vpackDynamicCompressionEnabled(),
-					"B->A peer should have dynamic compression enabled")
+				require.True(t, peerAtoB.msgCodec.statefulVoteEncEnabled,
+					"A->B peer should have dynamic compression encoding enabled")
+				require.True(t, peerAtoB.msgCodec.statefulVoteDecEnabled,
+					"A->B peer should have dynamic compression decoding enabled")
+				require.True(t, peerBtoA.msgCodec.statefulVoteEncEnabled,
+					"B->A peer should have dynamic compression encoding enabled")
+				require.True(t, peerBtoA.msgCodec.statefulVoteDecEnabled,
+					"B->A peer should have dynamic compression decoding enabled")
 
 				// Check negotiated table size
 				require.Equal(t, tc.expectedSize, peerAtoB.getBestVpackTableSize(),
@@ -684,48 +720,52 @@ func TestWebsocketVoteDynamicCompression(t *testing.T) {
 				require.Equal(t, tc.expectedSize, peerBtoA.getBestVpackTableSize(),
 					"B->A peer should have expected table size")
 			} else {
-				require.False(t, peerAtoB.vpackDynamicCompressionEnabled(),
-					"A->B peer should not have dynamic compression enabled")
-				require.False(t, peerBtoA.vpackDynamicCompressionEnabled(),
-					"B->A peer should not have dynamic compression enabled")
+				require.False(t, peerAtoB.msgCodec.statefulVoteEncEnabled,
+					"A->B peer should not have dynamic compression encoding enabled")
+				require.False(t, peerAtoB.msgCodec.statefulVoteDecEnabled,
+					"A->B peer should not have dynamic compression decoding enabled")
+				require.False(t, peerBtoA.msgCodec.statefulVoteEncEnabled,
+					"B->A peer should not have dynamic compression encoding enabled")
+				require.False(t, peerBtoA.msgCodec.statefulVoteDecEnabled,
+					"B->A peer should not have dynamic compression decoding enabled")
 			}
 
-			// Test actual vote compression works with message verification
-			vote1 := map[string]any{
-				"cred": map[string]any{"pf": crypto.VrfProof{1}},
-				"r":    map[string]any{"rnd": uint64(2), "snd": [32]byte{3}},
-				"sig": map[string]any{
-					"p": [32]byte{4}, "p1s": [64]byte{5}, "p2": [32]byte{6},
-					"p2s": [64]byte{7}, "ps": [64]byte{}, "s": [64]byte{9},
-				},
-			}
-			vote2 := map[string]any{
-				"cred": map[string]any{"pf": crypto.VrfProof{2}},
-				"r":    map[string]any{"rnd": uint64(3), "snd": [32]byte{4}},
-				"sig": map[string]any{
-					"p": [32]byte{5}, "p1s": [64]byte{6}, "p2": [32]byte{7},
-					"p2s": [64]byte{8}, "ps": [64]byte{}, "s": [64]byte{10},
-				},
-			}
-			// Include an invalid message to test fallback behavior
-			messages := [][]byte{protocol.EncodeReflect(vote1), protocol.EncodeReflect(vote2), []byte("invalid")}
-
-			matcher := newMessageMatcher(t, messages)
+			matcher := newMessageMatcher(t, msgs)
 			counterDone := matcher.done
 			netB.RegisterHandlers([]TaggedMessageHandler{{Tag: protocol.AgreementVoteTag, MessageHandler: matcher}})
 
-			for _, msg := range messages {
-				netA.Broadcast(context.Background(), protocol.AgreementVoteTag, msg, true, nil)
+			for i := range msgs {
+				netA.Broadcast(context.Background(), protocol.AgreementVoteTag, msgs[i], true, nil)
 			}
 
 			select {
 			case <-counterDone:
 			case <-time.After(2 * time.Second):
-				t.Errorf("timeout waiting for vote messages, count=%d, wanted %d", len(matcher.received), len(messages))
+				t.Errorf("timeout waiting for vote messages, count=%d, wanted %d", len(matcher.received), len(msgs))
 			}
 
-			// Verify that all messages were received correctly
+			// Verify that all votes were received correctly
 			require.True(t, matcher.Match(), "Received messages don't match sent messages")
+
+			// Verify stateful compression state after sending messages
+			if tc.expectDynamic {
+				if expectCompressionAfter {
+					// Valid messages - compression should still be enabled
+					require.True(t, peerAtoB.msgCodec.statefulVoteEncEnabled,
+						"Stateful compression encoding should still be enabled after sending valid votes")
+					require.True(t, peerAtoB.msgCodec.statefulVoteDecEnabled,
+						"Stateful compression decoding should still be enabled after sending valid votes")
+					require.True(t, peerBtoA.msgCodec.statefulVoteEncEnabled,
+						"Stateful decompression encoding should still be enabled after receiving valid votes")
+					require.True(t, peerBtoA.msgCodec.statefulVoteDecEnabled,
+						"Stateful decompression decoding should still be enabled after receiving valid votes")
+				} else {
+					// Invalid messages - sender's encoder should be disabled when it fails to compress
+					require.False(t, peerAtoB.msgCodec.statefulVoteEncEnabled,
+						"Stateful compression encoding should be disabled after sending invalid messages")
+					// Note: peerBtoA never receives VP messages, only AV messages, so its decoder is not affected
+				}
+			}
 		})
 	}
 }
