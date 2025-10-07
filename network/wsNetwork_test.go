@@ -625,6 +625,93 @@ func TestWebsocketVoteDynamicCompressionInvalidMessages(t *testing.T) {
 		[][]byte{[]byte("hello1"), []byte("hello2"), []byte("hello3")}, false)
 }
 
+func TestWebsocketVoteDynamicCompressionAbortSentinel(t *testing.T) {
+	partitiontest.PartitionTest(t)
+
+	// Test VP abort sentinel mechanism:
+	// 1. Establish VP compression with valid votes
+	// 2. Send abort sentinel from A to B
+	// 3. Verify B disables stateful compression on receiving the abort
+	// 4. Verify connection stays up
+
+	cfgA := defaultConfig
+	cfgA.GossipFanout = 1
+	cfgA.EnableVoteCompression = true
+	cfgA.VoteCompressionDynamicTableSize = 256
+	netA := makeTestWebsocketNodeWithConfig(t, cfgA)
+	netA.Start()
+	defer netStop(t, netA, "A")
+
+	cfgB := defaultConfig
+	cfgB.GossipFanout = 1
+	cfgB.EnableVoteCompression = true
+	cfgB.VoteCompressionDynamicTableSize = 256
+	netB := makeTestWebsocketNodeWithConfig(t, cfgB)
+
+	addrA, postListen := netA.Address()
+	require.True(t, postListen)
+	t.Log(addrA)
+	netB.phonebook.ReplacePeerList([]string{addrA}, "default", phonebook.RelayRole)
+	netB.Start()
+	defer netStop(t, netB, "B")
+
+	// Wait for connection
+	readyTimeout := time.NewTimer(2 * time.Second)
+	waitReady(t, netA, readyTimeout.C)
+	waitReady(t, netB, readyTimeout.C)
+
+	require.Equal(t, 1, len(netA.peers))
+	require.Equal(t, 1, len(netB.peers))
+
+	peerAtoB := netA.peers[0]
+	peerBtoA := netB.peers[0]
+
+	// Send a valid vote to establish VP compression
+	vote := map[string]any{
+		"cred": map[string]any{"pf": crypto.VrfProof{1}},
+		"r":    map[string]any{"rnd": uint64(2), "snd": [32]byte{3}},
+		"sig": map[string]any{
+			"p": [32]byte{4}, "p1s": [64]byte{5}, "p2": [32]byte{6},
+			"p2s": [64]byte{7}, "ps": [64]byte{}, "s": [64]byte{9},
+		},
+	}
+	voteData := protocol.EncodeReflect(vote)
+
+	counter := newMessageCounter(t, 1)
+	counterDone := counter.done
+	netB.RegisterHandlers([]TaggedMessageHandler{{Tag: protocol.AgreementVoteTag, MessageHandler: counter}})
+
+	// Broadcast vote from A to B
+	netA.Broadcast(context.Background(), protocol.AgreementVoteTag, voteData, true, nil)
+
+	// Wait for vote to be received
+	select {
+	case <-counterDone:
+	case <-time.After(2 * time.Second):
+		require.Fail(t, "timeout waiting for initial vote")
+	}
+
+	// Verify VP compression is established
+	require.True(t, peerAtoB.msgCodec.statefulVoteEncEnabled, "VP compression encoding not established on A->B")
+	require.True(t, peerAtoB.msgCodec.statefulVoteDecEnabled, "VP compression decoding not established on A->B")
+	require.True(t, peerBtoA.msgCodec.statefulVoteEncEnabled, "VP compression encoding not established on B->A")
+	require.True(t, peerBtoA.msgCodec.statefulVoteDecEnabled, "VP compression decoding not established on B->A")
+
+	// Send VP abort sentinel from A to B
+	abortMsg := append([]byte(protocol.VotePackedTag), vpAbortSentinel)
+	sent := peerAtoB.writeNonBlock(context.Background(), abortMsg, true, crypto.Digest{}, time.Now())
+	require.True(t, sent, "failed to send abort sentinel")
+
+	// Wait for abort to be processed - verify B disabled stateful compression
+	require.Eventually(t, func() bool {
+		return !peerBtoA.msgCodec.statefulVoteEncEnabled && !peerBtoA.msgCodec.statefulVoteDecEnabled
+	}, 2*time.Second, 50*time.Millisecond, "VP compression not disabled on B->A after receiving abort sentinel")
+
+	// Verify connection is still up after abort
+	require.Equal(t, 1, len(netB.peers), "connection should still be alive after abort")
+	require.Equal(t, 1, len(netA.peers), "connection should still be alive after abort")
+}
+
 func testWebsocketVoteDynamicCompressionMessages(t *testing.T, msgs [][]byte, expectCompressionAfter bool) {
 	type testCase struct {
 		name          string

@@ -19,6 +19,7 @@ package network
 import (
 	"context"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -77,6 +78,7 @@ var defaultSendMessageTags = map[protocol.Tag]bool{
 	protocol.TxnTag:               true,
 	protocol.UniEnsBlockReqTag:    true,
 	protocol.VoteBundleTag:        true,
+	protocol.VotePackedTag:        true, // Statefully compressed votes
 }
 
 // interface allows substituting debug implementation for *websocket.Conn
@@ -614,8 +616,22 @@ func (wp *wsPeer) readLoop() {
 		originalTag := msg.Tag
 		msg.Data, err = wp.msgCodec.decompress(msg.Tag, msg.Data)
 		if err != nil {
+			// Handle VP errors by sending abort sentinel and continuing
+			if errors.As(err, &vpError{}) {
+				if close, reason := wp.handleVPError(err); close {
+					cleanupCloseError = reason
+					return
+				}
+				// Drop this vote and continue reading
+				continue
+			}
+			// Non-VP errors tear down connection
 			wp.reportReadErr(err)
 			return
+		}
+		// If decompress returned nil (e.g., for abort sentinel), drop the message
+		if msg.Data == nil {
+			continue
 		}
 		if originalTag == protocol.VotePackedTag {
 			msg.Tag = protocol.AgreementVoteTag
@@ -719,8 +735,6 @@ func (wp *wsPeer) readLoop() {
 }
 
 func (wp *wsPeer) handleMessageOfInterest(msg IncomingMessage) (close bool, reason disconnectReason) {
-	close = false
-	reason = disconnectReasonNone
 	// decode the message, and ensure it's a valid message.
 	msgTagsMap, err := unmarshallMessageOfInterest(msg.Data)
 	if err != nil {
@@ -735,6 +749,13 @@ func (wp *wsPeer) handleMessageOfInterest(msg IncomingMessage) (close bool, reas
 		ctx:          context.Background(),
 	}
 
+	return wp.sendControlMessage(sm)
+}
+
+// sendControlMessage sends a control message (like message-of-interest or VP abort) to the peer.
+// It tries to send on the high-priority channel first (non-blocking), then falls back to
+// blocking send on either high-priority or bulk channel.
+func (wp *wsPeer) sendControlMessage(sm sendMessage) (close bool, reason disconnectReason) {
 	// try to send the message to the send loop. The send loop will store the message locally and would use it.
 	// the rationale here is that this message is rarely sent, and we would benefit from having it being lock-free.
 	select {
@@ -754,6 +775,21 @@ func (wp *wsPeer) handleMessageOfInterest(msg IncomingMessage) (close bool, reas
 		return true, disconnectReasonNone
 	}
 	return
+}
+
+// handleVPError handles VP (stateful vote compression) errors by sending an abort sentinel
+// to the peer, signaling that stateful compression should be disabled for this connection.
+// The connection remains open and votes will continue to flow as AV messages.
+func (wp *wsPeer) handleVPError(err error) (close bool, reason disconnectReason) {
+	abortMsg := append([]byte(protocol.VotePackedTag), vpAbortSentinel)
+	sm := sendMessage{
+		data:         abortMsg,
+		enqueued:     time.Now(),
+		peerEnqueued: time.Now(),
+		ctx:          context.Background(),
+	}
+
+	return wp.sendControlMessage(sm)
 }
 
 func (wp *wsPeer) readLoopCleanup(reason disconnectReason) {
@@ -823,8 +859,16 @@ func (wp *wsPeer) writeLoopSendMsg(msg sendMessage) disconnectReason {
 	// Check if we should apply compression
 	dataToSend := msg.data
 	if wp.msgCodec != nil {
-		compressed := wp.msgCodec.compress(tag, msg.data)
-		if compressed != nil {
+		compressed, err := wp.msgCodec.compress(tag, msg.data)
+		if err != nil {
+			// VP compression error - send abort sentinel then continue with original AV
+			if errors.As(err, &vpError{}) {
+				abortMsg := append([]byte(protocol.VotePackedTag), vpAbortSentinel)
+				_ = wp.conn.WriteMessage(websocket.BinaryMessage, abortMsg)
+				// Fall through to send original AV message below
+			}
+			// Note: compressed is already nil, so dataToSend stays as msg.data
+		} else if compressed != nil {
 			// Successfully compressed, use the compressed data
 			dataToSend = compressed
 			tag = protocol.Tag(compressed[:2])
