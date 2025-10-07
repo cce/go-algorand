@@ -424,17 +424,17 @@ func loadCatchpointIntoDatabase(ctx context.Context, catchupAccessor ledger.Catc
 		readComplete := int64(0)
 
 		for readComplete < header.Size {
-			bytesRead, err := tarReader.Read(balancesBlockBytes[readComplete:])
+			bytesRead, err1 := tarReader.Read(balancesBlockBytes[readComplete:])
 			readComplete += int64(bytesRead)
 			progress += uint64(bytesRead)
-			if err != nil {
-				if err == io.EOF {
+			if err1 != nil {
+				if err1 == io.EOF {
 					if readComplete == header.Size {
 						break
 					}
-					err = fmt.Errorf("getPeerLedger received io.EOF while reading from tar file stream prior of reaching chunk size %d / %d", readComplete, header.Size)
+					err1 = fmt.Errorf("getPeerLedger received io.EOF while reading from tar file stream prior of reaching chunk size %d / %d", readComplete, header.Size)
 				}
-				return fileHeader, err
+				return fileHeader, err1
 			}
 		}
 		err = catchupAccessor.ProcessStagingBalances(ctx, header.Name, balancesBlockBytes, &downloadProgress)
@@ -447,10 +447,7 @@ func loadCatchpointIntoDatabase(ctx context.Context, catchupAccessor ledger.Catc
 		}
 		if time.Since(lastProgressUpdate) > 50*time.Millisecond && catchpointFileSize > 0 {
 			lastProgressUpdate = time.Now()
-			progressRatio := int(float64(progress) * barLength / float64(catchpointFileSize))
-			if progressRatio > barLength {
-				progressRatio = barLength
-			}
+			progressRatio := min(int(float64(progress)*barLength/float64(catchpointFileSize)), barLength)
 			printLoadCatchpointProgressLine(progressRatio, barLength, int64(progress))
 		}
 	}

@@ -23,7 +23,6 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"os/user"
 	"path/filepath"
 	"strings"
 
@@ -39,6 +38,7 @@ import (
 	"github.com/algorand/go-algorand/libgoal"
 	"github.com/algorand/go-algorand/logging"
 	"github.com/algorand/go-algorand/protocol"
+	"github.com/algorand/go-algorand/util"
 )
 
 var log = logging.Base()
@@ -260,18 +260,15 @@ func resolveKmdDataDir(dataDir string) string {
 		algodKmdPath, _ := filepath.Abs(filepath.Join(dataDir, libgoal.DefaultKMDDataDir))
 		return algodKmdPath
 	}
-	cu, err := user.Current()
+	cfgRoot, err := config.GetGlobalConfigFileRoot()
 	if err != nil {
-		reportErrorf("could not look up current user while looking for kmd dir: %s", err)
-	}
-	if cu.HomeDir == "" {
-		reportErrorln("user has no home dir while looking for kmd dir")
+		reportErrorf("unable to find config root: %v", err)
 	}
 	genesis, err := readGenesis(dataDir)
 	if err != nil {
 		reportErrorf("could not read genesis.json: %s", err)
 	}
-	return filepath.Join(cu.HomeDir, ".algorand", genesis.ID(), libgoal.DefaultKMDDataDir)
+	return filepath.Join(cfgRoot, genesis.ID(), libgoal.DefaultKMDDataDir)
 }
 
 func ensureCacheDir(dataDir string) string {
@@ -285,7 +282,7 @@ func ensureCacheDir(dataDir string) string {
 		return cacheDir
 	}
 	// Put the cache in the user's home directory
-	algorandDir, err := config.GetDefaultConfigFilePath()
+	algorandDir, err := config.GetGlobalConfigFileRoot()
 	if err != nil {
 		reportErrorf("config error %s", err)
 	}
@@ -361,9 +358,9 @@ func getWalletHandleMaybePassword(dataDir string, walletName string, getPassword
 		if len(walletID) == 0 {
 			// If we still don't have a default, check if there's only one wallet.
 			// If there is, make it the default and continue
-			wallets, err := kmd.ListWallets()
-			if err != nil {
-				return nil, nil, fmt.Errorf(errCouldNotListWallets, err)
+			wallets, err1 := kmd.ListWallets()
+			if err1 != nil {
+				return nil, nil, fmt.Errorf(errCouldNotListWallets, err1)
 			}
 			if len(wallets) == 1 {
 				// Only one wallet, so it's unambigious
@@ -528,13 +525,10 @@ func writeFile(filename string, data []byte, perm os.FileMode) error {
 // writeDryrunReqToFile creates dryrun request object and writes to a file
 func writeDryrunReqToFile(client libgoal.Client, txnOrStxn interface{}, outFilename string) (err error) {
 	proto, _ := getProto(protoVersion)
-	accts, err := unmarshalSlice(dumpForDryrunAccts)
-	if err != nil {
-		reportErrorln(err.Error())
-	}
+	accts := util.Map(dumpForDryrunAccts, cliAddress)
 	data, err := libgoal.MakeDryrunStateBytes(client, txnOrStxn, []transactions.SignedTxn{}, accts, string(proto), dumpForDryrunFormat.String())
 	if err != nil {
-		reportErrorln(err.Error())
+		reportErrorln(err)
 	}
 	err = writeFile(outFilename, data, 0600)
 	return

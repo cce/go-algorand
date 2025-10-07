@@ -19,13 +19,15 @@ package gen
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/algorand/go-algorand/data/basics"
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/algorand/go-algorand/data/basics"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -170,12 +172,7 @@ func TestGenesisJsonCreation(t *testing.T) {
 		deterministicAddresses := []string{"FeeSink", "RewardsPool"}
 
 		isNondeterministicAddress := func(name string) bool {
-			for _, address := range deterministicAddresses {
-				if name == address {
-					return false
-				}
-			}
-			return true
+			return !slices.Contains(deterministicAddresses, name)
 		}
 
 		for i := range as {
@@ -239,7 +236,7 @@ func TestGenesisJsonCreation(t *testing.T) {
 	} {
 		t.Run(fmt.Sprintf("name=%v", tc.name), func(t *testing.T) {
 			gd := tc.gd
-			gd.LastPartKeyRound = uint64(quickLastPartKeyRound)
+			gd.LastPartKeyRound = quickLastPartKeyRound
 
 			outDir := t.TempDir()
 			err := GenerateGenesisFiles(gd, config.Consensus, outDir, nil)

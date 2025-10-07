@@ -1892,7 +1892,7 @@ func TestCatchpointFastUpdates(t *testing.T) {
 	conf := config.GetDefaultLocal()
 	conf.CatchpointInterval = 1
 	conf.CatchpointTracking = 1
-	initialBlocksCount := int(conf.MaxAcctLookback)
+	initialBlocksCount := basics.Round(conf.MaxAcctLookback)
 	ml := makeMockLedgerForTracker(t, true, initialBlocksCount, protocol.ConsensusFuture, accts)
 	defer ml.Close()
 
@@ -1913,7 +1913,7 @@ func TestCatchpointFastUpdates(t *testing.T) {
 
 	// cover 10 genesis blocks
 	rewardLevel := uint64(0)
-	for i := 1; i < initialBlocksCount; i++ {
+	for i := basics.Round(1); i < initialBlocksCount; i++ {
 		accts = append(accts, accts[0])
 		rewardsLevels = append(rewardsLevels, rewardLevel)
 	}
@@ -2007,7 +2007,7 @@ func TestCatchpointLargeAccountCountCatchpointGeneration(t *testing.T) {
 	conf.CatchpointInterval = 32
 	conf.CatchpointTracking = 1
 	conf.Archival = true
-	initialBlocksCount := int(conf.MaxAcctLookback)
+	initialBlocksCount := basics.Round(conf.MaxAcctLookback)
 	ml := makeMockLedgerForTracker(t, true, initialBlocksCount, testProtocolVersion, accts)
 	defer ml.Close()
 
@@ -2024,16 +2024,13 @@ func TestCatchpointLargeAccountCountCatchpointGeneration(t *testing.T) {
 
 	// cover 10 genesis blocks
 	rewardLevel := uint64(0)
-	for i := 1; i < initialBlocksCount; i++ {
+	for i := basics.Round(1); i < initialBlocksCount; i++ {
 		accts = append(accts, accts[0])
 		rewardsLevels = append(rewardsLevels, rewardLevel)
 	}
 
 	start := basics.Round(initialBlocksCount)
-	min := conf.CatchpointInterval
-	if min < protoParams.CatchpointLookback {
-		min = protoParams.CatchpointLookback
-	}
+	min := max(conf.CatchpointInterval, protoParams.CatchpointLookback)
 	end := basics.Round(min + conf.MaxAcctLookback + 3) // few more rounds to commit and generate the second stage
 	for i := start; i < end; i++ {
 		rewardLevelDelta := crypto.RandUint64() % 5

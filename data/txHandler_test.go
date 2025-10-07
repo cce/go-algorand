@@ -39,6 +39,7 @@ import (
 	"github.com/algorand/go-algorand/agreement"
 	"github.com/algorand/go-algorand/components/mocks"
 	"github.com/algorand/go-algorand/config"
+	"github.com/algorand/go-algorand/config/bounds"
 	"github.com/algorand/go-algorand/crypto"
 	"github.com/algorand/go-algorand/data/basics"
 	"github.com/algorand/go-algorand/data/bookkeeping"
@@ -175,8 +176,8 @@ func BenchmarkTxHandlerProcessing(b *testing.B) {
 // vtCache is a noop VerifiedTransactionCache
 type vtCache struct{}
 
-func (vtCache) Add(txgroup []transactions.SignedTxn, groupCtx *verify.GroupContext) {}
-func (vtCache) AddPayset(txgroup [][]transactions.SignedTxn, groupCtxs []*verify.GroupContext) {
+func (vtCache) Add(groupCtx *verify.GroupContext) {}
+func (vtCache) AddPayset(groupCtxs []*verify.GroupContext) {
 	return
 }
 func (vtCache) GetUnverifiedTransactionGroups(payset [][]transactions.SignedTxn, CurrSpecAddrs transactions.SpecialAddresses, CurrProto protocol.ConsensusVersion) [][]transactions.SignedTxn {
@@ -619,11 +620,11 @@ func TestTxHandlerProcessIncomingGroup(t *testing.T) {
 		action     network.ForwardingPolicy
 	}
 	var checks = []T{}
-	for i := 1; i <= config.MaxTxGroupSize; i++ {
+	for i := 1; i <= bounds.MaxTxGroupSize; i++ {
 		checks = append(checks, T{i, i, network.Ignore})
 	}
 	for i := 1; i < 10; i++ {
-		checks = append(checks, T{config.MaxTxGroupSize + i, 0, network.Disconnect})
+		checks = append(checks, T{bounds.MaxTxGroupSize + i, 0, network.Disconnect})
 	}
 
 	for _, check := range checks {
@@ -728,8 +729,8 @@ func TestTxHandlerProcessIncomingCensoring(t *testing.T) {
 
 	t.Run("group", func(t *testing.T) {
 		handler := makeTestTxHandlerOrphanedWithContext(context.Background(), txBacklogSize, txBacklogSize, txHandlerConfig{true, true}, 0)
-		num := rand.Intn(config.MaxTxGroupSize-1) + 2 // 2..config.MaxTxGroupSize
-		require.LessOrEqual(t, num, config.MaxTxGroupSize)
+		num := rand.Intn(bounds.MaxTxGroupSize-1) + 2 // 2..bounds.MaxTxGroupSize
+		require.LessOrEqual(t, num, bounds.MaxTxGroupSize)
 		stxns, blob := makeRandomTransactions(num)
 		action := handler.processIncomingTxn(network.IncomingMessage{Data: blob})
 		require.Equal(t, network.OutgoingMessage{Action: network.Ignore}, action)
@@ -1360,10 +1361,7 @@ func getTransactionGroups(N, numUsers, maxGroupSize int, addresses []basics.Addr
 	txnGrps := make([][]transactions.Transaction, N)
 	protoMaxGrpSize := proto.MaxTxGroupSize
 	for u := 0; u < N; u++ {
-		grpSize := rand.Intn(protoMaxGrpSize-1) + 1
-		if grpSize > maxGroupSize {
-			grpSize = maxGroupSize
-		}
+		grpSize := min(rand.Intn(protoMaxGrpSize-1)+1, maxGroupSize)
 		var txGroup transactions.TxGroup
 		txns := make([]transactions.Transaction, 0, grpSize)
 		for g := 0; g < grpSize; g++ {
@@ -1793,10 +1791,7 @@ func runHandlerBenchmarkWithBacklog(b *testing.B, txGen txGenIf, tps int, useBac
 	}
 
 	// Prepare 1000 transactions
-	genTCount := 1000
-	if b.N < genTCount {
-		genTCount = b.N
-	}
+	genTCount := min(b.N, 1000)
 	signedTransactionGroups, badTxnGroups := txGen.createSignedTxGroups(b, genTCount)
 	var encStxns []network.IncomingMessage
 	if useBacklogWorker {
@@ -2187,7 +2182,7 @@ func TestTxHandlerRememberReportErrorsWithTxPool(t *testing.T) { //nolint:parall
 	const inMem = true
 	cfg := config.GetDefaultLocal()
 	cfg.Archival = true
-	cfg.TxPoolSize = config.MaxTxGroupSize + 1
+	cfg.TxPoolSize = bounds.MaxTxGroupSize + 1
 	ledger, err := LoadLedger(log, ledgerName, inMem, protocol.ConsensusCurrentVersion, genBal, genesisID, genesisHash, cfg)
 	require.NoError(t, err)
 	defer ledger.Close()
@@ -2247,7 +2242,7 @@ func TestTxHandlerRememberReportErrorsWithTxPool(t *testing.T) { //nolint:parall
 
 	// trigger group too large error
 	wi.unverifiedTxGroup = []transactions.SignedTxn{txn1.Sign(secrets[0])}
-	for i := 0; i < config.MaxTxGroupSize; i++ {
+	for i := 0; i < bounds.MaxTxGroupSize; i++ {
 		txn := txn1
 		crypto.RandBytes(txn.Note[:])
 		wi.unverifiedTxGroup = append(wi.unverifiedTxGroup, txn.Sign(secrets[0]))

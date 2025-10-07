@@ -21,6 +21,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"math/rand"
 	"testing"
 
@@ -716,7 +717,7 @@ func newTestLedger(t testing.TB, balances bookkeeping.GenesisBalances) *evalTest
 	// calculate the accounts totals.
 	var ot basics.OverflowTracker
 	for _, acctData := range balances.Balances {
-		l.latestTotals.AddAccount(proto, ledgercore.ToAccountData(acctData), &ot)
+		l.latestTotals.AddAccount(proto.RewardUnit, ledgercore.ToAccountData(acctData), &ot)
 	}
 	l.genesisProto = proto
 	l.genesisProtoVersion = protoVersion
@@ -886,9 +887,7 @@ func (ledger *evalTestLedger) AddValidatedBlock(vb ledgercore.ValidatedBlock, ce
 	newBalances := make(map[basics.Address]basics.AccountData)
 
 	// copy the previous balances.
-	for k, v := range ledger.roundBalances[vb.Block().Round()-1] {
-		newBalances[k] = v
-	}
+	maps.Copy(newBalances, ledger.roundBalances[vb.Block().Round()-1])
 
 	// update
 	deltas := vb.Delta()
@@ -1247,8 +1246,8 @@ func (p *failRoundCowParent) lookup(basics.Address) (ledgercore.AccountData, err
 	return ledgercore.AccountData{}, fmt.Errorf("disk I/O fail (on purpose)")
 }
 
-// TestExpiredAccountGenerationWithDiskFailure tests edge cases where disk failures can lead to ledger look up failures
-func TestExpiredAccountGenerationWithDiskFailure(t *testing.T) {
+// TestExpiredAccountGenerationWithDiskErr tests edge cases where disk failures can lead to ledger look up failures
+func TestExpiredAccountGenerationWithDiskErr(t *testing.T) {
 	partitiontest.PartitionTest(t)
 	t.Parallel()
 

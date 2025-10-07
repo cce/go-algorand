@@ -17,16 +17,58 @@
 package vpack
 
 import (
+	"encoding/binary"
+	"hash/fnv"
 	"testing"
 	"testing/quick"
 
+	"github.com/algorand/go-algorand/crypto"
 	"github.com/algorand/go-algorand/test/partitiontest"
 	"github.com/stretchr/testify/require"
 )
 
+func TestLRUTableSizeValidation(t *testing.T) {
+	partitiontest.PartitionTest(t)
+
+	// Test invalid size (not power of 2)
+	_, err := NewStatefulEncoder(100)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "must be a power of 2")
+
+	// Test invalid size (too small)
+	_, err = NewStatefulEncoder(8)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "at least 16")
+
+	// Test valid sizes
+	for _, size := range []uint32{16, 32, 64, 128, 256, 512, 1024, 2048} {
+		enc, err := NewStatefulEncoder(size)
+		require.NoError(t, err)
+		require.NotNil(t, enc)
+
+		dec, err := NewStatefulDecoder(size)
+		require.NoError(t, err)
+		require.NotNil(t, dec)
+	}
+}
+
+// TestLRUTableInvalidID tests the fetch function with an invalid ID
+func TestLRUTableInvalidID(t *testing.T) {
+	partitiontest.PartitionTest(t)
+
+	// Test fetch with invalid ID (greater than table size)
+	table, err := newLRUTable[pkSigPair](1024)
+	require.NoError(t, err)
+	var invalidID lruTableReferenceID = 1024 // greater than numBuckets (512)
+	result, ok := table.fetch(invalidID)
+	require.False(t, ok)
+	require.Equal(t, pkSigPair{}, result)
+}
+
 func TestLRUTableInsertLookupFetch(t *testing.T) {
 	partitiontest.PartitionTest(t)
-	var tab lruTable[int]
+	tab, err := newLRUTable[int](1024)
+	require.NoError(t, err)
 
 	const bucketHash = 42          // deterministic hash for test
 	const baseID = bucketHash << 1 // slot-bit is OR-ed below
@@ -96,7 +138,8 @@ func TestLRUTableInsertLookupFetch(t *testing.T) {
 // when inserting into a full bucket. This test will fail if the lruSlot implementation is incorrect.
 func TestLRUEvictionOrder(t *testing.T) {
 	partitiontest.PartitionTest(t)
-	var tab lruTable[int]
+	tab, err := newLRUTable[int](1024)
+	require.NoError(t, err)
 	bucketHash := uint64(42) // Use same hash to ensure both items go into the same bucket
 
 	// Insert first value
@@ -176,7 +219,8 @@ func TestLRUEvictionOrder(t *testing.T) {
 // and that fetch/lookup operations correctly mark items as MRU
 func TestLRURefIDConsistency(t *testing.T) {
 	partitiontest.PartitionTest(t)
-	var tab lruTable[int]
+	tab, err := newLRUTable[int](1024)
+	require.NoError(t, err)
 	bucketHash := uint64(42)
 
 	// Insert and get reference ID
@@ -205,23 +249,58 @@ func TestLRURefIDConsistency(t *testing.T) {
 	require.Equal(t, 200, val2)
 }
 
+// TestLRUErrorPaths tests the error paths in fetch operations to ensure 100% coverage
+func TestLRUErrorPaths(t *testing.T) {
+	partitiontest.PartitionTest(t)
+
+	// The lruTableSize in lru_table.go is 512, so we need to create an ID
+	// where the bucket index (id >> 1) exceeds this value
+	// If bucket index >= 512, fetch should return false
+	invalidBucketID := lruTableReferenceID(1024 << 1) // (1024 is > 512)
+
+	// Create a decoder with an empty LRU table
+	dec, err := NewStatefulDecoder(1024)
+	require.NoError(t, err)
+
+	// Attempt to access references with invalid bucket IDs
+	_, ok := dec.sndTable.fetch(invalidBucketID)
+	require.False(t, ok)
+	_, ok = dec.pkTable.fetch(invalidBucketID)
+	require.False(t, ok)
+	_, ok = dec.pk2Table.fetch(invalidBucketID)
+	require.False(t, ok)
+
+	// Attempt to access an invalid proposal reference by looking up a proposal that doesn't exist
+	prop := proposalEntry{dig: crypto.Digest{1}, encdig: crypto.Digest{2}}
+	index := dec.proposalWindow.lookup(prop)
+	require.Equal(t, 0, index)
+}
+
 func TestLRUTableQuick(t *testing.T) {
 	partitiontest.PartitionTest(t)
 	cfg := &quick.Config{MaxCount: 50000}
+
+	hashfn := func(v uint32) uint64 {
+		// use FNV-1 for hashing test values
+		h64 := fnv.New64()
+		h64.Write([]byte(binary.LittleEndian.AppendUint32(nil, v)))
+		return h64.Sum64()
+	}
 
 	// Property: when a third distinct value is inserted into a bucket, the
 	// previously least-recently-used (LRU) value must be evicted, while the
 	// previously most-recently-used (MRU) value survives.
 	prop := func(seq []uint32) bool {
-		var tab lruTable[uint32]
+		tab, err := newLRUTable[uint32](1024)
+		require.NoError(t, err)
 
 		// Per-bucket ordered list of values, index 0 == MRU, len<=2.
 		type order []uint32
 		expectedState := make(map[lruBucketIndex]order)
 
 		for _, v := range seq {
-			h := uint64(v & lruTableBucketMask)
-			b := lruBucketIndex(h)
+			h := hashfn(v)
+			b := tab.hashToBucketIndex(h)
 			expectedBucket := expectedState[b]
 
 			// First, try lookup.
