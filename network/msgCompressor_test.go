@@ -125,10 +125,8 @@ func TestMakeWsPeerMsgCodec_StatefulRequiresStateless(t *testing.T) {
 
 	// Stateful should not be enabled even though dynamic features are advertised
 	// because stateful requires stateless to work (VP → stateless → raw)
-	require.False(t, codec.statefulVoteEncEnabled,
-		"Stateful encoding should not be enabled without stateless support")
-	require.False(t, codec.statefulVoteDecEnabled,
-		"Stateful decoding should not be enabled without stateless support")
+	require.False(t, codec.statefulVoteEnabled,
+		"Stateful compression should not be enabled without stateless support")
 
 	// Now test with both stateless AND dynamic enabled
 	wp.features = pfCompressedVoteVpack | pfCompressedVoteVpackDynamic512
@@ -138,8 +136,6 @@ func TestMakeWsPeerMsgCodec_StatefulRequiresStateless(t *testing.T) {
 	// Both stateless and stateful should be enabled
 	require.True(t, codec.avdec.enabled,
 		"Stateless decompression should be enabled when pfCompressedVoteVpack is advertised")
-	require.True(t, codec.statefulVoteEncEnabled,
-		"Stateful encoding should be enabled when both stateless and dynamic are supported")
-	require.True(t, codec.statefulVoteDecEnabled,
-		"Stateful decoding should be enabled when both stateless and dynamic are supported")
+	require.True(t, codec.statefulVoteEnabled,
+		"Stateful compression should be enabled when both stateless and dynamic are supported")
 }

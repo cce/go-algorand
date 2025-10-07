@@ -40,17 +40,10 @@ const vpAbortSentinel byte = 0xFF
 
 // vpError wraps errors from stateful vote compression/decompression.
 // This error type signals that an abort sentinel should be sent to the peer.
-type vpError struct {
-	err error
-}
+type vpError struct{ err error }
 
-func (e vpError) Error() string {
-	return e.err.Error()
-}
-
-func (e vpError) Unwrap() error {
-	return e.err
-}
+func (e vpError) Error() string { return e.err.Error() }
+func (e vpError) Unwrap() error { return e.err }
 
 // zstdCompressMsg returns a concatenation of a tag and compressed data
 func zstdCompressMsg(tbytes []byte, d []byte) ([]byte, string) {
@@ -94,11 +87,11 @@ func vpackCompressVote(tbytes []byte, d []byte) ([]byte, string) {
 // and should be larger.
 const MaxDecompressedMessageSize = 20 * 1024 * 1024 // some large enough value
 
-// wsPeerMsgCodec performs optional message compression/decompression.
-// It handles:
-// - zstd compression for proposals (outgoing not implemented)
-// - stateless vpack compression for votes (outgoing not implemented)
-// - stateful vpack compression for votes (both directions)
+// wsPeerMsgCodec performs optional message compression/decompression for certain
+// types of messages. It handles:
+// - zstd compression for PP proposals (outgoing not implemented)
+// - stateless vpack compression for AV votes (outgoing not implemented)
+// - stateful vpack compression for VP votes (both directions)
 type wsPeerMsgCodec struct {
 	log    logging.Logger
 	origin string
@@ -108,12 +101,12 @@ type wsPeerMsgCodec struct {
 	avdec vpackVoteDecompressor
 
 	// stateful vote compression (if enabled)
-	// These are independent: decoding can work even if encoding is disabled
-	statefulVoteEncEnabled bool
-	statefulVoteDecEnabled bool
-	statefulVoteTableSize  uint32
-	statefulVoteEnc        *vpack.StatefulEncoder
-	statefulVoteDec        *vpack.StatefulDecoder
+	// When enabled, both encoder and decoder are active since they must maintain synchronized state.
+	// Any error in either direction disables stateful compression entirely.
+	statefulVoteEnabled   bool
+	statefulVoteTableSize uint32
+	statefulVoteEnc       *vpack.StatefulEncoder
+	statefulVoteDec       *vpack.StatefulDecoder
 }
 
 type zstdProposalDecompressor struct{}
@@ -184,21 +177,19 @@ func (c *wsPeerMsgCodec) decompress(tag protocol.Tag, data []byte) ([]byte, erro
 		// Check for abort sentinel first
 		if len(data) == 1 && data[0] == vpAbortSentinel {
 			c.log.Infof("Received VP abort sentinel from peer %s, disabling stateful compression", c.origin)
-			c.statefulVoteEncEnabled = false
-			c.statefulVoteDecEnabled = false
+			c.statefulVoteEnabled = false
 			// Drop this message silently (it's just a control signal)
 			return nil, nil
 		}
 
-		if !c.statefulVoteDecEnabled {
+		if !c.statefulVoteEnabled {
 			return nil, fmt.Errorf("received VP message but stateful decompression not enabled")
 		}
 		if c.statefulVoteDec == nil {
 			dec, err := vpack.NewStatefulDecoder(c.statefulVoteTableSize)
 			if err != nil {
 				c.log.Warnf("failed to initialize stateful vote decoder for peer %s, disabling: %v", c.origin, err)
-				c.statefulVoteEncEnabled = false
-				c.statefulVoteDecEnabled = false
+				c.statefulVoteEnabled = false
 				return nil, &vpError{err: err}
 			}
 			c.statefulVoteDec = dec
@@ -208,8 +199,7 @@ func (c *wsPeerMsgCodec) decompress(tag protocol.Tag, data []byte) ([]byte, erro
 		statelessCompressed, err := c.statefulVoteDec.Decompress(make([]byte, 0, vpack.MaxCompressedVoteSize), data)
 		if err != nil {
 			c.log.Warnf("stateful vote decompression failed for peer %s, disabling: %v", c.origin, err)
-			c.statefulVoteEncEnabled = false
-			c.statefulVoteDecEnabled = false
+			c.statefulVoteEnabled = false
 			return nil, &vpError{err: err}
 		}
 
@@ -217,8 +207,7 @@ func (c *wsPeerMsgCodec) decompress(tag protocol.Tag, data []byte) ([]byte, erro
 		voteBody, err := statelessDec.DecompressVote(make([]byte, 0, vpack.MaxMsgpackVoteSize), statelessCompressed)
 		if err != nil {
 			c.log.Warnf("stateless vote decompression failed after stateful for peer %s, disabling: %v", c.origin, err)
-			c.statefulVoteEncEnabled = false
-			c.statefulVoteDecEnabled = false
+			c.statefulVoteEnabled = false
 			return nil, &vpError{err: err}
 		}
 		return voteBody, nil
@@ -233,7 +222,7 @@ func (c *wsPeerMsgCodec) decompress(tag protocol.Tag, data []byte) ([]byte, erro
 // (nil, nil) if compression is not applicable,
 // (nil, vpError) if stateful compression fails (caller should send abort sentinel).
 func (c *wsPeerMsgCodec) compress(tag protocol.Tag, data []byte) ([]byte, error) {
-	if tag == protocol.AgreementVoteTag && c.statefulVoteEncEnabled {
+	if tag == protocol.AgreementVoteTag && c.statefulVoteEnabled {
 		// Skip the tag bytes (first 2 bytes are the AV tag)
 		if len(data) < 2 {
 			return nil, nil
@@ -247,8 +236,7 @@ func (c *wsPeerMsgCodec) compress(tag protocol.Tag, data []byte) ([]byte, error)
 			enc, err := vpack.NewStatefulEncoder(c.statefulVoteTableSize)
 			if err != nil {
 				c.log.Warnf("failed to initialize stateful vote encoder for peer %s, disabling: %v", c.origin, err)
-				c.statefulVoteEncEnabled = false
-				c.statefulVoteDecEnabled = false
+				c.statefulVoteEnabled = false
 				return nil, &vpError{err: err}
 			}
 			c.statefulVoteEnc = enc
@@ -262,8 +250,7 @@ func (c *wsPeerMsgCodec) compress(tag protocol.Tag, data []byte) ([]byte, error)
 		compressed, err := c.statefulVoteEnc.Compress(result[tagLen:], statelessCompressed)
 		if err != nil {
 			c.log.Warnf("stateful vote compression failed for peer %s, disabling: %v", c.origin, err)
-			c.statefulVoteEncEnabled = false
-			c.statefulVoteDecEnabled = false
+			c.statefulVoteEnabled = false
 			return nil, &vpError{err: err}
 		}
 		return result[:tagLen+len(compressed)], nil
@@ -293,8 +280,7 @@ func makeWsPeerMsgCodec(wp *wsPeer) *wsPeerMsgCodec {
 		wp.vpackVoteCompressionSupported() && wp.vpackDynamicCompressionSupported() {
 		tableSize := wp.getBestVpackTableSize()
 		if tableSize > 0 {
-			c.statefulVoteEncEnabled = true
-			c.statefulVoteDecEnabled = true
+			c.statefulVoteEnabled = true
 			c.statefulVoteTableSize = tableSize
 			wp.log.Debugf("Stateful compression negotiated with table size %d (our max: %d)", tableSize, wp.voteCompressionDynamicTableSize)
 		}
