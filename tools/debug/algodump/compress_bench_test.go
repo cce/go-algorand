@@ -846,7 +846,10 @@ func benchmarkVPackDynamicCompression(b *testing.B) {
 
 	// Create both encoder types - stateless for first layer, stateful for second
 	stEnc := vpack.NewStatelessEncoder()
-	dynEnc := &vpack.StatefulEncoder{}
+	dynEnc, err := vpack.NewStatefulEncoder(1024)
+	if err != nil {
+		b.Fatalf("Failed to create StatefulEncoder: %v", err)
+	}
 
 	// Create metrics collector for detailed statistics
 	//	metrics := &vpack.CompressionMetrics{}
@@ -924,7 +927,10 @@ func benchmarkVPackDynamicDecompression(b *testing.B) {
 
 	// Create both encoder types for pre-compression
 	stEnc := vpack.NewStatelessEncoder()
-	dynEnc := &vpack.StatefulEncoder{}
+	dynEnc, err := vpack.NewStatefulEncoder(1024)
+	if err != nil {
+		b.Fatalf("Failed to create StatefulEncoder: %v", err)
+	}
 
 	// Pre-compress the messages through both layers
 	for _, msg := range filtered {
@@ -953,7 +959,10 @@ func benchmarkVPackDynamicDecompression(b *testing.B) {
 	var totalDecompressed int64
 
 	// Create both decoder types for benchmark
-	dynDec := &vpack.StatefulDecoder{}
+	dynDec, err := vpack.NewStatefulDecoder(1024)
+	if err != nil {
+		b.Fatalf("Failed to create StatefulDecoder: %v", err)
+	}
 	stDec := vpack.NewStatelessDecoder()
 
 	// Intermediate and final buffers
