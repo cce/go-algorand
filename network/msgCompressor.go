@@ -104,7 +104,7 @@ type wsPeerMsgCodec struct {
 	// When enabled, both encoder and decoder are active since they must maintain synchronized state.
 	// Any error in either direction disables stateful compression entirely.
 	statefulVoteEnabled   bool
-	statefulVoteTableSize uint32
+	statefulVoteTableSize uint
 	statefulVoteEnc       *vpack.StatefulEncoder
 	statefulVoteDec       *vpack.StatefulDecoder
 }

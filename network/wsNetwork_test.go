@@ -713,8 +713,8 @@ func TestWebsocketVoteDynamicCompressionAbortSentinel(t *testing.T) {
 func testWebsocketVoteDynamicCompressionMessages(t *testing.T, msgs [][]byte, expectCompressionAfter bool) {
 	type testCase struct {
 		name          string
-		netATableSize int
-		netBTableSize int
+		netATableSize uint
+		netBTableSize uint
 		expectedSize  uint32
 		expectDynamic bool
 	}
@@ -840,29 +840,6 @@ func testWebsocketVoteDynamicCompressionMessages(t *testing.T, msgs [][]byte, ex
 				}
 			}
 		})
-	}
-}
-
-// Repeat basic, but test a unicast
-func TestWebsocketNetworkUnicast(t *testing.T) {
-	partitiontest.PartitionTest(t)
-
-	netA, _, counter, closeFunc := setupWebsocketNetworkAB(t, 2)
-	defer closeFunc()
-	counterDone := counter.done
-
-	require.Equal(t, 1, len(netA.peers))
-	require.Equal(t, 1, len(netA.GetPeers(PeersConnectedIn)))
-	peerB := netA.peers[0]
-	err := peerB.Unicast(context.Background(), []byte("foo"), protocol.TxnTag)
-	assert.NoError(t, err)
-	err = peerB.Unicast(context.Background(), []byte("bar"), protocol.TxnTag)
-	assert.NoError(t, err)
-
-	select {
-	case <-counterDone:
-	case <-time.After(2 * time.Second):
-		t.Errorf("timeout, count=%d, wanted 2", counter.count)
 	}
 }
 

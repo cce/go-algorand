@@ -78,7 +78,6 @@ var defaultSendMessageTags = map[protocol.Tag]bool{
 	protocol.TxnTag:               true,
 	protocol.UniEnsBlockReqTag:    true,
 	protocol.VoteBundleTag:        true,
-	protocol.VotePackedTag:        true, // Statefully compressed votes
 }
 
 // interface allows substituting debug implementation for *websocket.Conn
@@ -244,7 +243,7 @@ type wsPeer struct {
 	enableVoteCompression bool
 
 	// voteCompressionDynamicTableSize is this node's configured dynamic table size (0 means disabled)
-	voteCompressionDynamicTableSize uint32
+	voteCompressionDynamicTableSize uint
 
 	// responseChannels used by the client to wait on the response of the request
 	responseChannels map[uint64]chan *Response
@@ -1148,7 +1147,7 @@ func (wp *wsPeer) vpackDynamicCompressionSupported() bool {
 
 // getBestVpackTableSize returns the negotiated table size.
 // This calculates the minimum between our max size and the peer's advertised max size.
-func (wp *wsPeer) getBestVpackTableSize() uint32 {
+func (wp *wsPeer) getBestVpackTableSize() uint {
 	// Get our max size
 	ourMaxSize := wp.voteCompressionDynamicTableSize
 	if ourMaxSize == 0 {
@@ -1156,7 +1155,7 @@ func (wp *wsPeer) getBestVpackTableSize() uint32 {
 	}
 
 	// Get peer's max size from their features
-	var peerMaxSize uint32
+	var peerMaxSize uint
 	if wp.features&pfCompressedVoteVpackDynamic1024 != 0 {
 		peerMaxSize = 1024
 	} else if wp.features&pfCompressedVoteVpackDynamic512 != 0 {

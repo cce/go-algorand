@@ -1142,7 +1142,7 @@ func (wn *WebsocketNetwork) ServeHTTP(response http.ResponseWriter, request *htt
 		identityVerified:                atomic.Uint32{},
 		features:                        decodePeerFeatures(matchingVersion, request.Header.Get(PeerFeaturesHeader)),
 		enableVoteCompression:           wn.config.EnableVoteCompression,
-		voteCompressionDynamicTableSize: uint32(wn.config.VoteCompressionDynamicTableSize),
+		voteCompressionDynamicTableSize: wn.config.VoteCompressionDynamicTableSize,
 	}
 	peer.TelemetryGUID = trackedRequest.otherTelemetryGUID
 	wn.log.Debugf("Server: client features '%s', decoded %x, our response '%s'", request.Header.Get(PeerFeaturesHeader), peer.features, responseHeader.Get(PeerFeaturesHeader))
@@ -2210,7 +2210,7 @@ func (wn *WebsocketNetwork) tryConnect(netAddr, gossipAddr string) {
 		identity:                        peerID,
 		features:                        decodePeerFeatures(matchingVersion, response.Header.Get(PeerFeaturesHeader)),
 		enableVoteCompression:           wn.config.EnableVoteCompression,
-		voteCompressionDynamicTableSize: uint32(wn.config.VoteCompressionDynamicTableSize),
+		voteCompressionDynamicTableSize: wn.config.VoteCompressionDynamicTableSize,
 	}
 	peer.TelemetryGUID, peer.InstanceName, _ = getCommonHeaders(response.Header)
 	wn.log.Debugf("Client: server features '%s', decoded %x", response.Header.Get(PeerFeaturesHeader), peer.features)
