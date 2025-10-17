@@ -633,13 +633,13 @@ func (wp *wsPeer) readLoop() {
 		if msg.Data == nil {
 			continue
 		}
-		if originalTag == protocol.VotePackedTag {
-			msg.Tag = protocol.AgreementVoteTag
-		}
 		if wp.peerType == peerTypeWs {
 			networkReceivedUncompressedBytesByTag.Add(string(msg.Tag), uint64(len(msg.Data)+2))
 		} else {
 			networkP2PReceivedUncompressedBytesByTag.Add(string(msg.Tag), uint64(len(msg.Data)+2))
+		}
+		if originalTag == protocol.VotePackedTag {
+			msg.Tag = protocol.AgreementVoteTag
 		}
 		msg.Sender = wp
 
@@ -781,6 +781,7 @@ func (wp *wsPeer) sendControlMessage(sm sendMessage) (close bool, reason disconn
 // to the peer, signaling that stateful compression should be disabled for this connection.
 // The connection remains open and votes will continue to flow as AV messages.
 func (wp *wsPeer) handleVPError(err error) (close bool, reason disconnectReason) {
+	networkVPAbortMessagesSent.Inc(nil)
 	abortMsg := append([]byte(protocol.VotePackedTag), vpAbortSentinel)
 	sm := sendMessage{
 		data:         abortMsg,
@@ -863,6 +864,7 @@ func (wp *wsPeer) writeLoopSendMsg(msg sendMessage) disconnectReason {
 		if err != nil {
 			// VP compression error - send abort sentinel then continue with original AV
 			if errors.As(err, &vpError{}) {
+				networkVPAbortMessagesSent.Inc(nil)
 				abortMsg := append([]byte(protocol.VotePackedTag), vpAbortSentinel)
 				_ = wp.conn.WriteMessage(websocket.BinaryMessage, abortMsg)
 				// Fall through to send original AV message below

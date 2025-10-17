@@ -177,6 +177,7 @@ func (c *wsPeerMsgCodec) decompress(tag protocol.Tag, data []byte) ([]byte, erro
 		// Check for abort sentinel first
 		if len(data) == 1 && data[0] == vpAbortSentinel {
 			c.log.Infof("Received VP abort sentinel from peer %s, disabling stateful compression", c.origin)
+			networkVPAbortMessagesReceived.Inc(nil)
 			c.statefulVoteEnabled = false
 			// Drop this message silently (it's just a control signal)
 			return nil, nil
@@ -189,6 +190,7 @@ func (c *wsPeerMsgCodec) decompress(tag protocol.Tag, data []byte) ([]byte, erro
 			dec, err := vpack.NewStatefulDecoder(c.statefulVoteTableSize)
 			if err != nil {
 				c.log.Warnf("failed to initialize stateful vote decoder for peer %s, disabling: %v", c.origin, err)
+				networkVPDecompressionErrors.Inc(nil)
 				c.statefulVoteEnabled = false
 				return nil, &vpError{err: err}
 			}
@@ -199,6 +201,7 @@ func (c *wsPeerMsgCodec) decompress(tag protocol.Tag, data []byte) ([]byte, erro
 		statelessCompressed, err := c.statefulVoteDec.Decompress(make([]byte, 0, vpack.MaxCompressedVoteSize), data)
 		if err != nil {
 			c.log.Warnf("stateful vote decompression failed for peer %s, disabling: %v", c.origin, err)
+			networkVPDecompressionErrors.Inc(nil)
 			c.statefulVoteEnabled = false
 			return nil, &vpError{err: err}
 		}
@@ -207,9 +210,11 @@ func (c *wsPeerMsgCodec) decompress(tag protocol.Tag, data []byte) ([]byte, erro
 		voteBody, err := statelessDec.DecompressVote(make([]byte, 0, vpack.MaxMsgpackVoteSize), statelessCompressed)
 		if err != nil {
 			c.log.Warnf("stateless vote decompression failed after stateful for peer %s, disabling: %v", c.origin, err)
+			networkVPDecompressionErrors.Inc(nil)
 			c.statefulVoteEnabled = false
 			return nil, &vpError{err: err}
 		}
+
 		return voteBody, nil
 	}
 
@@ -236,6 +241,7 @@ func (c *wsPeerMsgCodec) compress(tag protocol.Tag, data []byte) ([]byte, error)
 			enc, err := vpack.NewStatefulEncoder(c.statefulVoteTableSize)
 			if err != nil {
 				c.log.Warnf("failed to initialize stateful vote encoder for peer %s, disabling: %v", c.origin, err)
+				networkVPCompressionErrors.Inc(nil)
 				c.statefulVoteEnabled = false
 				return nil, &vpError{err: err}
 			}
@@ -250,10 +256,15 @@ func (c *wsPeerMsgCodec) compress(tag protocol.Tag, data []byte) ([]byte, error)
 		compressed, err := c.statefulVoteEnc.Compress(result[tagLen:], statelessCompressed)
 		if err != nil {
 			c.log.Warnf("stateful vote compression failed for peer %s, disabling: %v", c.origin, err)
+			networkVPCompressionErrors.Inc(nil)
 			c.statefulVoteEnabled = false
 			return nil, &vpError{err: err}
 		}
-		return result[:tagLen+len(compressed)], nil
+		finalResult := result[:tagLen+len(compressed)]
+		// Track stateful compression layer only: stateless-compressed input → VP output
+		networkVPUncompressedBytesSent.AddUint64(uint64(len(statelessCompressed)), nil)
+		networkVPCompressedBytesSent.AddUint64(uint64(len(compressed)), nil)
+		return finalResult, nil
 	}
 	return nil, nil
 }

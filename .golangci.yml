@@ -15,6 +15,7 @@ linters:
     - misspell
     - nilerr
     - nolintlint
+    - paralleltest
     - revive
     - staticcheck
     - typecheck

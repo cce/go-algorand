@@ -1449,10 +1449,14 @@ func (wn *msgBroadcaster) preparePeerData(request broadcastRequest, prio bool) (
 	}
 	// Optionally compress votes: only supporting peers will receive it.
 	if prio && request.tag == protocol.AgreementVoteTag && wn.enableVoteCompression {
+		networkVoteBroadcastUncompressedBytes.AddUint64(uint64(len(request.data)), nil)
 		var logMsg string
 		compressedData, logMsg = vpackCompressVote(tbytes, request.data)
 		if len(logMsg) > 0 {
 			wn.log.Warn(logMsg)
+		} else {
+			// Track compressed size only on success (compressedData includes tag)
+			networkVoteBroadcastCompressedBytes.AddUint64(uint64(len(compressedData)), nil)
 		}
 	}
 	return mbytes, compressedData, digest
