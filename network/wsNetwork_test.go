@@ -625,12 +625,12 @@ func TestWebsocketVoteDynamicCompressionInvalidMessages(t *testing.T) {
 		[][]byte{[]byte("hello1"), []byte("hello2"), []byte("hello3")}, false)
 }
 
-func TestWebsocketVoteDynamicCompressionAbortSentinel(t *testing.T) {
+func TestWebsocketVoteDynamicCompressionAbortMessage(t *testing.T) {
 	partitiontest.PartitionTest(t)
 
-	// Test VP abort sentinel mechanism:
+	// Test VP abort message mechanism:
 	// 1. Establish VP compression with valid votes
-	// 2. Send abort sentinel from A to B
+	// 2. Send abort message from A to B
 	// 3. Verify B disables stateful compression on receiving the abort
 	// 4. Verify connection stays up
 
@@ -697,15 +697,15 @@ func TestWebsocketVoteDynamicCompressionAbortSentinel(t *testing.T) {
 	require.True(t, peerBtoA.msgCodec.statefulVoteEncEnabled, "VP encoding not established on B->A")
 	require.True(t, peerBtoA.msgCodec.statefulVoteDecEnabled, "VP decoding not established on B->A")
 
-	// Send VP abort sentinel from A to B
-	abortMsg := append([]byte(protocol.VotePackedTag), vpAbortSentinel)
+	// Send VP abort message from A to B
+	abortMsg := append([]byte(protocol.VotePackedTag), voteCompressionAbortMessage)
 	sent := peerAtoB.writeNonBlock(context.Background(), abortMsg, true, crypto.Digest{}, time.Now())
-	require.True(t, sent, "failed to send abort sentinel")
+	require.True(t, sent, "failed to send abort message")
 
 	// Wait for abort to be processed - verify B disabled its encoder (can't send VP to A anymore)
 	require.Eventually(t, func() bool {
 		return !peerBtoA.msgCodec.statefulVoteEncEnabled
-	}, 2*time.Second, 50*time.Millisecond, "VP encoding not disabled on B->A after receiving abort sentinel")
+	}, 2*time.Second, 50*time.Millisecond, "VP encoding not disabled on B->A after receiving abort message")
 
 	// Verify connection is still up after abort
 	require.Equal(t, 1, len(netB.peers), "connection should still be alive after abort")

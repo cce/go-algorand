@@ -32,18 +32,18 @@ var zstdCompressionMagic = [4]byte{0x28, 0xb5, 0x2f, 0xfd}
 
 const zstdCompressionLevel = zstd.BestSpeed
 
-// vpAbortSentinel is a single-byte payload sent in a VP message to signal
+// voteCompressionAbortMessage is a single-byte payload sent with a VP tag to signal
 // that stateful compression should be disabled for this connection.
 // When either encoder or decoder encounters an error, it sends VP+0xFF to notify
 // the peer, then both sides disable stateful compression and fall back to AV messages.
-const vpAbortSentinel byte = 0xFF
+const voteCompressionAbortMessage byte = 0xFF
 
-// vpError wraps errors from stateful vote compression/decompression.
-// This error type signals that an abort sentinel should be sent to the peer.
-type vpError struct{ err error }
+// voteCompressionError wraps errors from stateful vote compression/decompression.
+// This error type signals that an abort message should be sent to the peer.
+type voteCompressionError struct{ err error }
 
-func (e vpError) Error() string { return e.err.Error() }
-func (e vpError) Unwrap() error { return e.err }
+func (e voteCompressionError) Error() string { return e.err.Error() }
+func (e voteCompressionError) Unwrap() error { return e.err }
 
 // zstdCompressMsg returns a concatenation of a tag and compressed data
 func zstdCompressMsg(tbytes []byte, d []byte) ([]byte, string) {
@@ -102,9 +102,9 @@ type wsPeerMsgCodec struct {
 
 	// stateful vote compression (if enabled)
 	// Encoder and decoder can fail independently, so we track them separately.
-	// When encoder fails, we send abort sentinel and disable encoding; peer will switch to AV.
-	// When decoder fails, we send abort sentinel and disable decoding; we'll receive AV from peer.
-	// When we receive abort sentinel from peer, we disable encoding (they can't decode our VP).
+	// When encoder fails, we send abort message and disable encoding; peer will switch to AV.
+	// When decoder fails, we send abort message and disable decoding; we'll receive AV from peer.
+	// When we receive abort message from peer, we disable encoding (they can't decode our VP).
 	statefulVoteEncEnabled bool
 	statefulVoteDecEnabled bool
 	statefulVoteTableSize  uint
@@ -154,7 +154,7 @@ func (dec zstdProposalDecompressor) convert(data []byte) ([]byte, error) {
 // Currently only supports stateful vote compression.
 // Returns compressed data and nil error if compression succeeds,
 // (nil, nil) if compression is not applicable,
-// (nil, vpError) if stateful compression fails (caller should send abort sentinel).
+// (nil, vpError) if stateful compression fails (caller should send abort message).
 func (c *wsPeerMsgCodec) compress(tag protocol.Tag, data []byte) ([]byte, error) {
 	if tag == protocol.AgreementVoteTag && c.statefulVoteEncEnabled {
 		// Skip the tag bytes (first 2 bytes are the AV tag)
@@ -172,7 +172,7 @@ func (c *wsPeerMsgCodec) compress(tag protocol.Tag, data []byte) ([]byte, error)
 				c.log.Warnf("failed to initialize stateful vote encoder for peer %s, disabling: %v", c.origin, err)
 				networkVPCompressionErrors.Inc(nil)
 				c.statefulVoteEncEnabled = false
-				return nil, &vpError{err: err}
+				return nil, &voteCompressionError{err: err}
 			}
 			c.statefulVoteEnc = enc
 			c.log.Debugf("stateful vote encoder initialized for peer %s (table size %d)", c.origin, c.statefulVoteTableSize)
@@ -187,7 +187,7 @@ func (c *wsPeerMsgCodec) compress(tag protocol.Tag, data []byte) ([]byte, error)
 			c.log.Warnf("stateful vote compression failed for peer %s, disabling: %v", c.origin, err)
 			networkVPCompressionErrors.Inc(nil)
 			c.statefulVoteEncEnabled = false
-			return nil, &vpError{err: err}
+			return nil, &voteCompressionError{err: err}
 		}
 		finalResult := result[:tagLen+len(compressed)]
 		// Track stateful compression layer only: stateless-compressed input → VP output
@@ -225,9 +225,9 @@ func (c *wsPeerMsgCodec) decompress(tag protocol.Tag, data []byte) ([]byte, erro
 		}
 
 	case protocol.VotePackedTag:
-		// Check for abort sentinel first
-		if len(data) == 1 && data[0] == vpAbortSentinel {
-			c.log.Infof("Received VP abort sentinel from peer %s, disabling stateful encoding", c.origin)
+		// Check for abort message first
+		if len(data) == 1 && data[0] == voteCompressionAbortMessage {
+			c.log.Infof("Received VP abort message from peer %s, disabling stateful encoding", c.origin)
 			networkVPAbortMessagesReceived.Inc(nil)
 			// Peer is telling us they can't decode our VP messages, so stop encoding
 			c.statefulVoteEncEnabled = false
@@ -244,7 +244,7 @@ func (c *wsPeerMsgCodec) decompress(tag protocol.Tag, data []byte) ([]byte, erro
 				c.log.Warnf("failed to initialize stateful vote decoder for peer %s, disabling: %v", c.origin, err)
 				networkVPDecompressionErrors.Inc(nil)
 				c.statefulVoteDecEnabled = false
-				return nil, &vpError{err: err}
+				return nil, &voteCompressionError{err: err}
 			}
 			c.statefulVoteDec = dec
 			c.log.Debugf("stateful vote decoder initialized for peer %s (table size %d)", c.origin, c.statefulVoteTableSize)
@@ -255,7 +255,7 @@ func (c *wsPeerMsgCodec) decompress(tag protocol.Tag, data []byte) ([]byte, erro
 			c.log.Warnf("stateful vote decompression failed for peer %s, disabling: %v", c.origin, err)
 			networkVPDecompressionErrors.Inc(nil)
 			c.statefulVoteDecEnabled = false
-			return nil, &vpError{err: err}
+			return nil, &voteCompressionError{err: err}
 		}
 
 		var statelessDec vpack.StatelessDecoder
@@ -264,7 +264,7 @@ func (c *wsPeerMsgCodec) decompress(tag protocol.Tag, data []byte) ([]byte, erro
 			c.log.Warnf("stateless vote decompression failed after stateful for peer %s, disabling: %v", c.origin, err)
 			networkVPDecompressionErrors.Inc(nil)
 			c.statefulVoteDecEnabled = false
-			return nil, &vpError{err: err}
+			return nil, &voteCompressionError{err: err}
 		}
 
 		return voteBody, nil

@@ -584,8 +584,8 @@ func (wp *wsPeer) readLoop() {
 		originalTag := msg.Tag
 		msg.Data, err = wp.msgCodec.decompress(msg.Tag, msg.Data)
 		if err != nil {
-			// Handle VP errors by sending abort sentinel and continuing
-			if errors.As(err, &vpError{}) {
+			// Handle VP errors by sending abort message and continuing
+			if errors.As(err, &voteCompressionError{}) {
 				if close, reason := wp.handleVPError(err); close {
 					cleanupCloseError = reason
 					return
@@ -597,7 +597,7 @@ func (wp *wsPeer) readLoop() {
 			wp.reportReadErr(err)
 			return
 		}
-		// If decompress returned nil (e.g., for abort sentinel), drop the message
+		// If decompress returned nil (e.g., for abort message), drop the message
 		if msg.Data == nil {
 			continue
 		}
@@ -745,12 +745,12 @@ func (wp *wsPeer) sendControlMessage(sm sendMessage) (close bool, reason disconn
 	return
 }
 
-// handleVPError handles VP (stateful vote compression) errors by sending an abort sentinel
+// handleVPError handles VP (stateful vote compression) errors by sending an abort message
 // to the peer, signaling that stateful compression should be disabled for this connection.
 // The connection remains open and votes will continue to flow as AV messages.
 func (wp *wsPeer) handleVPError(err error) (close bool, reason disconnectReason) {
 	networkVPAbortMessagesSent.Inc(nil)
-	abortMsg := append([]byte(protocol.VotePackedTag), vpAbortSentinel)
+	abortMsg := append([]byte(protocol.VotePackedTag), voteCompressionAbortMessage)
 	sm := sendMessage{
 		data:         abortMsg,
 		enqueued:     time.Now(),
@@ -830,10 +830,10 @@ func (wp *wsPeer) writeLoopSendMsg(msg sendMessage) disconnectReason {
 	if wp.msgCodec != nil {
 		compressed, err := wp.msgCodec.compress(tag, msg.data)
 		if err != nil {
-			// VP compression error - send abort sentinel then continue with original AV
-			if errors.As(err, &vpError{}) {
+			// VP compression error - send abort message then continue with original AV
+			if errors.As(err, &voteCompressionError{}) {
 				networkVPAbortMessagesSent.Inc(nil)
-				abortMsg := append([]byte(protocol.VotePackedTag), vpAbortSentinel)
+				abortMsg := append([]byte(protocol.VotePackedTag), voteCompressionAbortMessage)
 				_ = wp.conn.WriteMessage(websocket.BinaryMessage, abortMsg)
 				// Fall through to send original AV message below
 			}
