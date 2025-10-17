@@ -21,10 +21,12 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"flag"
+	"fmt"
 	"maps"
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -99,6 +101,348 @@ func filterMessages(b *testing.B, corpus *testCorpus, onlyAV bool) []StoredMessa
 
 	return filtered
 }
+
+type filterOption struct {
+	name   string
+	onlyAV bool
+}
+
+var defaultFilterOptions = []filterOption{
+	{name: "all", onlyAV: false},
+	{name: "av", onlyAV: true},
+}
+
+func parseFilterOptions(keys []string) []filterOption {
+	for _, key := range keys {
+		if key == "" {
+			continue
+		}
+		val := strings.TrimSpace(os.Getenv(key))
+		if val == "" {
+			continue
+		}
+		var opts []filterOption
+		seen := make(map[string]struct{})
+		for _, part := range strings.Split(val, ",") {
+			switch strings.ToLower(strings.TrimSpace(part)) {
+			case "all":
+				if _, ok := seen["all"]; !ok {
+					opts = append(opts, filterOption{name: "all", onlyAV: false})
+					seen["all"] = struct{}{}
+				}
+			case "av", "onlyav", "votes":
+				if _, ok := seen["av"]; !ok {
+					opts = append(opts, filterOption{name: "av", onlyAV: true})
+					seen["av"] = struct{}{}
+				}
+			}
+		}
+		if len(opts) > 0 {
+			return opts
+		}
+	}
+	return defaultFilterOptions
+}
+
+func parseIntListFromEnv(keys []string, defaults []int) []int {
+	for _, key := range keys {
+		if key == "" {
+			continue
+		}
+		val := strings.TrimSpace(os.Getenv(key))
+		if val == "" {
+			continue
+		}
+		var parsed []int
+		seen := make(map[int]struct{})
+		for _, part := range strings.Split(val, ",") {
+			numStr := strings.TrimSpace(part)
+			if numStr == "" {
+				continue
+			}
+			num, err := strconv.Atoi(numStr)
+			if err != nil {
+				continue
+			}
+			if _, ok := seen[num]; ok {
+				continue
+			}
+			seen[num] = struct{}{}
+			parsed = append(parsed, num)
+		}
+		if len(parsed) > 0 {
+			return parsed
+		}
+	}
+	return defaults
+}
+
+type simpleCompressor func(dst, src []byte) ([]byte, error)
+
+type simpleCompressorBuilder func(level int) (simpleCompressor, func(), error)
+
+func runSimpleCompressionMatrix(b *testing.B, benchName string, corpus *testCorpus, levels []int, filters []filterOption, build simpleCompressorBuilder) {
+	for _, opt := range filters {
+		filtered := filterMessages(b, corpus, opt.onlyAV)
+		for _, level := range levels {
+			opt := opt
+			b.Run(fmt.Sprintf("%s/level=%d/%s", benchName, level, opt.name), func(b *testing.B) {
+				compress, cleanup, err := build(level)
+				if err != nil {
+					b.Fatalf("setup failed: %v", err)
+				}
+				if cleanup != nil {
+					defer cleanup()
+				}
+				runCompressionLoop(b, filtered, compress)
+			})
+		}
+	}
+}
+
+func runCompressionLoop(b *testing.B, msgs []StoredMessage, compress simpleCompressor) {
+	if len(msgs) == 0 {
+		b.Fatal("no messages to benchmark")
+	}
+	compressed := make([]byte, 0, 4096)
+	var totalCompressed int64
+	var origBytes int64
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		msg := msgs[i%len(msgs)]
+		var err error
+		compressed, err = compress(compressed[:0], msg.Data)
+		if err != nil {
+			b.Fatalf("compression failed: %v", err)
+		}
+		totalCompressed += int64(len(compressed))
+		origBytes += int64(len(msg.Data))
+	}
+	b.StopTimer()
+	if totalCompressed == 0 {
+		b.Fatalf("compression produced zero bytes")
+	}
+	if b.N > 0 {
+		perIteration := origBytes / int64(b.N)
+		b.SetBytes(perIteration)
+	}
+	ratio := float64(origBytes) / float64(totalCompressed)
+	reduction := 100 - float64(totalCompressed)/float64(origBytes)*100
+	b.ReportMetric(ratio, "ratio")
+	b.ReportMetric(reduction, "%smaller")
+}
+
+type simpleDecompressor func(dst, src []byte) ([]byte, error)
+
+type decompressionSetup func(level int, msgs []StoredMessage) ([][]byte, simpleDecompressor, func(), error)
+
+func runSimpleDecompressionMatrix(b *testing.B, benchName string, corpus *testCorpus, levels []int, filters []filterOption, setup decompressionSetup) {
+	for _, opt := range filters {
+		filtered := filterMessages(b, corpus, opt.onlyAV)
+		for _, level := range levels {
+			opt := opt
+			b.Run(fmt.Sprintf("%s/level=%d/%s", benchName, level, opt.name), func(b *testing.B) {
+				compressed, decompress, cleanup, err := setup(level, filtered)
+				if err != nil {
+					b.Fatalf("setup failed: %v", err)
+				}
+				if cleanup != nil {
+					defer cleanup()
+				}
+				runDecompressionLoop(b, compressed, decompress)
+			})
+		}
+	}
+}
+
+func runDecompressionLoop(b *testing.B, compressed [][]byte, decompress simpleDecompressor) {
+	if len(compressed) == 0 {
+		b.Fatal("no compressed data to benchmark")
+	}
+	decompressed := make([]byte, 0, 4096)
+	var totalCompressed int64
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		block := compressed[i%len(compressed)]
+		var err error
+		decompressed, err = decompress(decompressed[:0], block)
+		if err != nil {
+			b.Fatalf("decompression failed: %v", err)
+		}
+		totalCompressed += int64(len(block))
+	}
+	b.StopTimer()
+	if b.N > 0 {
+		b.SetBytes(totalCompressed / int64(b.N))
+	}
+}
+
+type levelWindowLog struct {
+	level     int
+	windowLog int
+}
+
+func parseLevelWindowLogList(keys []string, defaults []levelWindowLog) []levelWindowLog {
+	for _, key := range keys {
+		if key == "" {
+			continue
+		}
+		val := strings.TrimSpace(os.Getenv(key))
+		if val == "" {
+			continue
+		}
+		var result []levelWindowLog
+		seen := make(map[levelWindowLog]struct{})
+		for _, part := range strings.Split(val, ",") {
+			fields := strings.Split(part, ":")
+			if len(fields) != 2 {
+				continue
+			}
+			level, err1 := strconv.Atoi(strings.TrimSpace(fields[0]))
+			windowLog, err2 := strconv.Atoi(strings.TrimSpace(fields[1]))
+			if err1 != nil || err2 != nil {
+				continue
+			}
+			cfg := levelWindowLog{level: level, windowLog: windowLog}
+			if _, ok := seen[cfg]; ok {
+				continue
+			}
+			seen[cfg] = struct{}{}
+			result = append(result, cfg)
+		}
+		if len(result) > 0 {
+			return result
+		}
+	}
+	return defaults
+}
+
+type levelWindow struct {
+	level  int
+	window int
+}
+
+func parseLevelWindowList(keys []string, defaults []levelWindow) []levelWindow {
+	for _, key := range keys {
+		if key == "" {
+			continue
+		}
+		val := strings.TrimSpace(os.Getenv(key))
+		if val == "" {
+			continue
+		}
+		var result []levelWindow
+		seen := make(map[levelWindow]struct{})
+		for _, part := range strings.Split(val, ",") {
+			fields := strings.Split(part, ":")
+			if len(fields) != 2 {
+				continue
+			}
+			level, err1 := strconv.Atoi(strings.TrimSpace(fields[0]))
+			window, err2 := strconv.Atoi(strings.TrimSpace(fields[1]))
+			if err1 != nil || err2 != nil {
+				continue
+			}
+			cfg := levelWindow{level: level, window: window}
+			if _, ok := seen[cfg]; ok {
+				continue
+			}
+			seen[cfg] = struct{}{}
+			result = append(result, cfg)
+		}
+		if len(result) > 0 {
+			return result
+		}
+	}
+	return defaults
+}
+
+type tagWindowConfig struct {
+	level      int
+	avWindow   int
+	txppWindow int
+}
+
+func parseTagWindowConfigs(keys []string, defaults []tagWindowConfig) []tagWindowConfig {
+	for _, key := range keys {
+		if key == "" {
+			continue
+		}
+		val := strings.TrimSpace(os.Getenv(key))
+		if val == "" {
+			continue
+		}
+		var result []tagWindowConfig
+		seen := make(map[tagWindowConfig]struct{})
+		for _, part := range strings.Split(val, ",") {
+			fields := strings.Split(part, ":")
+			if len(fields) != 3 {
+				continue
+			}
+			level, err1 := strconv.Atoi(strings.TrimSpace(fields[0]))
+			avWindow, err2 := strconv.Atoi(strings.TrimSpace(fields[1]))
+			txppWindow, err3 := strconv.Atoi(strings.TrimSpace(fields[2]))
+			if err1 != nil || err2 != nil || err3 != nil {
+				continue
+			}
+			cfg := tagWindowConfig{level: level, avWindow: avWindow, txppWindow: txppWindow}
+			if _, ok := seen[cfg]; ok {
+				continue
+			}
+			seen[cfg] = struct{}{}
+			result = append(result, cfg)
+		}
+		if len(result) > 0 {
+			return result
+		}
+	}
+	return defaults
+}
+
+var (
+	defaultGozstdLevels    = []int{1, 3, 7, 11}
+	defaultZstdLevels      = []int{1, 3, 7, 11}
+	defaultKlauspostLevels = []int{1, 3}
+	defaultGozstdWindowLog = []levelWindowLog{
+		{level: 1, windowLog: 15},
+		{level: 1, windowLog: 18},
+		{level: 1, windowLog: 20},
+		{level: 3, windowLog: 15},
+		{level: 3, windowLog: 18},
+		{level: 3, windowLog: 20},
+		{level: 7, windowLog: 18},
+		{level: 11, windowLog: 18},
+	}
+	defaultKlauspostWindows = []levelWindow{
+		{level: 1, window: 1 << 12},
+		{level: 1, window: 1 << 15},
+		{level: 1, window: 1 << 16},
+		{level: 1, window: 1 << 18},
+		{level: 1, window: 1 << 20},
+		{level: 2, window: 1 << 15},
+		{level: 2, window: 1 << 18},
+		{level: 2, window: 1 << 20},
+		{level: 3, window: 1 << 18},
+		{level: 3, window: 1 << 20},
+	}
+	defaultKlauspostStreamConfigs = []levelWindow{
+		{level: 1, window: 1 << 12},
+		{level: 1, window: 1 << 15},
+		{level: 1, window: 1 << 18},
+		{level: 1, window: 1 << 20},
+		{level: 2, window: 1 << 15},
+		{level: 2, window: 1 << 18},
+		{level: 2, window: 1 << 20},
+		{level: 3, window: 1 << 18},
+		{level: 3, window: 1 << 20},
+	}
+	defaultTagContextConfigs = []tagWindowConfig{
+		{level: 1, avWindow: 1 << 18, txppWindow: 1 << 15},
+		{level: 1, avWindow: 1 << 17, txppWindow: 1 << 15},
+		{level: 2, avWindow: 1 << 18, txppWindow: 1 << 15},
+		{level: 3, avWindow: 1 << 18, txppWindow: 1 << 15},
+	}
+)
 
 func loadTestCorpus(t testing.TB) *testCorpus {
 	// If we already have a cached corpus, return it without reloading
@@ -196,8 +540,8 @@ func loadTestCorpus(t testing.TB) *testCorpus {
 	return cachedCorpus
 }
 
-// benchmarkVPackCompression benchmarks the vpack compression implementation
-func benchmarkVPackCompression(b *testing.B) {
+// BenchmarkVPackCompression benchmarks stateless vpack compression
+func BenchmarkVPackCompression(b *testing.B) {
 	corpus := loadTestCorpus(b)
 
 	// Filter messages to only include AV votes
@@ -228,8 +572,8 @@ func benchmarkVPackCompression(b *testing.B) {
 	b.SetBytes(origBytes / int64(b.N))
 }
 
-// benchmarkVPackDecompression benchmarks the vpack decompression implementation
-func benchmarkVPackDecompression(b *testing.B) {
+// BenchmarkVPackDecompression benchmarks stateless vpack decompression
+func BenchmarkVPackDecompression(b *testing.B) {
 	corpus := loadTestCorpus(b)
 
 	// First compress all AV messages to have compressed data for benchmark
@@ -270,70 +614,6 @@ func benchmarkVPackDecompression(b *testing.B) {
 	b.SetBytes(totalDecompressed / int64(b.N))
 }
 
-// benchmarkGozstdSimple benchmarks the valyala/gozstd implementation
-// with a new context for each message (simple, no window sharing)
-func benchmarkGozstdSimple(b *testing.B, level int, onlyAV bool) {
-	corpus := loadTestCorpus(b)
-
-	// Filter messages based on criteria
-	filtered := filterMessages(b, corpus, onlyAV)
-
-	// Pre-allocate a buffer to hold compressed data
-	// Initial capacity of 4KB should handle most messages
-	compressed := make([]byte, 0, 4096)
-
-	b.ResetTimer()
-	var totalCompressed int64
-	var origBytes int64
-	for i := 0; i < b.N; i++ {
-		// Process one message per iteration, cycling through messages
-		msg := filtered[i%len(filtered)]
-
-		// Reuse the same buffer, slicing to zero length to reset it
-		compressed = gozstd.CompressLevel(compressed[:0], msg.Data, level)
-		totalCompressed += int64(len(compressed))
-		origBytes += int64(len(msg.Data))
-	}
-	b.StopTimer()
-
-	b.ReportMetric(float64(origBytes)/float64(totalCompressed), "ratio")
-	b.ReportMetric(100-float64(totalCompressed)/float64(origBytes)*100, "%smaller")
-	b.SetBytes(origBytes / int64(b.N))
-}
-
-// benchmarkZstdSimple benchmarks the datadog/zstd implementation
-// with a new context for each message (simple, no window sharing)
-func benchmarkZstdSimple(b *testing.B, level int, onlyAV bool) {
-	corpus := loadTestCorpus(b)
-
-	// Filter messages based on criteria
-	filtered := filterMessages(b, corpus, onlyAV)
-
-	// Pre-allocate a buffer to hold compressed data
-	// Initial capacity of 4KB should handle most messages
-	compressed := make([]byte, 0, 4096)
-
-	b.ResetTimer()
-	var totalCompressed int64
-	var origBytes int64
-	for i := 0; i < b.N; i++ {
-		// Process one message per iteration, cycling through messages
-		msg := filtered[i%len(filtered)]
-
-		// Reuse the same buffer, slicing to zero length to reset it
-		var err error
-		compressed, err = zstd.CompressLevel(compressed[:0], msg.Data, level)
-		_ = err
-		totalCompressed += int64(len(compressed))
-		origBytes += int64(len(msg.Data))
-	}
-	b.StopTimer()
-
-	b.ReportMetric(float64(origBytes)/float64(totalCompressed), "ratio")
-	b.ReportMetric(100-float64(totalCompressed)/float64(origBytes)*100, "%smaller")
-	b.SetBytes(origBytes / int64(b.N))
-}
-
 // benchmarkGozstdWindow benchmarks the valyala/gozstd implementation
 // with a specific window size (using WriterParams)
 func benchmarkGozstdWindow(b *testing.B, level int, windowLog int) {
@@ -354,63 +634,17 @@ func benchmarkGozstdWindow(b *testing.B, level int, windowLog int) {
 	zw := gozstd.NewWriterParams(&buf, params)
 	defer zw.Release()
 
-	b.ResetTimer()
-	var totalCompressed int64
-	var origBytes int64
-	for i := 0; i < b.N; i++ {
-		// Process one message per iteration, cycling through filtered messages
-		msg := filtered[i%len(filtered)]
-
-		// Reset buffer before each message
+	compress := func(dst, src []byte) ([]byte, error) {
 		buf.Reset()
-
-		// Compress the message
-		_, _ = zw.Write(msg.Data)
-		_ = zw.Flush() // Use Flush instead of Close to keep the writer active
-
-		totalCompressed += int64(buf.Len())
-		origBytes += int64(len(msg.Data))
+		if _, err := zw.Write(src); err != nil {
+			return nil, err
+		}
+		if err := zw.Flush(); err != nil {
+			return nil, err
+		}
+		return append(dst[:0], buf.Bytes()...), nil
 	}
-	b.StopTimer()
-
-	b.ReportMetric(float64(origBytes)/float64(totalCompressed), "ratio")
-	b.ReportMetric(100-float64(totalCompressed)/float64(origBytes)*100, "%smaller")
-	b.SetBytes(origBytes / int64(b.N)) // For MB/s calculation, use per-iteration bytes
-}
-
-// benchmarkKlauspostSimple benchmarks the Klauspost zstd implementation
-// with a new encoder for each message (simple, no window sharing)
-func benchmarkKlauspostSimple(b *testing.B, level int, onlyAV bool) {
-	corpus := loadTestCorpus(b)
-
-	// Filter messages based on criteria
-	filtered := filterMessages(b, corpus, onlyAV)
-
-	// Create a single encoder to reuse for all messages
-	enc, _ := kzstd.NewWriter(nil, kzstd.WithEncoderLevel(kzstd.EncoderLevel(level)))
-	defer enc.Close()
-
-	// Pre-allocate a buffer to hold compressed data
-	// Initial capacity of 4KB should handle most messages
-	compressed := make([]byte, 0, 4096)
-
-	b.ResetTimer()
-	var totalCompressed int64
-	var origBytes int64
-	for i := 0; i < b.N; i++ {
-		// Process one message per iteration, cycling through messages
-		msg := filtered[i%len(filtered)]
-
-		// Reuse the same encoder and output buffer for each message
-		compressed = enc.EncodeAll(msg.Data, compressed[:0])
-		totalCompressed += int64(len(compressed))
-		origBytes += int64(len(msg.Data))
-	}
-	b.StopTimer()
-
-	b.ReportMetric(float64(origBytes)/float64(totalCompressed), "ratio")
-	b.ReportMetric(100-float64(totalCompressed)/float64(origBytes)*100, "%smaller")
-	b.SetBytes(origBytes / int64(b.N))
+	runCompressionLoop(b, filtered, compress)
 }
 
 // benchmarkKlauspostWindow benchmarks the Klauspost zstd implementation
@@ -427,26 +661,10 @@ func benchmarkKlauspostWindow(b *testing.B, level int, windowSize int) {
 	}
 	defer enc.Close()
 
-	// Pre-allocate a buffer that we'll reuse
-	compressed := make([]byte, 0, 4096)
-
-	b.ResetTimer()
-	var totalCompressed int64
-	var origBytes int64
-	for i := 0; i < b.N; i++ {
-		// Process one message per iteration, cycling through filtered messages
-		msg := filtered[i%len(filtered)]
-
-		// Reset the buffer by slicing to zero length
-		compressed = enc.EncodeAll(msg.Data, compressed[:0])
-		totalCompressed += int64(len(compressed))
-		origBytes += int64(len(msg.Data))
+	compress := func(dst, src []byte) ([]byte, error) {
+		return enc.EncodeAll(src, dst[:0]), nil
 	}
-	b.StopTimer()
-
-	b.ReportMetric(float64(origBytes)/float64(totalCompressed), "ratio")
-	b.ReportMetric(100-float64(totalCompressed)/float64(origBytes)*100, "%smaller")
-	b.SetBytes(origBytes / int64(b.N)) // For MB/s calculation, use per-iteration bytes
+	runCompressionLoop(b, filtered, compress)
 }
 
 // benchmarkKlauspostStream benchmarks the Klauspost zstd implementation
@@ -456,28 +674,26 @@ func benchmarkKlauspostStream(b *testing.B, level int, windowSize int) {
 
 	filtered := filterMessages(b, corpus, false)
 
-	b.ResetTimer()
-	var totalCompressed int64
-	var origBytes int64
-	// Create a buffer and encoder that will be used for all messages in this iteration
 	var buf bytes.Buffer
-	enc, _ := kzstd.NewWriter(&buf,
+	enc, err := kzstd.NewWriter(&buf,
 		kzstd.WithEncoderLevel(kzstd.EncoderLevel(level)),
 		kzstd.WithWindowSize(windowSize))
-	defer enc.Close()
-	for i := 0; i < b.N; i++ {
-		msg := filtered[i%len(filtered)]
-		buf.Reset()
-		_, _ = enc.Write(msg.Data)
-		_ = enc.Flush()
-		totalCompressed += int64(buf.Len())
-		origBytes += int64(len(msg.Data))
+	if err != nil {
+		b.Fatal(err)
 	}
-	b.StopTimer()
+	defer enc.Close()
 
-	b.ReportMetric(float64(origBytes)/float64(totalCompressed), "ratio")
-	b.ReportMetric(100-float64(totalCompressed)/float64(origBytes)*100, "%smaller")
-	b.SetBytes(origBytes / int64(b.N)) // For MB/s calculation, use per-iteration bytes
+	compress := func(dst, src []byte) ([]byte, error) {
+		buf.Reset()
+		if _, err := enc.Write(src); err != nil {
+			return nil, err
+		}
+		if err := enc.Flush(); err != nil {
+			return nil, err
+		}
+		return append(dst[:0], buf.Bytes()...), nil
+	}
+	runCompressionLoop(b, filtered, compress)
 }
 
 // benchmarkTagSpecificContexts benchmarks a simulated algodump scenario with different
@@ -572,262 +788,9 @@ func benchmarkTagSpecificContexts(b *testing.B, level int, avWindow, txppWindow 
 	b.SetBytes(origBytes / int64(b.N)) // For MB/s calculation, use per-iteration bytes
 }
 
-// Decompression benchmark helpers and wrapper benchmark functions
-
-// benchmarkGozstdDecompression benchmarks valyala/gozstd decompression performance.
-// It first compresses the selected corpus with the requested compression level and
-// then measures the throughput of gozstd.Decompress.
-func benchmarkGozstdDecompression(b *testing.B, level int, onlyAV bool) {
-	corpus := loadTestCorpus(b)
-	filtered := filterMessages(b, corpus, onlyAV)
-
-	compressedData := make([][]byte, len(filtered))
-	for i, msg := range filtered {
-		comp := gozstd.CompressLevel(nil, msg.Data, level)
-		compressedData[i] = comp
-	}
-	if len(compressedData) == 0 {
-		b.Fatal("No compressed data to benchmark")
-	}
-
-	b.ResetTimer()
-	decompressed := make([]byte, 0, 4096)
-	var totalCompressed int64
-	for i := 0; i < b.N; i++ {
-		comp := compressedData[i%len(compressedData)]
-		totalCompressed += int64(len(comp))
-		var err error
-		decompressed, err = gozstd.Decompress(decompressed[:0], comp)
-		if err != nil {
-			b.Fatalf("gozstd Decompress failed: %v", err)
-		}
-		_ = decompressed
-	}
-	b.StopTimer()
-	b.SetBytes(totalCompressed / int64(b.N))
-}
-
-// benchmarkZstdDecompression benchmarks datadog/zstd decompression performance.
-func benchmarkZstdDecompression(b *testing.B, level int, onlyAV bool) {
-	corpus := loadTestCorpus(b)
-	filtered := filterMessages(b, corpus, onlyAV)
-
-	compressedData := make([][]byte, len(filtered))
-	for i, msg := range filtered {
-		comp, _ := zstd.CompressLevel(nil, msg.Data, level)
-		compressedData[i] = comp
-	}
-	if len(compressedData) == 0 {
-		b.Fatal("No compressed data to benchmark")
-	}
-
-	b.ResetTimer()
-	decompressed := make([]byte, 0, 4096)
-	var totalCompressed int64
-	for i := 0; i < b.N; i++ {
-		comp := compressedData[i%len(compressedData)]
-		totalCompressed += int64(len(comp))
-		var err error
-		decompressed, err = zstd.Decompress(decompressed[:0], comp)
-		if err != nil {
-			b.Fatalf("zstd Decompress failed: %v", err)
-		}
-		_ = decompressed
-	}
-	b.StopTimer()
-	b.SetBytes(totalCompressed / int64(b.N))
-}
-
-// benchmarkKlauspostDecompression benchmarks klauspost/compress/zstd decompression performance.
-func benchmarkKlauspostDecompression(b *testing.B, level int, onlyAV bool) {
-	corpus := loadTestCorpus(b)
-	filtered := filterMessages(b, corpus, onlyAV)
-
-	enc, _ := kzstd.NewWriter(nil, kzstd.WithEncoderLevel(kzstd.EncoderLevel(level)))
-	defer enc.Close()
-
-	dec, _ := kzstd.NewReader(nil)
-	defer dec.Close()
-
-	compressedData := make([][]byte, len(filtered))
-	for i, msg := range filtered {
-		compressedData[i] = enc.EncodeAll(msg.Data, make([]byte, 0, 4096))
-	}
-	if len(compressedData) == 0 {
-		b.Fatal("No compressed data to benchmark")
-	}
-
-	b.ResetTimer()
-	var decompressed []byte
-	var totalCompressed int64
-	for i := 0; i < b.N; i++ {
-		comp := compressedData[i%len(compressedData)]
-		totalCompressed += int64(len(comp))
-		var err error
-		decompressed, err = dec.DecodeAll(comp, decompressed[:0])
-		if err != nil {
-			b.Fatalf("klauspost DecodeAll failed: %v", err)
-		}
-		_ = decompressed
-	}
-	b.StopTimer()
-	b.SetBytes(totalCompressed / int64(b.N))
-}
-
-// ---------------- Wrapper benchmark functions ----------------
-
-// Gozstd decompression benchmarks (all messages)
-func BenchmarkGozstdDecompress1(b *testing.B)  { benchmarkGozstdDecompression(b, 1, false) }
-func BenchmarkGozstdDecompress3(b *testing.B)  { benchmarkGozstdDecompression(b, 3, false) }
-func BenchmarkGozstdDecompress7(b *testing.B)  { benchmarkGozstdDecompression(b, 7, false) }
-func BenchmarkGozstdDecompress11(b *testing.B) { benchmarkGozstdDecompression(b, 11, false) }
-
-// Gozstd decompression benchmarks (AV messages only)
-func BenchmarkGozstdDecompressAV1(b *testing.B)  { benchmarkGozstdDecompression(b, 1, true) }
-func BenchmarkGozstdDecompressAV3(b *testing.B)  { benchmarkGozstdDecompression(b, 3, true) }
-func BenchmarkGozstdDecompressAV7(b *testing.B)  { benchmarkGozstdDecompression(b, 7, true) }
-func BenchmarkGozstdDecompressAV11(b *testing.B) { benchmarkGozstdDecompression(b, 11, true) }
-
-// Datadog zstd decompression benchmarks (all messages)
-func BenchmarkZstdDecompress1(b *testing.B)  { benchmarkZstdDecompression(b, 1, false) }
-func BenchmarkZstdDecompress3(b *testing.B)  { benchmarkZstdDecompression(b, 3, false) }
-func BenchmarkZstdDecompress7(b *testing.B)  { benchmarkZstdDecompression(b, 7, false) }
-func BenchmarkZstdDecompress11(b *testing.B) { benchmarkZstdDecompression(b, 11, false) }
-
-// Datadog zstd decompression benchmarks (AV messages only)
-func BenchmarkZstdDecompressAV1(b *testing.B)  { benchmarkZstdDecompression(b, 1, true) }
-func BenchmarkZstdDecompressAV3(b *testing.B)  { benchmarkZstdDecompression(b, 3, true) }
-func BenchmarkZstdDecompressAV7(b *testing.B)  { benchmarkZstdDecompression(b, 7, true) }
-func BenchmarkZstdDecompressAV11(b *testing.B) { benchmarkZstdDecompression(b, 11, true) }
-
-// Klauspost zstd decompression benchmarks (all messages)
-func BenchmarkKlauspostDecompress1(b *testing.B) { benchmarkKlauspostDecompression(b, 1, false) }
-func BenchmarkKlauspostDecompress3(b *testing.B) { benchmarkKlauspostDecompression(b, 3, false) }
-
-// Klauspost zstd decompression benchmarks (AV messages only)
-func BenchmarkKlauspostDecompressAV1(b *testing.B) { benchmarkKlauspostDecompression(b, 1, true) }
-func BenchmarkKlauspostDecompressAV3(b *testing.B) { benchmarkKlauspostDecompression(b, 3, true) }
-
-// Gozstd Simple Benchmarks (no window control)
-// Using C zstd levels: 1, 3, 7, 11
-func BenchmarkGozstdSimple1(b *testing.B)  { benchmarkGozstdSimple(b, 1, false) }
-func BenchmarkGozstdSimple3(b *testing.B)  { benchmarkGozstdSimple(b, 3, false) }
-func BenchmarkGozstdSimple7(b *testing.B)  { benchmarkGozstdSimple(b, 7, false) }
-func BenchmarkGozstdSimple11(b *testing.B) { benchmarkGozstdSimple(b, 11, false) }
-
-// Gozstd Simple Benchmarks for AV messages only
-func BenchmarkGozstdSimpleAV1(b *testing.B)  { benchmarkGozstdSimple(b, 1, true) }
-func BenchmarkGozstdSimpleAV3(b *testing.B)  { benchmarkGozstdSimple(b, 3, true) }
-func BenchmarkGozstdSimpleAV7(b *testing.B)  { benchmarkGozstdSimple(b, 7, true) }
-func BenchmarkGozstdSimpleAV11(b *testing.B) { benchmarkGozstdSimple(b, 11, true) }
-
-// Datadog Zstd Simple Benchmarks (no window control)
-func BenchmarkZstdSimple1(b *testing.B)  { benchmarkZstdSimple(b, 1, false) }
-func BenchmarkZstdSimple3(b *testing.B)  { benchmarkZstdSimple(b, 3, false) }
-func BenchmarkZstdSimple7(b *testing.B)  { benchmarkZstdSimple(b, 7, false) }
-func BenchmarkZstdSimple11(b *testing.B) { benchmarkZstdSimple(b, 11, false) }
-
-// Datadog Zstd Simple Benchmarks for AV messages only
-func BenchmarkZstdSimpleAV1(b *testing.B)  { benchmarkZstdSimple(b, 1, true) }
-func BenchmarkZstdSimpleAV3(b *testing.B)  { benchmarkZstdSimple(b, 3, true) }
-func BenchmarkZstdSimpleAV7(b *testing.B)  { benchmarkZstdSimple(b, 7, true) }
-func BenchmarkZstdSimpleAV11(b *testing.B) { benchmarkZstdSimple(b, 11, true) }
-
-// Gozstd Window Benchmarks (specific window sizes with different compression levels)
-// Window log values (2^N bytes):
-// 15 = 32KB window
-// 18 = 256KB window
-// 20 = 1MB window
-func BenchmarkGozstdWindow1_32K(b *testing.B)   { benchmarkGozstdWindow(b, 1, 15) }
-func BenchmarkGozstdWindow1_256K(b *testing.B)  { benchmarkGozstdWindow(b, 1, 18) }
-func BenchmarkGozstdWindow1_1M(b *testing.B)    { benchmarkGozstdWindow(b, 1, 20) }
-func BenchmarkGozstdWindow3_32K(b *testing.B)   { benchmarkGozstdWindow(b, 3, 15) }
-func BenchmarkGozstdWindow3_256K(b *testing.B)  { benchmarkGozstdWindow(b, 3, 18) }
-func BenchmarkGozstdWindow3_1M(b *testing.B)    { benchmarkGozstdWindow(b, 3, 20) }
-func BenchmarkGozstdWindow7_256K(b *testing.B)  { benchmarkGozstdWindow(b, 7, 18) }
-func BenchmarkGozstdWindow11_256K(b *testing.B) { benchmarkGozstdWindow(b, 11, 18) }
-
-// Klauspost Simple Benchmarks (new encoder for each message, no window sharing)
-func BenchmarkKlauspostSimple1(b *testing.B) { benchmarkKlauspostSimple(b, 1, false) }
-func BenchmarkKlauspostSimple3(b *testing.B) { benchmarkKlauspostSimple(b, 3, false) }
-
-// Klauspost Simple Benchmarks for AV messages only
-func BenchmarkKlauspostSimpleAV1(b *testing.B) { benchmarkKlauspostSimple(b, 1, true) }
-func BenchmarkKlauspostSimpleAV3(b *testing.B) { benchmarkKlauspostSimple(b, 3, true) }
-
-// Klauspost Window Size Benchmarks (with different window sizes)
-// Note: Using klauspost levels where:
-// Level 1 = "Fastest" ≈ zstd level 1
-// Level 2 = "Default" ≈ zstd level 3 (zstd default)
-// Level 3 = "Better"  ≈ zstd level 7
-// Level 4 = "Best"    ≈ zstd level 11
-
-// Baseline benchmarks with standard window sizes
-func BenchmarkKlauspostWindow1_4K(b *testing.B)  { benchmarkKlauspostWindow(b, 1, 1<<12) } // 4KB window
-func BenchmarkKlauspostWindow1_64K(b *testing.B) { benchmarkKlauspostWindow(b, 1, 1<<16) } // 64KB window
-func BenchmarkKlauspostWindow1_1M(b *testing.B)  { benchmarkKlauspostWindow(b, 1, 1<<20) } // 1MB window
-
-// Algodump-specific window sizes (based on actual usage patterns)
-func BenchmarkKlauspostWindow1_32K(b *testing.B)  { benchmarkKlauspostWindow(b, 1, 1<<15) } // 32KB window for TX/PP
-func BenchmarkKlauspostWindow1_256K(b *testing.B) { benchmarkKlauspostWindow(b, 1, 1<<18) } // 256KB window for AV
-
-// Higher compression levels with different window sizes
-func BenchmarkKlauspostWindow2_32K(b *testing.B)  { benchmarkKlauspostWindow(b, 2, 1<<15) }
-func BenchmarkKlauspostWindow2_256K(b *testing.B) { benchmarkKlauspostWindow(b, 2, 1<<18) }
-func BenchmarkKlauspostWindow2_1M(b *testing.B)   { benchmarkKlauspostWindow(b, 2, 1<<20) }
-func BenchmarkKlauspostWindow3_256K(b *testing.B) { benchmarkKlauspostWindow(b, 3, 1<<18) }
-func BenchmarkKlauspostWindow3_1M(b *testing.B)   { benchmarkKlauspostWindow(b, 3, 1<<20) }
-
-// Klauspost Stream Benchmarks (continuous streaming)
-// Baseline streaming benchmarks
-func BenchmarkKlauspostStream1_4K(b *testing.B) { benchmarkKlauspostStream(b, 1, 1<<12) }
-func BenchmarkKlauspostStream1_1M(b *testing.B) { benchmarkKlauspostStream(b, 1, 1<<20) }
-
-// Algodump-specific window sizes for streaming
-func BenchmarkKlauspostStream1_32K(b *testing.B)  { benchmarkKlauspostStream(b, 1, 1<<15) } // 32KB for TX/PP
-func BenchmarkKlauspostStream1_256K(b *testing.B) { benchmarkKlauspostStream(b, 1, 1<<18) } // 256KB for AV
-
-// Higher compression levels with different window sizes
-func BenchmarkKlauspostStream2_32K(b *testing.B)  { benchmarkKlauspostStream(b, 2, 1<<15) }
-func BenchmarkKlauspostStream2_256K(b *testing.B) { benchmarkKlauspostStream(b, 2, 1<<18) }
-func BenchmarkKlauspostStream2_1M(b *testing.B)   { benchmarkKlauspostStream(b, 2, 1<<20) }
-func BenchmarkKlauspostStream3_256K(b *testing.B) { benchmarkKlauspostStream(b, 3, 1<<18) }
-func BenchmarkKlauspostStream3_1M(b *testing.B)   { benchmarkKlauspostStream(b, 3, 1<<20) }
-
-// Tag-specific window size benchmarks with actual algodump configurations
-// These benchmarks simulate the real-world scenario where different message types
-// have their own context windows with specific sizes
-
-// Compression level 1 (Fastest) with various algodump configurations
-func BenchmarkTagSpecific1_AV256K_TXPP32K(b *testing.B) {
-	benchmarkTagSpecificContexts(b, 1, 1<<18, 1<<15) // 256KB for AV, 32KB for TX/PP
-}
-
-func BenchmarkTagSpecific1_AV128K_TXPP32K(b *testing.B) {
-	benchmarkTagSpecificContexts(b, 1, 1<<17, 1<<15) // 128KB for AV, 32KB for TX/PP
-}
-
-// Compression level 2 (Default) with various algodump configurations
-func BenchmarkTagSpecific2_AV256K_TXPP32K(b *testing.B) {
-	benchmarkTagSpecificContexts(b, 2, 1<<18, 1<<15) // 256KB for AV, 32KB for TX/PP
-}
-
-// Compression level 3 (Better) with various algodump configurations
-func BenchmarkTagSpecific3_AV256K_TXPP32K(b *testing.B) {
-	benchmarkTagSpecificContexts(b, 3, 1<<18, 1<<15) // 256KB for AV, 32KB for TX/PP
-}
-
-func BenchmarkVPackCompression(b *testing.B) {
-	benchmarkVPackCompression(b)
-}
-
-func BenchmarkVPackDecompression(b *testing.B) {
-	benchmarkVPackDecompression(b)
-}
-
-// benchmarkVPackDynamicCompression benchmarks the stateful vpack compression implementation
+// BenchmarkVPackDynamicCompression benchmarks the stateful vpack compression implementation
 // This uses the two-layer compression: StatelessEncoder → StatefulEncoder
-func benchmarkVPackDynamicCompression(b *testing.B) {
+func BenchmarkVPackDynamicCompression(b *testing.B) {
 	corpus := loadTestCorpus(b)
 
 	// Filter messages to only include AV votes
@@ -895,9 +858,9 @@ func benchmarkVPackDynamicCompression(b *testing.B) {
 	}
 }
 
-// benchmarkVPackDynamicDecompression benchmarks the stateful vpack decompression implementation
+// BenchmarkVPackDynamicDecompression benchmarks the stateful vpack decompression implementation
 // This uses the two-layer decompression: StatefulDecoder → StatelessDecoder
-func benchmarkVPackDynamicDecompression(b *testing.B) {
+func BenchmarkVPackDynamicDecompression(b *testing.B) {
 	corpus := loadTestCorpus(b)
 
 	// First compress all AV messages to have compressed data for benchmark
@@ -970,11 +933,143 @@ func benchmarkVPackDynamicDecompression(b *testing.B) {
 	b.SetBytes(totalDecompressed / int64(b.N))
 }
 
-// VPack dynamic benchmark functions
-func BenchmarkVPackDynamicCompression(b *testing.B) {
-	benchmarkVPackDynamicCompression(b)
+func BenchmarkGozstdSimple(b *testing.B) {
+	corpus := loadTestCorpus(b)
+	levels := parseIntListFromEnv([]string{"ALGODUMP_GOZSTD_LEVELS", "ALGODUMP_BENCH_LEVELS"}, defaultGozstdLevels)
+	filters := parseFilterOptions([]string{"ALGODUMP_GOZSTD_FILTERS", "ALGODUMP_BENCH_FILTERS"})
+	runSimpleCompressionMatrix(b, "gozstd/simple", corpus, levels, filters, func(level int) (simpleCompressor, func(), error) {
+		return func(dst, src []byte) ([]byte, error) {
+			return gozstd.CompressLevel(dst[:0], src, level), nil
+		}, nil, nil
+	})
 }
 
-func BenchmarkVPackDynamicDecompression(b *testing.B) {
-	benchmarkVPackDynamicDecompression(b)
+func BenchmarkZstdSimple(b *testing.B) {
+	corpus := loadTestCorpus(b)
+	levels := parseIntListFromEnv([]string{"ALGODUMP_ZSTD_LEVELS", "ALGODUMP_BENCH_LEVELS"}, defaultZstdLevels)
+	filters := parseFilterOptions([]string{"ALGODUMP_ZSTD_FILTERS", "ALGODUMP_BENCH_FILTERS"})
+	runSimpleCompressionMatrix(b, "zstd/simple", corpus, levels, filters, func(level int) (simpleCompressor, func(), error) {
+		return func(dst, src []byte) ([]byte, error) {
+			return zstd.CompressLevel(dst[:0], src, level)
+		}, nil, nil
+	})
+}
+
+func BenchmarkKlauspostSimple(b *testing.B) {
+	corpus := loadTestCorpus(b)
+	levels := parseIntListFromEnv([]string{"ALGODUMP_KLAUSPOST_LEVELS", "ALGODUMP_BENCH_LEVELS"}, defaultKlauspostLevels)
+	filters := parseFilterOptions([]string{"ALGODUMP_KLAUSPOST_FILTERS", "ALGODUMP_BENCH_FILTERS"})
+	runSimpleCompressionMatrix(b, "klauspost/simple", corpus, levels, filters, func(level int) (simpleCompressor, func(), error) {
+		enc, err := kzstd.NewWriter(nil, kzstd.WithEncoderLevel(kzstd.EncoderLevel(level)))
+		if err != nil {
+			return nil, nil, err
+		}
+		compress := func(dst, src []byte) ([]byte, error) {
+			return enc.EncodeAll(src, dst[:0]), nil
+		}
+		cleanup := func() { enc.Close() }
+		return compress, cleanup, nil
+	})
+}
+
+func BenchmarkGozstdDecompress(b *testing.B) {
+	corpus := loadTestCorpus(b)
+	levels := parseIntListFromEnv([]string{"ALGODUMP_GOZSTD_LEVELS", "ALGODUMP_BENCH_LEVELS"}, defaultGozstdLevels)
+	filters := parseFilterOptions([]string{"ALGODUMP_GOZSTD_FILTERS", "ALGODUMP_BENCH_FILTERS"})
+	runSimpleDecompressionMatrix(b, "gozstd/decompress", corpus, levels, filters, func(level int, msgs []StoredMessage) ([][]byte, simpleDecompressor, func(), error) {
+		compressed := make([][]byte, len(msgs))
+		for i, msg := range msgs {
+			compressed[i] = gozstd.CompressLevel(nil, msg.Data, level)
+		}
+		decompress := func(dst, src []byte) ([]byte, error) {
+			return gozstd.Decompress(dst[:0], src)
+		}
+		return compressed, decompress, nil, nil
+	})
+}
+
+func BenchmarkZstdDecompress(b *testing.B) {
+	corpus := loadTestCorpus(b)
+	levels := parseIntListFromEnv([]string{"ALGODUMP_ZSTD_LEVELS", "ALGODUMP_BENCH_LEVELS"}, defaultZstdLevels)
+	filters := parseFilterOptions([]string{"ALGODUMP_ZSTD_FILTERS", "ALGODUMP_BENCH_FILTERS"})
+	runSimpleDecompressionMatrix(b, "zstd/decompress", corpus, levels, filters, func(level int, msgs []StoredMessage) ([][]byte, simpleDecompressor, func(), error) {
+		compressed := make([][]byte, len(msgs))
+		for i, msg := range msgs {
+			comp, err := zstd.CompressLevel(nil, msg.Data, level)
+			if err != nil {
+				return nil, nil, nil, err
+			}
+			compressed[i] = comp
+		}
+		decompress := func(dst, src []byte) ([]byte, error) {
+			return zstd.Decompress(dst[:0], src)
+		}
+		return compressed, decompress, nil, nil
+	})
+}
+
+func BenchmarkKlauspostDecompress(b *testing.B) {
+	corpus := loadTestCorpus(b)
+	levels := parseIntListFromEnv([]string{"ALGODUMP_KLAUSPOST_LEVELS", "ALGODUMP_BENCH_LEVELS"}, defaultKlauspostLevels)
+	filters := parseFilterOptions([]string{"ALGODUMP_KLAUSPOST_FILTERS", "ALGODUMP_BENCH_FILTERS"})
+	runSimpleDecompressionMatrix(b, "klauspost/decompress", corpus, levels, filters, func(level int, msgs []StoredMessage) ([][]byte, simpleDecompressor, func(), error) {
+		enc, err := kzstd.NewWriter(nil, kzstd.WithEncoderLevel(kzstd.EncoderLevel(level)))
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		dec, err := kzstd.NewReader(nil)
+		if err != nil {
+			enc.Close()
+			return nil, nil, nil, err
+		}
+		compressed := make([][]byte, len(msgs))
+		for i, msg := range msgs {
+			compressed[i] = enc.EncodeAll(msg.Data, make([]byte, 0, 4096))
+		}
+		decompress := func(dst, src []byte) ([]byte, error) {
+			return dec.DecodeAll(src, dst[:0])
+		}
+		cleanup := func() {
+			enc.Close()
+			dec.Close()
+		}
+		return compressed, decompress, cleanup, nil
+	})
+}
+
+func BenchmarkGozstdWindow(b *testing.B) {
+	configs := parseLevelWindowLogList([]string{"ALGODUMP_GOZSTD_WINDOW_LOGS", "ALGODUMP_BENCH_WINDOW_LOGS"}, defaultGozstdWindowLog)
+	for _, cfg := range configs {
+		b.Run(fmt.Sprintf("gozstd/window/level=%d/windowLog=%d", cfg.level, cfg.windowLog), func(b *testing.B) {
+			benchmarkGozstdWindow(b, cfg.level, cfg.windowLog)
+		})
+	}
+}
+
+func BenchmarkKlauspostWindow(b *testing.B) {
+	configs := parseLevelWindowList([]string{"ALGODUMP_KLAUSPOST_WINDOWS", "ALGODUMP_BENCH_WINDOWS"}, defaultKlauspostWindows)
+	for _, cfg := range configs {
+		b.Run(fmt.Sprintf("klauspost/window/level=%d/window=%d", cfg.level, cfg.window), func(b *testing.B) {
+			benchmarkKlauspostWindow(b, cfg.level, cfg.window)
+		})
+	}
+}
+
+func BenchmarkKlauspostStream(b *testing.B) {
+	configs := parseLevelWindowList([]string{"ALGODUMP_KLAUSPOST_STREAM_WINDOWS", "ALGODUMP_BENCH_STREAM_WINDOWS"}, defaultKlauspostStreamConfigs)
+	for _, cfg := range configs {
+		b.Run(fmt.Sprintf("klauspost/stream/level=%d/window=%d", cfg.level, cfg.window), func(b *testing.B) {
+			benchmarkKlauspostStream(b, cfg.level, cfg.window)
+		})
+	}
+}
+
+func BenchmarkTagSpecificContexts(b *testing.B) {
+	configs := parseTagWindowConfigs([]string{"ALGODUMP_TAG_CONTEXTS", "ALGODUMP_BENCH_TAG_CONTEXTS"}, defaultTagContextConfigs)
+	for _, cfg := range configs {
+		name := fmt.Sprintf("klauspost/tag-specific/level=%d/av=%d/txpp=%d", cfg.level, cfg.avWindow, cfg.txppWindow)
+		b.Run(name, func(b *testing.B) {
+			benchmarkTagSpecificContexts(b, cfg.level, cfg.avWindow, cfg.txppWindow)
+		})
+	}
 }
