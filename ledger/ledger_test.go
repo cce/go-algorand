@@ -39,6 +39,7 @@ import (
 	"github.com/algorand/go-algorand/data/basics"
 	basics_testing "github.com/algorand/go-algorand/data/basics/testing"
 	"github.com/algorand/go-algorand/data/bookkeeping"
+	"github.com/algorand/go-algorand/data/committee"
 	"github.com/algorand/go-algorand/data/transactions"
 	"github.com/algorand/go-algorand/data/transactions/logic"
 	"github.com/algorand/go-algorand/data/transactions/verify"
@@ -148,7 +149,7 @@ func makeNewEmptyBlock(t *testing.T, l *Ledger, GenesisID string, initAccounts m
 		Round:  l.Latest() + 1,
 		Branch: lastBlock.Hash(),
 		// Seed:       does not matter,
-		TimeStamp:    0,
+		TimeStamp:    lastBlock.TimeStamp + 1, // Set timestamp to ensure deterministic tests (like simple_test.go:nextBlock)
 		GenesisID:    GenesisID,
 		Bonus:        bookkeeping.NextBonus(lastBlock.BlockHeader, &proto),
 		RewardsState: lastBlock.NextRewardsState(l.Latest()+1, proto, poolBal.MicroAlgos, totalRewardUnits, logging.Base()),
@@ -190,7 +191,10 @@ func makeNewEmptyBlock(t *testing.T, l *Ledger, GenesisID string, initAccounts m
 	return
 }
 
-func (l *Ledger) appendUnvalidatedSignedTx(t *testing.T, initAccounts map[basics.Address]basics.AccountData, stx transactions.SignedTxn, ad transactions.ApplyData) error {
+// appendInvalidSignedTx adds an invalid transaction using the old fake block method that bypasses BlockEvaluator.
+// This allows the test to construct blocks with intentionally invalid transactions.
+// The transaction validity is then checked by the final Validate() call, which will return an error for invalid txns.
+func (l *Ledger) appendInvalidSignedTx(t *testing.T, initAccounts map[basics.Address]basics.AccountData, stx transactions.SignedTxn, ad transactions.ApplyData) error {
 	blk := makeNewEmptyBlock(t, l, t.Name(), initAccounts)
 	proto := config.Consensus[blk.CurrentProtocol]
 	txib, err := blk.EncodeSignedTxn(stx, ad)
@@ -205,13 +209,20 @@ func (l *Ledger) appendUnvalidatedSignedTx(t *testing.T, initAccounts map[basics
 	return l.appendUnvalidated(blk)
 }
 
-func (l *Ledger) addBlockTxns(t *testing.T, accounts map[basics.Address]basics.AccountData, stxns []transactions.SignedTxn, ad transactions.ApplyData) error {
+func (l *Ledger) appendInvalidTx(t *testing.T, initAccounts map[basics.Address]basics.AccountData, initSecrets map[basics.Address]*crypto.SignatureSecrets, tx transactions.Transaction, ad transactions.ApplyData) error {
+	stx := sign(initSecrets, tx)
+	return l.appendInvalidSignedTx(t, initAccounts, stx, ad)
+}
+
+// addBlockTxnsInvalid adds multiple potentially invalid transactions using the old fake block method.
+// Like appendInvalidTxn, this bypasses BlockEvaluator to allow tests to construct invalid blocks.
+func (l *Ledger) addBlockTxnsInvalid(t *testing.T, accounts map[basics.Address]basics.AccountData, stxns []transactions.SignedTxn, ad transactions.ApplyData) error {
 	blk := makeNewEmptyBlock(t, l, t.Name(), accounts)
 	proto := config.Consensus[blk.CurrentProtocol]
 	for _, stx := range stxns {
 		txib, err := blk.EncodeSignedTxn(stx, ad)
 		if err != nil {
-			return fmt.Errorf("could not sign txn: %s", err.Error())
+			return err
 		}
 		if proto.TxnCounter {
 			blk.TxnCounter = blk.TxnCounter + 1
@@ -222,6 +233,53 @@ func (l *Ledger) addBlockTxns(t *testing.T, accounts map[basics.Address]basics.A
 	blk.TxnCommitments, err = blk.PaysetCommit()
 	require.NoError(t, err)
 	return l.AddBlock(blk, agreement.Certificate{})
+}
+
+func (l *Ledger) appendUnvalidatedSignedTx(t *testing.T, initAccounts map[basics.Address]basics.AccountData, stx transactions.SignedTxn, ad transactions.ApplyData) error {
+	eval := nextBlock(t, l)
+	err := eval.Transaction(stx, ad)
+	if err != nil {
+		return err
+	}
+	return l.evaluatorToBlock(t, eval)
+}
+
+func (l *Ledger) addBlockTxns(t *testing.T, accounts map[basics.Address]basics.AccountData, stxns []transactions.SignedTxn, ad transactions.ApplyData) error {
+	eval := nextBlock(t, l)
+	for _, stx := range stxns {
+		err := eval.Transaction(stx, ad)
+		if err != nil {
+			return err
+		}
+	}
+	return l.evaluatorToBlock(t, eval)
+}
+
+// evaluatorToBlock converts a BlockEvaluator to a validated block and adds it to the ledger.
+// This follows the pattern from simple_test.go:endBlock() - generates the block, sets the proposer,
+// re-validates without signature checks, and adds to the ledger.
+func (l *Ledger) evaluatorToBlock(t testing.TB, eval *eval.BlockEvaluator) error {
+	// Generate the block using real BlockEvaluator (following simple_test.go:endBlock pattern)
+	ub, err := eval.GenerateBlock(nil)
+	if err != nil {
+		return err
+	}
+	// Create a ValidatedBlock from UnfinishedBlock and deltas
+	validatedBlock := ledgercore.MakeValidatedBlock(ub.UnfinishedBlock(), ub.UnfinishedDeltas())
+	gvb := &validatedBlock
+	// Set proposer (use feesink as proposer to minimize test disruption)
+	prp := gvb.Block().BlockHeader.FeeSink
+	if l.GenesisProto().Payouts.Enabled {
+		*gvb = ledgercore.MakeValidatedBlock(gvb.Block().WithProposer(committee.Seed(prp), prp, true), gvb.Delta())
+	} else {
+		*gvb = ledgercore.MakeValidatedBlock(gvb.Block().WithProposer(committee.Seed(prp), basics.Address{}, false), gvb.Delta())
+	}
+	// Re-validate without signature checks (like simple_test.go does)
+	vvb, err := validateWithoutSignatures(t, l, gvb.Block())
+	if err != nil {
+		return err
+	}
+	return l.AddValidatedBlock(*vvb, agreement.Certificate{})
 }
 
 func testLedgerBasic(t *testing.T, cfg config.Local) {
@@ -585,12 +643,12 @@ func TestLedgerSingleTx(t *testing.T) {
 	badTx = correctPay
 	sbadTx := sign(initSecrets, badTx)
 	sbadTx.Sig = crypto.Signature{}
-	a.Error(l.appendUnvalidatedSignedTx(t, initAccounts, sbadTx, ad), "added tx with no signature")
+	a.Error(l.appendInvalidSignedTx(t, initAccounts, sbadTx, ad), "added tx with no signature")
 
 	badTx = correctPay
 	sbadTx = sign(initSecrets, badTx)
 	sbadTx.Sig[5]++
-	a.Error(l.appendUnvalidatedSignedTx(t, initAccounts, sbadTx, ad), "added tx with corrupt signature")
+	a.Error(l.appendInvalidSignedTx(t, initAccounts, sbadTx, ad), "added tx with corrupt signature")
 
 	// TODO set multisig and test
 
@@ -791,16 +849,9 @@ func TestLedgerSingleTxV24(t *testing.T) {
 }
 
 func addEmptyValidatedBlock(t *testing.T, l *Ledger, initAccounts map[basics.Address]basics.AccountData) {
-	a := require.New(t)
-
-	backlogPool := execpool.MakeBacklog(nil, 0, execpool.LowPriority, nil)
-	defer backlogPool.Shutdown()
-
-	blk := makeNewEmptyBlock(t, l, t.Name(), initAccounts)
-	vb, err := l.Validate(context.Background(), blk, backlogPool)
-	a.NoError(err)
-	err = l.AddValidatedBlock(*vb, agreement.Certificate{})
-	a.NoError(err)
+	eval := nextBlock(t, l)
+	err := l.evaluatorToBlock(t, eval)
+	require.NoError(t, err)
 }
 
 // TestLedgerAppCrossRoundWrites ensures app state writes survive between rounds
@@ -1239,11 +1290,11 @@ func testLedgerSingleTxApplyData(t *testing.T, version protocol.ConsensusVersion
 
 	badTx = correctPay
 	badTx.Fee = basics.MicroAlgos{}
-	a.Error(l.appendUnvalidatedTx(t, initAccounts, initSecrets, badTx, ad), "added tx with zero fee")
+	a.Error(l.appendInvalidTx(t, initAccounts, initSecrets, badTx, ad), "added tx with zero fee")
 
 	badTx = correctPay
 	badTx.Fee = basics.MicroAlgos{Raw: proto.MinTxnFee - 1}
-	a.Error(l.appendUnvalidatedTx(t, initAccounts, initSecrets, badTx, ad), "added tx with fee below minimum")
+	a.Error(l.appendInvalidTx(t, initAccounts, initSecrets, badTx, ad), "added tx with fee below minimum")
 
 	badTx = correctKeyreg
 	fee, overflow := basics.OAddA(initAccounts[badTx.Sender].MicroAlgos, basics.MicroAlgos{Raw: 1})
@@ -1256,7 +1307,7 @@ func testLedgerSingleTxApplyData(t *testing.T, version protocol.ConsensusVersion
 	badTx = correctPay
 	sbadTx := sign(initSecrets, badTx)
 	sbadTx.Sig = crypto.Signature{}
-	a.Error(l.appendUnvalidatedSignedTx(t, initAccounts, sbadTx, ad), "added tx with no signature")
+	a.Error(l.appendInvalidSignedTx(t, initAccounts, sbadTx, ad), "added tx with no signature")
 
 	badTx = correctPay
 	remainder, overflow := basics.OSubA(initAccounts[badTx.Sender].MicroAlgos, badTx.Amount)
@@ -1277,8 +1328,8 @@ func testLedgerSingleTxApplyData(t *testing.T, version protocol.ConsensusVersion
 	adCloseWrong.ClosingAmount.Raw++
 
 	a.NoError(l.appendUnvalidatedTx(t, initAccounts, initSecrets, correctPay, ad), "could not add payment transaction")
-	a.Error(l.appendUnvalidatedTx(t, initAccounts, initSecrets, correctClose, adCloseWrong), "closed transaction with wrong ApplyData")
-	a.NoError(l.appendUnvalidatedTx(t, initAccounts, initSecrets, correctClose, adClose), "could not add close transaction")
+	a.Error(l.appendInvalidTx(t, initAccounts, initSecrets, correctClose, adCloseWrong), "closed transaction with wrong ApplyData")
+	a.NoError(l.appendInvalidTx(t, initAccounts, initSecrets, correctClose, adClose), "could not add close transaction")
 	a.NoError(l.appendUnvalidatedTx(t, initAccounts, initSecrets, correctKeyreg, ad), "could not add key registration")
 
 	a.Error(l.appendUnvalidatedTx(t, initAccounts, initSecrets, correctKeyreg, ad), "added duplicate tx")
@@ -1318,7 +1369,7 @@ func testLedgerSingleTxApplyData(t *testing.T, version protocol.ConsensusVersion
 				Round:  l.Latest() + 1,
 				Branch: lastBlock.Hash(),
 				// Seed:       does not matter,
-				TimeStamp:    0,
+				TimeStamp:    lastBlock.TimeStamp + 1,
 				GenesisID:    t.Name(),
 				Bonus:        bookkeeping.NextBonus(lastBlock.BlockHeader, &proto),
 				RewardsState: lastBlock.NextRewardsState(l.Latest()+1, proto, poolBal.MicroAlgos, totalRewardUnits, logging.Base()),
@@ -2164,7 +2215,7 @@ func TestLedgerReloadShrinkDeltas(t *testing.T) {
 			curAddressIdx = (curAddressIdx + 1) % len(addresses)
 			txnIDs[latest+1][tx.ID()] = struct{}{}
 		}
-		err = l.addBlockTxns(t, genesisInitState.Accounts, stxns, transactions.ApplyData{})
+		err = l.addBlockTxnsInvalid(t, genesisInitState.Accounts, stxns, transactions.ApplyData{})
 		require.NoError(t, err)
 		if i%100 == 0 || i == maxBlocks-1 {
 			l.WaitForCommit(latest + 1)
@@ -2615,7 +2666,7 @@ func TestLedgerMigrateV6ShrinkDeltas(t *testing.T) {
 			curAddressIdx = (curAddressIdx + 1) % len(addresses)
 			txnIDs[latest+1][tx.ID()] = struct{}{}
 		}
-		err = l.addBlockTxns(t, genesisInitState.Accounts, stxns, transactions.ApplyData{})
+		err = l.addBlockTxnsInvalid(t, genesisInitState.Accounts, stxns, transactions.ApplyData{})
 		require.NoError(t, err)
 		if i%100 == 0 || i == maxBlocks-1 {
 			l.WaitForCommit(latest + 1)
@@ -2864,7 +2915,7 @@ func TestLedgerKeyregFlip(t *testing.T) {
 			}
 			stxns[j] = sign(initKeys, tx)
 		}
-		err = l.addBlockTxns(t, genesisInitState.Accounts, stxns, transactions.ApplyData{})
+		err = l.addBlockTxnsInvalid(t, genesisInitState.Accounts, stxns, transactions.ApplyData{})
 		require.NoError(t, err)
 		for k := 0; k < numAccounts; k++ {
 			data, rnd, _, err := l.LookupAccount(basics.Round(i+1), addresses[k])
