@@ -120,6 +120,59 @@ func endOfBlock(blk *bookkeeping.Block) error {
 	return err
 }
 
+// endOfBlockWithLedger computes UpdateCommitment using an evaluator for protocols
+// that enable the update trie. Use this for manually-constructed blocks that need
+// to pass validation with the correct UpdateCommitment.
+//
+// originalTxns: Optional list of original SignedTxn before encoding (with GenesisHash intact).
+// If nil, uses blk.Payset which may have GenesisHash cleared.
+func endOfBlockWithLedger(t *testing.T, blk *bookkeeping.Block, l *Ledger, originalTxns []transactions.SignedTxnWithAD) error {
+	if err := endOfBlock(blk); err != nil {
+		return err
+	}
+	proto := blk.ConsensusProtocol()
+	if proto.EnableUpdateTrie {
+		// Set proposer to FeeSink so recordProposal runs consistently
+		if proto.Payouts.Enabled {
+			blk.BlockHeader.Proposer = blk.FeeSink
+		}
+		evalOpts := eval.EvaluatorOptions{
+			Generate: true,
+			Validate: false,
+			Tracer:   logic.EvalErrorDetailsTracer{},
+		}
+		evaluator, err := eval.StartEvaluator(l, blk.BlockHeader, evalOpts)
+		if err != nil {
+			return err
+		}
+		// Add all transactions to the evaluator
+		if originalTxns != nil {
+			for _, stxn := range originalTxns {
+				if err := evaluator.Transaction(stxn.SignedTxn, stxn.ApplyData); err != nil {
+					return err
+				}
+			}
+		} else {
+			for _, stxn := range blk.Payset {
+				if err := evaluator.Transaction(stxn.SignedTxn, stxn.ApplyData); err != nil {
+					return err
+				}
+			}
+		}
+		// Pass FeeSink as participating if payouts enabled
+		var participating []basics.Address
+		if proto.Payouts.Enabled {
+			participating = []basics.Address{blk.FeeSink}
+		}
+		ub, err := evaluator.GenerateBlock(participating)
+		if err != nil {
+			return err
+		}
+		blk.UpdateCommitment = ub.UnfinishedBlock().UpdateCommitment
+	}
+	return nil
+}
+
 func makeNewEmptyBlock(t *testing.T, l *Ledger, GenesisID string, initAccounts map[basics.Address]basics.AccountData) (blk bookkeeping.Block) {
 	a := require.New(t)
 
@@ -205,7 +258,9 @@ func (l *Ledger) appendInvalidSignedTx(t *testing.T, initAccounts map[basics.Add
 	if proto.TxnCounter {
 		blk.TxnCounter = blk.TxnCounter + 1
 	}
-	require.NoError(t, endOfBlock(&blk))
+	// Pass the original transaction with GenesisHash intact for UpdateCommitment computation
+	originalTxns := []transactions.SignedTxnWithAD{{SignedTxn: stx, ApplyData: ad}}
+	require.NoError(t, endOfBlockWithLedger(t, &blk, l, originalTxns))
 	return l.appendUnvalidated(blk)
 }
 
@@ -219,6 +274,7 @@ func (l *Ledger) appendInvalidTx(t *testing.T, initAccounts map[basics.Address]b
 func (l *Ledger) addBlockTxnsInvalid(t *testing.T, accounts map[basics.Address]basics.AccountData, stxns []transactions.SignedTxn, ad transactions.ApplyData) error {
 	blk := makeNewEmptyBlock(t, l, t.Name(), accounts)
 	proto := config.Consensus[blk.CurrentProtocol]
+	var originalTxns []transactions.SignedTxnWithAD
 	for _, stx := range stxns {
 		txib, err := blk.EncodeSignedTxn(stx, ad)
 		if err != nil {
@@ -228,14 +284,76 @@ func (l *Ledger) addBlockTxnsInvalid(t *testing.T, accounts map[basics.Address]b
 			blk.TxnCounter = blk.TxnCounter + 1
 		}
 		blk.Payset = append(blk.Payset, txib)
+		originalTxns = append(originalTxns, transactions.SignedTxnWithAD{SignedTxn: stx, ApplyData: ad})
 	}
-	var err error
-	blk.TxnCommitments, err = blk.PaysetCommit()
-	require.NoError(t, err)
+	require.NoError(t, endOfBlockWithLedger(t, &blk, l, originalTxns))
 	return l.AddBlock(blk, agreement.Certificate{})
 }
 
+// computeApplyData runs a transaction through the evaluator in Generate-only mode to compute its ApplyData
+func (l *Ledger) computeApplyData(t *testing.T, stx transactions.SignedTxn) (transactions.ApplyData, error) {
+	rnd := l.Latest()
+	hdr, err := l.BlockHdr(rnd)
+	require.NoError(t, err)
+	nextHdr := bookkeeping.MakeBlock(hdr).BlockHeader
+	nextHdr.TimeStamp = hdr.TimeStamp + 1
+	eval, err := eval.StartEvaluator(l, nextHdr, eval.EvaluatorOptions{
+		Generate: true,
+		Validate: false,
+		Tracer:   logic.EvalErrorDetailsTracer{},
+	})
+	require.NoError(t, err)
+	err = eval.Transaction(stx, transactions.ApplyData{})
+	if err != nil {
+		return transactions.ApplyData{}, err
+	}
+	ub, err := eval.GenerateBlock(nil)
+	if err != nil {
+		return transactions.ApplyData{}, err
+	}
+	if len(ub.UnfinishedBlock().Payset) == 0 {
+		return transactions.ApplyData{}, fmt.Errorf("no transactions in block")
+	}
+	return ub.UnfinishedBlock().Payset[0].ApplyData, nil
+}
+
 func (l *Ledger) appendUnvalidatedSignedTx(t *testing.T, initAccounts map[basics.Address]basics.AccountData, stx transactions.SignedTxn, ad transactions.ApplyData) error {
+	// If ad is empty, compute it first so validation will pass
+	if ad.Equal(transactions.ApplyData{}) {
+		// First pass: compute ApplyData with a Generate-only evaluator
+		rnd := l.Latest()
+		hdr, err := l.BlockHdr(rnd)
+		require.NoError(t, err)
+		nextHdr := bookkeeping.MakeBlock(hdr).BlockHeader
+		nextHdr.TimeStamp = hdr.TimeStamp + 1
+		// Set proposer to FeeSink so recordProposal() runs consistently in both passes
+		if l.GenesisProto().Payouts.Enabled {
+			nextHdr.Proposer = nextHdr.FeeSink
+		}
+		evalCompute, err := eval.StartEvaluator(l, nextHdr, eval.EvaluatorOptions{
+			Generate: true,
+			Validate: true, // Use Validate mode so recordProposal runs
+			Tracer:   logic.EvalErrorDetailsTracer{},
+		})
+		require.NoError(t, err)
+		err = evalCompute.Transaction(stx, transactions.ApplyData{})
+		if err != nil {
+			return err
+		}
+		// Pass FeeSink as participating address (proposer) so recordProposal can update it
+		var participating []basics.Address
+		if l.GenesisProto().Payouts.Enabled {
+			participating = []basics.Address{nextHdr.FeeSink}
+		}
+		ubCompute, err := evalCompute.GenerateBlock(participating)
+		if err != nil {
+			return err
+		}
+		if len(ubCompute.UnfinishedBlock().Payset) == 0 {
+			return fmt.Errorf("no transactions in block")
+		}
+		ad = ubCompute.UnfinishedBlock().Payset[0].ApplyData
+	}
 	eval := nextBlock(t, l)
 	err := eval.Transaction(stx, ad)
 	if err != nil {
@@ -361,6 +479,29 @@ func TestLedgerBlockHeaders(t *testing.T) {
 		}
 
 		initNextBlockHeader(&correctHeader, lastBlock, proto)
+
+		// Compute UpdateCommitment for protocols that enable it
+		if proto.EnableUpdateTrie {
+			// Set proposer to FeeSink so recordProposal runs consistently
+			if proto.Payouts.Enabled {
+				correctHeader.Proposer = correctHeader.FeeSink
+			}
+			evalOpts := eval.EvaluatorOptions{
+				Generate: true,
+				Validate: false,
+				Tracer:   logic.EvalErrorDetailsTracer{},
+			}
+			evaluator, err := eval.StartEvaluator(l, correctHeader, evalOpts)
+			require.NoError(t, err)
+			// Pass FeeSink as participating if payouts enabled
+			var participating []basics.Address
+			if proto.Payouts.Enabled {
+				participating = []basics.Address{correctHeader.FeeSink}
+			}
+			ub, err := evaluator.GenerateBlock(participating)
+			require.NoError(t, err)
+			correctHeader.UpdateCommitment = ub.UnfinishedBlock().UpdateCommitment
+		}
 
 		var badBlock bookkeeping.Block
 
@@ -1329,7 +1470,7 @@ func testLedgerSingleTxApplyData(t *testing.T, version protocol.ConsensusVersion
 
 	a.NoError(l.appendUnvalidatedTx(t, initAccounts, initSecrets, correctPay, ad), "could not add payment transaction")
 	a.ErrorContains(l.appendInvalidTx(t, initAccounts, initSecrets, correctClose, adCloseWrong), "applyData mismatch", "closed transaction with wrong ApplyData")
-	a.NoError(l.appendInvalidTx(t, initAccounts, initSecrets, correctClose, adClose), "could not add close transaction")
+	a.NoError(l.appendUnvalidatedTx(t, initAccounts, initSecrets, correctClose, adClose), "could not add close transaction")
 	a.NoError(l.appendUnvalidatedTx(t, initAccounts, initSecrets, correctKeyreg, ad), "could not add key registration")
 
 	a.ErrorContains(l.appendUnvalidatedTx(t, initAccounts, initSecrets, correctKeyreg, ad), "transaction already in ledger", "added duplicate tx")
@@ -1389,7 +1530,7 @@ func testLedgerSingleTxApplyData(t *testing.T, version protocol.ConsensusVersion
 			initNextBlockHeader(&correctHeader, lastBlock, proto)
 
 			correctBlock := bookkeeping.Block{BlockHeader: correctHeader}
-			a.NoError(endOfBlock(&correctBlock))
+			a.NoError(endOfBlockWithLedger(t, &correctBlock, l, nil))
 
 			a.NoError(l.appendUnvalidated(correctBlock), "could not add block with correct header")
 		}

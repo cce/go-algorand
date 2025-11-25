@@ -1971,7 +1971,7 @@ func (eval *BlockEvaluator) updateCommitment() (ledgercore.StateDelta, error) {
 
 	if eval.validate {
 		if eval.block.UpdateCommitment != updateHash {
-			return ledgercore.StateDelta{}, fmt.Errorf("update commitment mismatch: expected %v, got %v", eval.block.UpdateCommitment, updateHash)
+			return ledgercore.StateDelta{}, fmt.Errorf("update commitment mismatch: expected %x, got %x", eval.block.UpdateCommitment, updateHash)
 		}
 	}
 

@@ -101,6 +101,10 @@ func nextBlock(t testing.TB, ledger *Ledger) *eval.BlockEvaluator {
 
 	nextHdr := bookkeeping.MakeBlock(hdr).BlockHeader
 	nextHdr.TimeStamp = hdr.TimeStamp + 1 // ensure deterministic tests
+	// Set proposer to FeeSink so recordProposal runs consistently
+	if ledger.GenesisProto().Payouts.Enabled {
+		nextHdr.Proposer = nextHdr.FeeSink
+	}
 	eval, err := eval.StartEvaluator(ledger, nextHdr, eval.EvaluatorOptions{
 		Generate: true,
 		Validate: true, // Do the complete checks that a new txn would be subject to
