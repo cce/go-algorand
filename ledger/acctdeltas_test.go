@@ -3924,6 +3924,137 @@ func TestLookupAssetResourcesWithDeltas(t *testing.T) {
 	require.True(t, optinAddrResources[0].Creator.IsZero())
 }
 
+// TestLookupAssetResourcesWithDeltasIncludesOldestDelta ensures the oldest in-memory delta
+// (index 0) participates in lookup merging when newer deltas do not touch that asset.
+// This is a TDD regression test for the delta-walk loop bounds in lookupAssetResources.
+func TestLookupAssetResourcesWithDeltasIncludesOldestDelta(t *testing.T) {
+	partitiontest.PartitionTest(t)
+	t.Parallel()
+
+	testProtocolVersion := protocol.ConsensusCurrentVersion
+	protoParams := config.Consensus[testProtocolVersion]
+
+	accts := setupAccts(5)
+
+	var creatorAddr basics.Address
+	for addr := range accts[0] {
+		if addr != testSinkAddr && addr != testPoolAddr {
+			creatorAddr = addr
+			break
+		}
+	}
+
+	ml := makeMockLedgerForTracker(t, true, 1, testProtocolVersion, accts)
+	defer ml.Close()
+
+	conf := config.GetDefaultLocal()
+	au, _ := newAcctUpdates(t, ml, conf)
+
+	knownCreatables := make(map[basics.CreatableIndex]bool)
+
+	// Round 1: create a single asset and commit.
+	{
+		var updates ledgercore.AccountDeltas
+		updates.Upsert(creatorAddr, ledgercore.AccountData{
+			AccountBaseData: ledgercore.AccountBaseData{
+				MicroAlgos:       basics.MicroAlgos{Raw: 1_000_000},
+				TotalAssetParams: 1,
+				TotalAssets:      1,
+			},
+		})
+		updates.UpsertAssetResource(creatorAddr, basics.AssetIndex(1000),
+			ledgercore.AssetParamsDelta{
+				Params: &basics.AssetParams{
+					Total:     1000,
+					UnitName:  "A1000",
+					AssetName: "Asset1000",
+				},
+			},
+			ledgercore.AssetHoldingDelta{
+				Holding: &basics.AssetHolding{Amount: 1000},
+			})
+
+		base := accts[0]
+		newAccts := applyPartialDeltas(base, updates)
+		accts = append(accts, newAccts)
+
+		opts := auNewBlockOpts{updates, testProtocolVersion, protoParams, knownCreatables}
+		auNewBlock(t, 1, au, base, opts, nil)
+		auCommitSync(t, 1, au, ml)
+
+		knownCreatables[basics.CreatableIndex(1000)] = true
+	}
+
+	// Advance committed rounds so resource lookup has a persisted DB row to merge against.
+	for i := basics.Round(2); i <= basics.Round(conf.MaxAcctLookback+2); i++ {
+		var updates ledgercore.AccountDeltas
+		base := accts[i-1]
+		newAccts := applyPartialDeltas(base, updates)
+		accts = append(accts, newAccts)
+
+		opts := auNewBlockOpts{updates, testProtocolVersion, protoParams, knownCreatables}
+		auNewBlock(t, i, au, base, opts, nil)
+		auCommitSync(t, i, au, ml)
+	}
+
+	// Oldest uncommitted delta: modify holding to 4242.
+	deltaRound1 := basics.Round(conf.MaxAcctLookback + 3)
+	{
+		var updates ledgercore.AccountDeltas
+		updates.UpsertAssetResource(creatorAddr, basics.AssetIndex(1000),
+			ledgercore.AssetParamsDelta{},
+			ledgercore.AssetHoldingDelta{
+				Holding: &basics.AssetHolding{Amount: 4242},
+			})
+
+		base := accts[deltaRound1-1]
+		newAccts := applyPartialDeltas(base, updates)
+		accts = append(accts, newAccts)
+
+		opts := auNewBlockOpts{updates, testProtocolVersion, protoParams, knownCreatables}
+		auNewBlock(t, deltaRound1, au, base, opts, nil)
+
+		// Commit this round so later commits can slide this modified delta toward index 0.
+		auCommitSync(t, deltaRound1, au, ml)
+	}
+
+	deltaRound2 := deltaRound1
+	targetReachedDeltaZero := false
+	for i := uint64(0); i < conf.MaxAcctLookback+5; i++ {
+		deltaRound2++
+		var updates ledgercore.AccountDeltas
+
+		base := accts[deltaRound2-1]
+		newAccts := applyPartialDeltas(base, updates)
+		accts = append(accts, newAccts)
+
+		opts := auNewBlockOpts{updates, testProtocolVersion, protoParams, knownCreatables}
+		auNewBlock(t, deltaRound2, au, base, opts, nil)
+		auCommitSync(t, deltaRound2, au, ml)
+
+		au.accountsMu.RLock()
+		if len(au.deltas) > 0 {
+			if ah, ok := au.deltas[0].Accts.GetAssetHolding(creatorAddr, basics.AssetIndex(1000)); ok &&
+				ah.Holding != nil && ah.Holding.Amount == 4242 {
+				targetReachedDeltaZero = true
+			}
+		}
+		au.accountsMu.RUnlock()
+		if targetReachedDeltaZero {
+			break
+		}
+	}
+	require.True(t, targetReachedDeltaZero, "failed to position modified asset at delta index 0")
+
+	resources, rnd, err := au.LookupAssetResources(creatorAddr, 0, 100)
+	require.NoError(t, err)
+	require.Equal(t, deltaRound2, rnd)
+	require.Len(t, resources, 1)
+	require.Equal(t, basics.AssetIndex(1000), resources[0].AssetID)
+	require.NotNil(t, resources[0].AssetHolding)
+	require.Equal(t, uint64(4242), resources[0].AssetHolding.Amount)
+}
+
 // TestLookupApplicationResourcesWithDeltas verifies that lookupApplicationResources properly
 // merges in-memory deltas with database results to return current-round data.
 // It covers: new creation, local state deletion, local state modification, params-only
