@@ -367,9 +367,9 @@ func (tr *trackerRegistry) loadFromDisk(l ledgerForTracker) error {
 		return err
 	}
 
-	tr.mu.RLock()
+	tr.mu.Lock()
 	tr.dbRound = dbRound
-	tr.mu.RUnlock()
+	tr.mu.Unlock()
 
 	for _, lt := range tr.trackers {
 		err0 := lt.loadFromDisk(l, dbRound)
