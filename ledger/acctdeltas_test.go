@@ -957,6 +957,299 @@ func TestLookupKeysByPrefix(t *testing.T) {
 	}
 }
 
+func TestLookupKeysByPrefixCursor(t *testing.T) {
+	partitiontest.PartitionTest(t)
+	t.Parallel()
+
+	dbs, _ := sqlitedriver.OpenForTesting(t, false)
+	defer dbs.Close()
+
+	err := dbs.Transaction(func(ctx context.Context, tx trackerdb.TransactionScope) (err error) {
+		_ = benchmarkInitBalances(t, 1, tx, protocol.ConsensusCurrentVersion)
+		return nil
+	})
+	require.NoError(t, err)
+
+	qs, err := dbs.MakeAccountsOptimizedReader()
+	require.NoError(t, err)
+	defer qs.Close()
+
+	// Insert test data with a common prefix
+	kvPairs := []struct {
+		key   string
+		value string
+	}{
+		{"DingHo-A", "valA"},
+		{"DingHo-B", "valB"},
+		{"DingHo-C", "valC"},
+		{"DingHo-D", "valD"},
+		{"DingHo-E", "valE"},
+		{"DingHo-F", "valF"},
+		{"Other-Key", "valOther"},
+	}
+
+	err = dbs.Transaction(func(ctx context.Context, tx trackerdb.TransactionScope) (err error) {
+		writer, err := tx.MakeAccountsOptimizedWriter(true, true, true, true)
+		if err != nil {
+			return
+		}
+		for _, kv := range kvPairs {
+			err = writer.UpsertKvPair(kv.key, []byte(kv.value))
+			require.NoError(t, err)
+		}
+		writer.Close()
+		return nil
+	})
+	require.NoError(t, err)
+
+	t.Run("BasicPagination", func(t *testing.T) {
+		_, results, moreData, err := qs.LookupKeysByPrefixCursor("DingHo-", "", 3, 0, false, nil)
+		require.NoError(t, err)
+		require.Len(t, results, 3)
+		require.Equal(t, "DingHo-A", results[0].Key)
+		require.Equal(t, "DingHo-B", results[1].Key)
+		require.Equal(t, "DingHo-C", results[2].Key)
+		require.True(t, moreData, "should indicate more data exists")
+		// Values should be nil when includeValues=false
+		require.Nil(t, results[0].Value)
+	})
+
+	t.Run("WithCursor", func(t *testing.T) {
+		_, results, moreData, err := qs.LookupKeysByPrefixCursor("DingHo-", "DingHo-C", 3, 0, false, nil)
+		require.NoError(t, err)
+		require.Len(t, results, 3)
+		require.Equal(t, "DingHo-D", results[0].Key)
+		require.Equal(t, "DingHo-E", results[1].Key)
+		require.Equal(t, "DingHo-F", results[2].Key)
+		require.False(t, moreData, "no more data after last key")
+	})
+
+	t.Run("WithValues", func(t *testing.T) {
+		_, results, _, err := qs.LookupKeysByPrefixCursor("DingHo-", "", 2, 0, true, nil)
+		require.NoError(t, err)
+		require.Len(t, results, 2)
+		require.Equal(t, "DingHo-A", results[0].Key)
+		require.Equal(t, []byte("valA"), results[0].Value)
+		require.Equal(t, "DingHo-B", results[1].Key)
+		require.Equal(t, []byte("valB"), results[1].Value)
+	})
+
+	t.Run("WithExclude", func(t *testing.T) {
+		exclude := map[string][]byte{"DingHo-B": nil, "DingHo-D": nil}
+		_, results, _, err := qs.LookupKeysByPrefixCursor("DingHo-", "", 10, 0, false, exclude)
+		require.NoError(t, err)
+		require.Len(t, results, 4) // A, C, E, F (B and D excluded)
+		require.Equal(t, "DingHo-A", results[0].Key)
+		require.Equal(t, "DingHo-C", results[1].Key)
+		require.Equal(t, "DingHo-E", results[2].Key)
+		require.Equal(t, "DingHo-F", results[3].Key)
+	})
+
+	t.Run("PrefixFiltersOtherKeys", func(t *testing.T) {
+		_, results, _, err := qs.LookupKeysByPrefixCursor("DingHo-", "", 100, 0, false, nil)
+		require.NoError(t, err)
+		require.Len(t, results, 6) // Only DingHo- keys, not Other-Key
+	})
+
+	t.Run("NoResultsPastEnd", func(t *testing.T) {
+		_, results, moreData, err := qs.LookupKeysByPrefixCursor("DingHo-", "DingHo-F", 10, 0, false, nil)
+		require.NoError(t, err)
+		require.Len(t, results, 0)
+		require.False(t, moreData)
+	})
+
+	t.Run("ZeroLimitReturnsAll", func(t *testing.T) {
+		_, results, moreData, err := qs.LookupKeysByPrefixCursor("DingHo-", "", 0, 0, false, nil)
+		require.NoError(t, err)
+		require.Len(t, results, 6)
+		require.False(t, moreData)
+	})
+
+	t.Run("NullKeyFromLeftJoin", func(t *testing.T) {
+		// Prefix that matches no kvstore rows; LEFT JOIN produces a NULL key row
+		_, results, _, err := qs.LookupKeysByPrefixCursor("NonExistent-", "", 10, 0, false, nil)
+		require.NoError(t, err)
+		require.Len(t, results, 0)
+	})
+
+	t.Run("CursorPlusExclude", func(t *testing.T) {
+		exclude := map[string][]byte{"DingHo-D": nil}
+		_, results, _, err := qs.LookupKeysByPrefixCursor("DingHo-", "DingHo-B", 10, 0, false, exclude)
+		require.NoError(t, err)
+		require.Len(t, results, 3) // C, E, F (cursor skips A+B, exclude skips D)
+		require.Equal(t, "DingHo-C", results[0].Key)
+		require.Equal(t, "DingHo-E", results[1].Key)
+		require.Equal(t, "DingHo-F", results[2].Key)
+	})
+
+	t.Run("ValuesWithCursor", func(t *testing.T) {
+		_, results, _, err := qs.LookupKeysByPrefixCursor("DingHo-", "DingHo-D", 10, 0, true, nil)
+		require.NoError(t, err)
+		require.Len(t, results, 2)
+		require.Equal(t, "DingHo-E", results[0].Key)
+		require.Equal(t, []byte("valE"), results[0].Value)
+		require.Equal(t, "DingHo-F", results[1].Key)
+		require.Equal(t, []byte("valF"), results[1].Value)
+	})
+
+	t.Run("ValuesWithExclude", func(t *testing.T) {
+		exclude := map[string][]byte{"DingHo-A": nil}
+		_, results, _, err := qs.LookupKeysByPrefixCursor("DingHo-", "", 2, 0, true, exclude)
+		require.NoError(t, err)
+		require.Len(t, results, 2)
+		require.Equal(t, "DingHo-B", results[0].Key)
+		require.Equal(t, []byte("valB"), results[0].Value)
+		require.Equal(t, "DingHo-C", results[1].Key)
+		require.Equal(t, []byte("valC"), results[1].Value)
+	})
+
+	t.Run("ExcludeAllKeys", func(t *testing.T) {
+		exclude := map[string][]byte{
+			"DingHo-A": nil, "DingHo-B": nil, "DingHo-C": nil,
+			"DingHo-D": nil, "DingHo-E": nil, "DingHo-F": nil,
+		}
+		_, results, _, err := qs.LookupKeysByPrefixCursor("DingHo-", "", 10, 0, false, exclude)
+		require.NoError(t, err)
+		require.Len(t, results, 0)
+	})
+
+	t.Run("LimitExactlyMatchesAvailable", func(t *testing.T) {
+		_, results, moreData, err := qs.LookupKeysByPrefixCursor("DingHo-", "", 6, 0, false, nil)
+		require.NoError(t, err)
+		require.Len(t, results, 6)
+		require.Equal(t, "DingHo-A", results[0].Key)
+		require.Equal(t, "DingHo-F", results[5].Key)
+		require.False(t, moreData, "no more data when all keys fit")
+	})
+
+	t.Run("CursorBetweenKeys", func(t *testing.T) {
+		// Cursor value doesn't match any existing key
+		_, results, _, err := qs.LookupKeysByPrefixCursor("DingHo-", "DingHo-B5", 10, 0, false, nil)
+		require.NoError(t, err)
+		require.Len(t, results, 4) // C, D, E, F
+		require.Equal(t, "DingHo-C", results[0].Key)
+		require.Equal(t, "DingHo-F", results[3].Key)
+	})
+
+	t.Run("RoundIsReturned", func(t *testing.T) {
+		round, results, _, err := qs.LookupKeysByPrefixCursor("DingHo-", "", 1, 0, false, nil)
+		require.NoError(t, err)
+		require.Len(t, results, 1)
+		// Round comes from acctrounds table; verify it matches across calls
+		round2, _, _, err := qs.LookupKeysByPrefixCursor("DingHo-", "", 1, 0, true, nil)
+		require.NoError(t, err)
+		require.Equal(t, round, round2)
+	})
+
+	t.Run("ValuesWithCursorAndExclude", func(t *testing.T) {
+		exclude := map[string][]byte{"DingHo-C": nil}
+		_, results, _, err := qs.LookupKeysByPrefixCursor("DingHo-", "DingHo-A", 10, 0, true, exclude)
+		require.NoError(t, err)
+		require.Len(t, results, 4) // B, D, E, F (cursor skips A, exclude skips C)
+		require.Equal(t, "DingHo-B", results[0].Key)
+		require.Equal(t, []byte("valB"), results[0].Value)
+		require.Equal(t, "DingHo-D", results[1].Key)
+		require.Equal(t, []byte("valD"), results[1].Value)
+		require.Equal(t, "DingHo-E", results[2].Key)
+		require.Equal(t, []byte("valE"), results[2].Value)
+		require.Equal(t, "DingHo-F", results[3].Key)
+		require.Equal(t, []byte("valF"), results[3].Value)
+	})
+
+	t.Run("MaxBytesLimitsResults", func(t *testing.T) {
+		// Each key is "DingHo-X" (8 bytes), value is "valX" (4 bytes) = 12 bytes per pair.
+		// With includeValues=true and maxBytes=25, should fit 2 pairs (24 bytes) but not 3 (36).
+		_, results, moreData, err := qs.LookupKeysByPrefixCursor("DingHo-", "", 0, 25, true, nil)
+		require.NoError(t, err)
+		require.Len(t, results, 2)
+		require.True(t, moreData, "more data should exist")
+		require.Equal(t, "DingHo-A", results[0].Key)
+		require.Equal(t, "DingHo-B", results[1].Key)
+	})
+
+	t.Run("MaxBytesGuaranteesOneResult", func(t *testing.T) {
+		// Even with maxBytes=1, should return at least one result for progress.
+		_, results, moreData, err := qs.LookupKeysByPrefixCursor("DingHo-", "", 0, 1, true, nil)
+		require.NoError(t, err)
+		require.Len(t, results, 1)
+		require.True(t, moreData)
+		require.Equal(t, "DingHo-A", results[0].Key)
+	})
+
+	t.Run("MaxBytesZeroIsUnlimited", func(t *testing.T) {
+		_, results, moreData, err := qs.LookupKeysByPrefixCursor("DingHo-", "", 0, 0, true, nil)
+		require.NoError(t, err)
+		require.Len(t, results, 6)
+		require.False(t, moreData)
+	})
+
+	t.Run("MaxBytesWithLimit", func(t *testing.T) {
+		// limit=2 should stop before maxBytes is hit.
+		_, results, moreData, err := qs.LookupKeysByPrefixCursor("DingHo-", "", 2, 1000, true, nil)
+		require.NoError(t, err)
+		require.Len(t, results, 2)
+		require.True(t, moreData, "more data with limit=2 and 6 keys")
+	})
+
+	t.Run("MaxBytesKeysOnly", func(t *testing.T) {
+		// Without values, only count key bytes. Each key is 8 bytes.
+		// maxBytes=20 should fit 2 keys (16 bytes) but not 3 (24).
+		_, results, moreData, err := qs.LookupKeysByPrefixCursor("DingHo-", "", 0, 20, false, nil)
+		require.NoError(t, err)
+		require.Len(t, results, 2)
+		require.True(t, moreData)
+	})
+
+	t.Run("MoreDataFalseWhenAllFit", func(t *testing.T) {
+		// maxBytes large enough to fit all results.
+		_, results, moreData, err := qs.LookupKeysByPrefixCursor("DingHo-", "", 0, 10000, true, nil)
+		require.NoError(t, err)
+		require.Len(t, results, 6)
+		require.False(t, moreData)
+	})
+
+	t.Run("MoreDataTrueWithLimit", func(t *testing.T) {
+		_, results, moreData, err := qs.LookupKeysByPrefixCursor("DingHo-", "", 3, 0, false, nil)
+		require.NoError(t, err)
+		require.Len(t, results, 3)
+		require.True(t, moreData)
+	})
+
+	t.Run("MoreDataFalseWhenExact", func(t *testing.T) {
+		_, results, moreData, err := qs.LookupKeysByPrefixCursor("DingHo-", "", 6, 0, false, nil)
+		require.NoError(t, err)
+		require.Len(t, results, 6)
+		require.False(t, moreData)
+	})
+
+	t.Run("MoreDataTrueWhenOneRemains", func(t *testing.T) {
+		// Regression: limit=5 with 6 qualifying rows. The 6th row is the only
+		// one past the page — moreData must be true.
+		_, results, moreData, err := qs.LookupKeysByPrefixCursor("DingHo-", "", 5, 0, false, nil)
+		require.NoError(t, err)
+		require.Len(t, results, 5)
+		require.True(t, moreData, "exactly one row remains; moreData must be true")
+	})
+
+	t.Run("MoreDataTrueWhenOneRemainsWithCursor", func(t *testing.T) {
+		// Cursor past D leaves E, F. Limit=1 → return E, F remains.
+		_, results, moreData, err := qs.LookupKeysByPrefixCursor("DingHo-", "DingHo-D", 1, 0, false, nil)
+		require.NoError(t, err)
+		require.Len(t, results, 1)
+		require.Equal(t, "DingHo-E", results[0].Key)
+		require.True(t, moreData, "F remains; moreData must be true")
+	})
+
+	t.Run("MaxBytesMoreDataWhenOneRemains", func(t *testing.T) {
+		// Each key is 8 bytes, value is 4 bytes = 12 bytes per pair.
+		// maxBytes=60 fits 5 pairs (60 bytes) but not 6 (72).
+		_, results, moreData, err := qs.LookupKeysByPrefixCursor("DingHo-", "", 0, 60, true, nil)
+		require.NoError(t, err)
+		require.Len(t, results, 5)
+		require.True(t, moreData, "one row remains; moreData must be true")
+	})
+}
+
 func BenchmarkLookupKeyByPrefix(b *testing.B) {
 	// learn something from BenchmarkWritingRandomBalancesDisk
 
@@ -4262,4 +4555,236 @@ func TestLookupApplicationResourcesWithDeltas(t *testing.T) {
 	for _, res := range resourcesNoParams {
 		require.Nil(t, res.AppParams, "AppParams should be nil when includeParams=false")
 	}
+}
+
+// TestLookupAppResourcesParamsOnlyDeletion exercises the scenario where an app
+// creator has params but no local state in the DB (never opted in) and a delta
+// deletes those params. Two bugs interact here:
+//
+//  1. The else fallback in the DB merge calls GetAppLocalState() without first
+//     checking pd.Data.IsHolding(), producing a phantom zero-value AppLocalState
+//     on a row that has no local state. This causes the deleted-params row to
+//     survive the (AppLocalState != nil || AppParams != nil) filter when it
+//     should be excluded.
+//
+//  2. numDeltaDeleted only counts State.Deleted. A params-only deletion
+//     (Params.Deleted=true, State.Deleted=false) is not counted, so the DB
+//     over-request is too small and the result page is short once the phantom
+//     local state issue is also fixed.
+//
+// Setup: 4 apps (3000-3003) committed to DB. App 3000 has params only (no
+// local state). Apps 3001-3003 have both params and local state.
+// Delta: delete params for app 3000.
+// Query with limit=3: should return 3001, 3002, 3003.
+func TestLookupAppResourcesParamsOnlyDeletion(t *testing.T) {
+	partitiontest.PartitionTest(t)
+	t.Parallel()
+
+	testProtocolVersion := protocol.ConsensusCurrentVersion
+	protoParams := config.Consensus[testProtocolVersion]
+
+	accts := setupAccts(5)
+
+	var creatorAddr basics.Address
+	for addr := range accts[0] {
+		if addr != testSinkAddr && addr != testPoolAddr {
+			creatorAddr = addr
+			break
+		}
+	}
+
+	ml := makeMockLedgerForTracker(t, true, 1, testProtocolVersion, accts)
+	defer ml.Close()
+
+	conf := config.GetDefaultLocal()
+	conf.MaxAcctLookback = 0
+	au, _ := newAcctUpdates(t, ml, conf)
+
+	knownCreatables := make(map[basics.CreatableIndex]bool)
+
+	// Round 1: create apps 3000-3003.
+	//   3000: params only, no local state (creator who never opted in)
+	//   3001-3003: both params and local state
+	{
+		var updates ledgercore.AccountDeltas
+		updates.Upsert(creatorAddr, ledgercore.AccountData{
+			AccountBaseData: ledgercore.AccountBaseData{
+				MicroAlgos:          basics.MicroAlgos{Raw: 1_000_000},
+				TotalAppParams:      4,
+				TotalAppLocalStates: 3,
+			},
+		})
+		// 3000: params only
+		updates.UpsertAppResource(creatorAddr, basics.AppIndex(3000),
+			ledgercore.AppParamsDelta{
+				Params: &basics.AppParams{
+					ApprovalProgram: []byte{0x06, 0x81, 0x01},
+				},
+			},
+			ledgercore.AppLocalStateDelta{})
+		// 3001-3003: params + local state
+		for appIdx := uint64(3001); appIdx <= 3003; appIdx++ {
+			updates.UpsertAppResource(creatorAddr, basics.AppIndex(appIdx),
+				ledgercore.AppParamsDelta{
+					Params: &basics.AppParams{
+						ApprovalProgram: []byte{0x06, 0x81, 0x01},
+					},
+				},
+				ledgercore.AppLocalStateDelta{
+					LocalState: &basics.AppLocalState{
+						Schema: basics.StateSchema{NumUint: appIdx - 3000},
+					},
+				})
+		}
+
+		base := accts[0]
+		newAccts := applyPartialDeltas(base, updates)
+		accts = append(accts, newAccts)
+
+		opts := auNewBlockOpts{updates, testProtocolVersion, protoParams, knownCreatables}
+		auNewBlock(t, 1, au, base, opts, nil)
+		auCommitSync(t, 1, au, ml)
+
+		for appIdx := uint64(3000); appIdx <= 3003; appIdx++ {
+			knownCreatables[basics.CreatableIndex(appIdx)] = true
+		}
+	}
+
+	// Flush past MaxAcctLookback
+	for i := basics.Round(2); i <= basics.Round(conf.MaxAcctLookback+2); i++ {
+		var updates ledgercore.AccountDeltas
+		base := accts[i-1]
+		newAccts := applyPartialDeltas(base, updates)
+		accts = append(accts, newAccts)
+
+		opts := auNewBlockOpts{updates, testProtocolVersion, protoParams, knownCreatables}
+		auNewBlock(t, i, au, base, opts, nil)
+		auCommitSync(t, i, au, ml)
+	}
+
+	// Delta (uncommitted): delete params for app 3000 (which has no local state).
+	// State.Deleted is false because there was no local state to delete.
+	deltaRound := basics.Round(conf.MaxAcctLookback + 3)
+	{
+		var updates ledgercore.AccountDeltas
+		updates.UpsertAppResource(creatorAddr, basics.AppIndex(3000),
+			ledgercore.AppParamsDelta{Deleted: true},
+			ledgercore.AppLocalStateDelta{})
+
+		base := accts[deltaRound-1]
+		opts := auNewBlockOpts{updates, testProtocolVersion, protoParams, knownCreatables}
+		auNewBlock(t, deltaRound, au, base, opts, nil)
+	}
+
+	// Query with limit=3. After filtering out 3000 (both params and local state
+	// nil), we should still get 3 results: 3001, 3002, 3003.
+	resources, rnd, err := au.LookupApplicationResources(creatorAddr, 0, 3, true)
+	require.NoError(t, err)
+	require.Equal(t, deltaRound, rnd)
+	require.Len(t, resources, 3, "params-only deletion should not cause a short page")
+	require.Equal(t, basics.AppIndex(3001), resources[0].AppID)
+	require.Equal(t, basics.AppIndex(3002), resources[1].AppID)
+	require.Equal(t, basics.AppIndex(3003), resources[2].AppID)
+}
+
+// TestLookupAssetResourcesEmptyPageDoesNotError verifies that looking up an empty page
+// (no resources for the account) returns an empty result and current round, not an error.
+func TestLookupAssetResourcesEmptyPageDoesNotError(t *testing.T) {
+	partitiontest.PartitionTest(t)
+	t.Parallel()
+
+	testProtocolVersion := protocol.ConsensusCurrentVersion
+	protoParams := config.Consensus[testProtocolVersion]
+
+	accts := setupAccts(2)
+	ml := makeMockLedgerForTracker(t, true, 1, testProtocolVersion, accts)
+	defer ml.Close()
+
+	// Step 1: use default lookback config (do not override MaxAcctLookback).
+	// We then advance enough rounds so persisted DB round moves forward.
+	conf := config.GetDefaultLocal()
+	au, _ := newAcctUpdates(t, ml, conf)
+
+	knownCreatables := make(map[basics.CreatableIndex]bool)
+	latestRound := basics.Round(conf.MaxAcctLookback + 2)
+
+	// Step 2: commit empty rounds to push DB round forward while keeping
+	// the target address absent from all in-memory and persisted resources.
+	for i := basics.Round(1); i <= latestRound; i++ {
+		var updates ledgercore.AccountDeltas
+		base := accts[i-1]
+		newAccts := applyPartialDeltas(base, updates)
+		accts = append(accts, newAccts)
+
+		opts := auNewBlockOpts{updates, testProtocolVersion, protoParams, knownCreatables}
+		auNewBlock(t, i, au, base, opts, nil)
+		auCommitSync(t, i, au, ml)
+	}
+
+	// Step 3: choose an address that definitely does not exist in the fixture accounts.
+	var missingAddr basics.Address
+	missingAddr[0] = 0xA5
+	for {
+		if _, ok := accts[0][missingAddr]; !ok {
+			break
+		}
+		missingAddr[0]++
+	}
+
+	// Step 4: lookup should produce an empty page at current round, not an error.
+	resources, rnd, err := au.LookupAssetResources(missingAddr, 0, 10)
+	require.NoError(t, err)
+	require.Equal(t, latestRound, rnd)
+	require.Len(t, resources, 0)
+}
+
+// TestLookupApplicationResourcesEmptyPageDoesNotError verifies that looking up an empty page
+// (no resources for the account) returns an empty result and current round, not an error.
+func TestLookupApplicationResourcesEmptyPageDoesNotError(t *testing.T) {
+	partitiontest.PartitionTest(t)
+	t.Parallel()
+
+	testProtocolVersion := protocol.ConsensusCurrentVersion
+	protoParams := config.Consensus[testProtocolVersion]
+
+	accts := setupAccts(2)
+	ml := makeMockLedgerForTracker(t, true, 1, testProtocolVersion, accts)
+	defer ml.Close()
+
+	// Step 1: use default lookback config (do not override MaxAcctLookback).
+	// We then advance enough rounds so persisted DB round moves forward.
+	conf := config.GetDefaultLocal()
+	au, _ := newAcctUpdates(t, ml, conf)
+
+	knownCreatables := make(map[basics.CreatableIndex]bool)
+	latestRound := basics.Round(conf.MaxAcctLookback + 2)
+
+	// Step 2: commit empty rounds to push DB round forward while keeping
+	// the target address absent from all in-memory and persisted resources.
+	for i := basics.Round(1); i <= latestRound; i++ {
+		var updates ledgercore.AccountDeltas
+		base := accts[i-1]
+		newAccts := applyPartialDeltas(base, updates)
+		accts = append(accts, newAccts)
+
+		opts := auNewBlockOpts{updates, testProtocolVersion, protoParams, knownCreatables}
+		auNewBlock(t, i, au, base, opts, nil)
+		auCommitSync(t, i, au, ml)
+	}
+
+	// Step 3: choose an address that definitely does not exist in the fixture accounts.
+	var missingAddr basics.Address
+	missingAddr[0] = 0x5A
+	for {
+		if _, ok := accts[0][missingAddr]; !ok {
+			break
+		}
+		missingAddr[0]++
+	}
+
+	// Step 4: lookup should produce an empty page at current round, not an error.
+	resources, rnd, err := au.LookupApplicationResources(missingAddr, 0, 10, true)
+	require.NoError(t, err)
+	require.Equal(t, latestRound, rnd)
+	require.Len(t, resources, 0)
 }

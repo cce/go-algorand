@@ -591,6 +591,126 @@ func (au *accountUpdates) lookupKeysByPrefix(round basics.Round, keyPrefix strin
 	}
 }
 
+// LookupKvPairsByPrefix returns a page of key-value pairs matching the prefix,
+// starting after cursor. It merges in-memory deltas with database results to
+// provide current data. The limit and maxBytes are best-effort.
+// The returned bool indicates whether more qualifying results exist beyond what was returned.
+func (au *accountUpdates) LookupKvPairsByPrefix(round basics.Round, keyPrefix string, cursor string, limit uint64, maxBytes uint64, includeValues bool) ([]ledgercore.KvPairResult, basics.Round, bool, error) {
+	needUnlock := true
+	au.accountsMu.RLock()
+	defer func() {
+		if needUnlock {
+			au.accountsMu.RUnlock()
+		}
+	}()
+
+	if limit == 0 {
+		return nil, au.cachedDBRound + basics.Round(len(au.deltas)), false, nil
+	}
+
+	for {
+		currentDBRound := au.cachedDBRound
+		currentDeltaLen := len(au.deltas)
+		offset, rndErr := au.roundOffset(round)
+		if rndErr != nil {
+			return nil, 0, false, rndErr
+		}
+
+		// Walk deltas backwards to collect modifications.
+		// deltaResults maps each key to its value; nil value means deleted.
+		deltaResults := make(map[string][]byte)
+		for i := offset; i > 0; {
+			i--
+			for keyInRound, mv := range au.deltas[i].KvMods {
+				if !strings.HasPrefix(keyInRound, keyPrefix) {
+					continue
+				}
+				if keyInRound <= cursor {
+					continue
+				}
+				if _, ok := deltaResults[keyInRound]; ok {
+					continue // already seen from a more recent round
+				}
+				deltaResults[keyInRound] = mv.Data
+			}
+		}
+
+		retRound := currentDBRound + basics.Round(offset)
+
+		au.accountsMu.RUnlock()
+		needUnlock = false
+
+		dbRound, dbResults, dbMoreData, dbErr := au.accountsq.LookupKeysByPrefixCursor(keyPrefix, cursor, limit, maxBytes, includeValues, deltaResults)
+		if dbErr != nil {
+			return nil, 0, false, dbErr
+		}
+
+		if dbRound == currentDBRound {
+			// When the DB indicated more data exists, delta keys beyond the last
+			// DB key would only be sorted in and trimmed away. Skip them.
+			var cutoff string
+			if dbMoreData && len(dbResults) > 0 {
+				cutoff = dbResults[len(dbResults)-1].Key
+			}
+
+			// Merge DB results with non-deleted delta results into allResults
+			allResults := dbResults
+			for key, val := range deltaResults {
+				if val == nil {
+					continue
+				}
+				if cutoff != "" && key > cutoff {
+					continue
+				}
+				if !includeValues {
+					val = nil
+				}
+				allResults = append(allResults, ledgercore.KvPairResult{Key: key, Value: val})
+			}
+
+			// Sort by key.
+			slices.SortFunc(allResults, func(a, b ledgercore.KvPairResult) int {
+				return strings.Compare(a.Key, b.Key)
+			})
+
+			// Trim to limit and/or maxBytes.
+			moreData := dbMoreData
+			var bytesAccum uint64
+			trimAt := len(allResults)
+			for i, kv := range allResults {
+				itemBytes := kv.ByteSize()
+				// We always allow at least one result, regardless of byte cap
+				if bytesAccum+itemBytes > maxBytes && i > 0 {
+					trimAt = i
+					break
+				}
+				bytesAccum += itemBytes
+				if uint64(i+1) >= limit {
+					trimAt = i + 1
+					break
+				}
+			}
+			if trimAt < len(allResults) {
+				moreData = true
+				allResults = allResults[:trimAt]
+			}
+
+			return allResults, retRound, moreData, nil
+		}
+
+		// DB round mismatch — retry.
+		if dbRound < currentDBRound {
+			au.log.Errorf("accountUpdates.LookupKvPairsByPrefix: database round %d is behind in-memory round %d", dbRound, currentDBRound)
+			return nil, 0, false, &StaleDatabaseRoundError{databaseRound: dbRound, memoryRound: currentDBRound}
+		}
+		au.accountsMu.RLock()
+		needUnlock = true
+		for currentDBRound >= au.cachedDBRound && currentDeltaLen == len(au.deltas) {
+			au.accountsReadCond.Wait()
+		}
+	}
+}
+
 // LookupWithoutRewards returns the account data for a given address at a given round.
 func (au *accountUpdates) LookupWithoutRewards(rnd basics.Round, addr basics.Address) (data ledgercore.AccountData, validThrough basics.Round, err error) {
 	data, validThrough, _, _, err = au.lookupWithoutRewards(rnd, addr, true /* take lock*/)
@@ -1171,9 +1291,9 @@ func (au *accountUpdates) lookupResource(rnd basics.Round, addr basics.Address, 
 			return macct.AccountResource(), rnd, nil
 		}
 
-		// check baseAccoiunts again to see if it does not exist
+		// check baseResources again to see if it does not exist
 		if au.baseResources.readNotFound(addr, aidx) {
-			// it seems the account doesnt exist
+			// it seems the resource doesn't exist
 			return ledgercore.AccountResource{}, rnd, nil
 		}
 
@@ -1252,6 +1372,9 @@ func (assetResourceAdapter) Records(ad *ledgercore.AccountDeltas) []ledgercore.A
 	return ad.AssetResources
 }
 func (assetResourceAdapter) DBHolding(rd *trackerdb.ResourcesData) *basics.AssetHolding {
+	if !rd.IsHolding() {
+		return nil
+	}
 	ah := rd.GetAssetHolding()
 	return &ah
 }
@@ -1266,6 +1389,9 @@ func (appResourceAdapter) Records(ad *ledgercore.AccountDeltas) []ledgercore.App
 	return ad.AppResources
 }
 func (appResourceAdapter) DBHolding(rd *trackerdb.ResourcesData) *basics.AppLocalState {
+	if !rd.IsHolding() {
+		return nil
+	}
 	als := rd.GetAppLocalState()
 	return &als
 }
@@ -1333,10 +1459,6 @@ func lookupResources[H, P any, R resourceDeltaRecord[H, P], A resourceAdapter[H,
 	includeParams bool,
 	adapter A,
 ) ([]resourceResult[H, P], basics.Round, error) {
-	if limit == 0 {
-		return nil, basics.Round(0), nil
-	}
-
 	needUnlock := true
 	au.accountsMu.RLock()
 	defer func() {
@@ -1344,6 +1466,10 @@ func lookupResources[H, P any, R resourceDeltaRecord[H, P], A resourceAdapter[H,
 			au.accountsMu.RUnlock()
 		}
 	}()
+
+	if limit == 0 {
+		return nil, au.cachedDBRound + basics.Round(len(au.deltas)), nil
+	}
 
 	for {
 		currentDBRound := au.cachedDBRound
@@ -1368,7 +1494,7 @@ func lookupResources[H, P any, R resourceDeltaRecord[H, P], A resourceAdapter[H,
 					continue
 				}
 				deltaMap[id] = rec
-				if rec.IsHoldingDeleted() {
+				if rec.IsHoldingDeleted() || rec.IsParamsDeleted() {
 					numDeltaDeleted++
 				}
 			}
@@ -1388,7 +1514,7 @@ func lookupResources[H, P any, R resourceDeltaRecord[H, P], A resourceAdapter[H,
 			return nil, basics.Round(0), err
 		}
 
-		if resourceDbRound == currentDBRound {
+		if resourceDbRound == currentDBRound || (len(persistedResources) == 0 && resourceDbRound == 0) {
 			seenInDB := make(map[basics.CreatableIndex]bool, len(persistedResources))
 			result := make([]resourceResult[H, P], 0, limit)
 
@@ -1562,9 +1688,9 @@ func (au *accountUpdates) lookupWithoutRewards(rnd basics.Round, addr basics.Add
 			return macct.AccountData.GetLedgerCoreAccountData(), rnd, rewardsVersion, rewardsLevel, nil
 		}
 
-		// check baseAccoiunts again to see if it does not exist
+		// check baseAccounts again to see if it does not exist
 		if au.baseAccounts.readNotFound(addr) {
-			// it seems the account doesnt exist
+			// it seems the account doesn't exist
 			return ledgercore.AccountData{}, rnd, rewardsVersion, rewardsLevel, nil
 		}
 
