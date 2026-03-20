@@ -508,9 +508,9 @@ func (ct *catchpointTracker) produceCommittingTask(committedRound basics.Round, 
 		return dcr
 	}
 
-	ct.catchpointsMu.Lock()
+	ct.catchpointsMu.RLock()
 	reenableCatchpointsRound := ct.reenableCatchpointsRound
-	ct.catchpointsMu.Unlock()
+	ct.catchpointsMu.RUnlock()
 
 	// Check if we need to do the first stage of catchpoint generation.
 	var hasIntermediateFirstStageRound bool
