@@ -92,9 +92,9 @@ type onlineAccounts struct {
 	// deltasAccum stores the accumulated deltas for every round starting dbRound-1.
 	deltasAccum []int // protected by accountsMu
 
-	// accountsMu protects in-memory online-account state that sits on top of the
-	// committed database round. See "protected by accountsMu" annotations on
-	// individual fields. Lookup methods acquire RLock; postCommit/newBlock acquire Lock.
+	// accountsMu protects mutable in-memory online-account state that sits on top
+	// of the committed database round. Lookup methods acquire RLock;
+	// postCommit/newBlock acquire Lock.
 	accountsMu deadlock.RWMutex
 
 	// accountsReadCond is signaled after commitRound advances cachedDBRoundOnline, waking
