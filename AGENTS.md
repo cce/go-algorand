@@ -159,6 +159,15 @@ The `lookupAssetResources`, `lookupApplicationResources`, and `lookupBoxResource
 
 Their corresponding `Ledger`-level wrappers in `ledger/ledger.go` (`LookupAssets`, `LookupApplications`, `LookupBoxes`) must each hold `trackerMu.RLock()`, matching every other method that accesses tracker state.
 
+### Locking Conventions (`ledger/`)
+Each mutable field in ledger structs is annotated with `// protected by xMu` on its declaration line, identifying which mutex guards it. When adding new mutable fields to a struct, add the same annotation. When accessing a field marked `protected by xMu`, ensure the lock is held.
+
+Key locks and their roles:
+- **`Ledger.trackerMu`** — guards access to tracker objects from Ledger's public API. Every Ledger method that calls into a tracker (e.g. `LookupAccount`, `LookupAssets`, `LatestTotals`) must hold `RLock`; `reloadLedger` holds `Lock`.
+- **`accountUpdates.accountsMu`** / **`onlineAccounts.accountsMu`** — protects in-memory deltas, caches, and `cachedDBRound` that sit on top of the committed database round. Lookup methods acquire `RLock`; `postCommit`/`newBlock` acquire `Lock`. The associated `accountsReadCond` is signaled when `cachedDBRound` advances.
+- **`trackerRegistry.mu`** — protects `dbRound` and `lastFlushTime`. Distinct from `Ledger.trackerMu`.
+- **`catchpointTracker.catchpointsMu`**, **`txTail.tailMu`**, **`blockQueue.mu`**, **`votersTracker.votersMu`**, **`spVerificationTracker.mu`**, **`bulletin.mu`**, **`blockNotifier.mu`** — each protects the mutable state within its struct; see inline annotations on the fields.
+
 ### Code Organization
 - Interface-first design for testability and modularity
 - Dependency injection for component assembly
