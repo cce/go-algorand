@@ -36,12 +36,11 @@ type notifier struct {
 // bulletin provides an easy way to wait on a round to be written to the ledger.
 // To use it, call <-Wait(round).
 type bulletin struct {
-	// mu protects pendingNotificationRequests and latestRound.
-	// newBlock acquires mu to update latestRound and close completed notifiers;
-	// Wait acquires mu to register new notification requests.
+	// mu is acquired by newBlock (to update latestRound and close completed
+	// notifiers) and by Wait (to register new notification requests).
 	mu                          deadlock.Mutex
-	pendingNotificationRequests map[basics.Round]*notifier
-	latestRound                 basics.Round
+	pendingNotificationRequests map[basics.Round]*notifier // protected by mu
+	latestRound                 basics.Round               // protected by mu
 }
 
 // bulletinMem is a variant of bulletin that notifies when blocks

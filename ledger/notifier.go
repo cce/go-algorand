@@ -34,15 +34,13 @@ type blockDeltaPair struct {
 }
 
 type blockNotifier struct {
-	// mu protects listeners, pendingBlocks, and running. The worker
-	// goroutine holds mu while waiting on cond for new blocks; newBlock
-	// acquires mu to append to pendingBlocks and signal the worker.
-	mu   deadlock.Mutex
-	cond *sync.Cond
-	// listeners is the set of BlockListener callbacks notified on each block.
-	listeners     []ledgercore.BlockListener
-	pendingBlocks []blockDeltaPair
-	running       bool
+	// mu is held by the worker goroutine while waiting on cond for new blocks,
+	// and by newBlock to append to pendingBlocks and signal the worker.
+	mu            deadlock.Mutex
+	cond          *sync.Cond
+	listeners     []ledgercore.BlockListener // protected by mu
+	pendingBlocks []blockDeltaPair           // protected by mu
+	running       bool                       // protected by mu
 	// closing is the waitgroup used to synchronize closing the worker goroutine. It's being increased during loadFromDisk, and the worker is responsible to call Done on it once it's aborting it's goroutine. The close function waits on this to complete.
 	closing sync.WaitGroup
 }

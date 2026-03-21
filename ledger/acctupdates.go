@@ -158,34 +158,34 @@ type accountUpdates struct {
 
 	// cachedDBRound is always exactly tracker DB round (and therefore, accountsRound()),
 	// cached to use in lookup functions
-	cachedDBRound basics.Round
+	cachedDBRound basics.Round // protected by accountsMu
 
 	// deltas stores updates for every round after dbRound.
-	deltas []ledgercore.StateDelta
+	deltas []ledgercore.StateDelta // protected by accountsMu
 
 	// accounts stores the most recent account state for every
 	// address that appears in deltas.
-	accounts map[basics.Address]modifiedAccount
+	accounts map[basics.Address]modifiedAccount // protected by accountsMu
 
 	// resources stored the most recent resource state for every
 	// address&resource that appears in deltas.
-	resources resourcesUpdates
+	resources resourcesUpdates // protected by accountsMu
 
 	// kvStore has the most recent kv pairs for every write/del that appears in
 	// deltas.
-	kvStore map[string]modifiedKvValue
+	kvStore map[string]modifiedKvValue // protected by accountsMu
 
 	// creatables stores the most recent state for every creatable that
 	// appears in creatableDeltas
-	creatables map[basics.CreatableIndex]ledgercore.ModifiedCreatable
+	creatables map[basics.CreatableIndex]ledgercore.ModifiedCreatable // protected by accountsMu
 
 	// versions stores consensus version dbRound and every
 	// round after it; i.e., versions is one longer than deltas.
-	versions []protocol.ConsensusVersion
+	versions []protocol.ConsensusVersion // protected by accountsMu
 
 	// totals stores the totals for dbRound and every round after it;
 	// i.e., totals is one longer than deltas.
-	roundTotals []ledgercore.AccountTotals
+	roundTotals []ledgercore.AccountTotals // protected by accountsMu
 
 	// log copied from ledger
 	log logging.Logger
@@ -196,13 +196,12 @@ type accountUpdates struct {
 	ledger ledgerForTracker
 
 	// deltasAccum stores the accumulated deltas for every round starting dbRound-1.
-	deltasAccum []int
+	deltasAccum []int // protected by accountsMu
 
-	// accountsMu protects in-memory account/resource/kv state that sits on top of the
-	// committed database round. Protected fields: cachedDBRound, deltas, accounts,
-	// resources, kvStore, creatables, versions, roundTotals, deltasAccum,
-	// baseAccounts, baseResources, and baseKVs.
-	// Lookup methods acquire RLock; postCommit/newBlock acquire Lock.
+	// accountsMu protects in-memory account/resource/kv state that sits on top
+	// of the committed database round. See "protected by accountsMu" annotations
+	// on individual fields. Lookup methods acquire RLock; postCommit/newBlock
+	// acquire Lock.
 	accountsMu deadlock.RWMutex
 
 	// accountsReadCond is signaled after commitRound advances cachedDBRound, waking
@@ -211,13 +210,13 @@ type accountUpdates struct {
 	accountsReadCond *sync.Cond
 
 	// baseAccounts stores the most recently used accounts, at exactly dbRound
-	baseAccounts lruAccounts
+	baseAccounts lruAccounts // protected by accountsMu
 
 	// baseResources stores the most recently used resources, at exactly dbRound
-	baseResources lruResources
+	baseResources lruResources // protected by accountsMu
 
 	// baseKVs stores the most recently used KV, at exactly dbRound
-	baseKVs lruKV
+	baseKVs lruKV // protected by accountsMu
 
 	// logAccountUpdatesMetrics is a flag for enable/disable metrics logging
 	logAccountUpdatesMetrics bool

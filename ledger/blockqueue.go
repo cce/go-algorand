@@ -43,17 +43,17 @@ type blockEntry struct {
 type blockQueue struct {
 	l *Ledger
 
-	lastCommitted basics.Round
-	q             []blockEntry
+	lastCommitted basics.Round // protected by mu
+	q             []blockEntry // protected by mu
 
-	// mu protects the block queue state: lastCommitted, q, and running.
-	// The syncer goroutine holds mu while draining the queue and updating
-	// lastCommitted; putBlock holds mu while appending to q.
+	// mu protects the block queue state. The syncer goroutine holds mu while
+	// draining the queue and updating lastCommitted; putBlock holds mu while
+	// appending to q.
 	mu deadlock.Mutex
 	// cond is bound to mu and signaled when new blocks are added to q
 	// or when the queue is being closed, waking the syncer goroutine.
-	cond *sync.Cond
-	running bool
+	cond    *sync.Cond
+	running bool // protected by mu
 	closed  chan struct{}
 }
 

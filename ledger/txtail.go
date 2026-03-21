@@ -44,12 +44,12 @@ type roundLeases struct {
 }
 
 type txTail struct {
-	recent map[basics.Round]roundLeases
+	recent map[basics.Round]roundLeases // protected by tailMu
 
 	// roundTailSerializedDeltas contains the rounds that need to be flushed to disk.
 	// It contain the serialized(encoded) form of the txTailRound. This field would remain
 	// maintained in this data structure up until being cleared out by postCommit
-	roundTailSerializedDeltas [][]byte
+	roundTailSerializedDeltas [][]byte // protected by tailMu
 
 	// roundTailHashes contains the recent (MaxTxnLife + DeeperBlockHeaderHistory + len(deltas)) hashes.
 	// The first entry matches that current tracker database round - (MaxTxnLife + DeeperBlockHeaderHistory) + 1
@@ -68,26 +68,24 @@ type txTail struct {
 	//              dbRound
 	// roundTailHashes is planned for catchpoints in order to include it into catchpoint file,
 	// and currently disabled by enableTxTailHashes switch.
-	roundTailHashes []crypto.Digest
+	roundTailHashes []crypto.Digest // protected by tailMu
 
 	// blockHeaderData contains the recent (MaxTxnLife + DeeperBlockHeaderHistory + len(deltas)) block header data.
 	// The oldest entry is lowestBlockHeaderRound = database round - (MaxTxnLife + DeeperBlockHeaderHistory) + 1
-	blockHeaderData map[basics.Round]bookkeeping.BlockHeader
-	// lowestBlockHeaderRound is the lowest round in blockHeaderData, used as a starting point for old entries removal
-	lowestBlockHeaderRound basics.Round
+	blockHeaderData        map[basics.Round]bookkeeping.BlockHeader // protected by tailMu
+	lowestBlockHeaderRound basics.Round                             // protected by tailMu
 
-	// tailMu protects all mutable txTail state: recent, roundTailSerializedDeltas,
-	// roundTailHashes, blockHeaderData, lowestBlockHeaderRound, lastValid, and
-	// lowWaterMark. newBlock/postCommit acquire Lock; lookup/checkDup acquire RLock.
+	// tailMu protects mutable txTail state. newBlock/postCommit acquire Lock;
+	// lookup/checkDup acquire RLock.
 	tailMu deadlock.RWMutex
 
 	// lastValid allows looking up all of the transactions that expire in a given round.
 	// The map for an expiration round gives the round the transaction was originally confirmed, so it can be found for the /pending endpoint.
-	lastValid map[basics.Round]map[transactions.Txid]uint16 // map tx.LastValid -> tx confirmed map: txid -> (last valid - confirmed) delta
+	lastValid map[basics.Round]map[transactions.Txid]uint16 // protected by tailMu; map tx.LastValid -> tx confirmed map: txid -> (last valid - confirmed) delta
 
 	// duplicate detection queries with LastValid before
 	// lowWaterMark are not guaranteed to succeed
-	lowWaterMark basics.Round // the last round known to be committed to disk
+	lowWaterMark basics.Round // protected by tailMu; the last round known to be committed to disk
 
 	// log copied from ledger
 	log logging.Logger

@@ -23,12 +23,12 @@ import (
 )
 
 type expiredCirculationCache struct {
-	cur  map[expiredCirculationKey]basics.MicroAlgos
-	prev map[expiredCirculationKey]basics.MicroAlgos
+	cur  map[expiredCirculationKey]basics.MicroAlgos // protected by mu
+	prev map[expiredCirculationKey]basics.MicroAlgos // protected by mu
 
 	maxSize int
 	// mu protects cur and prev. get acquires RLock; put acquires Lock
-	// and may rotate cur→prev when the cache reaches maxSize.
+	// and may rotate cur into prev when the cache reaches maxSize.
 	mu deadlock.RWMutex
 }
 

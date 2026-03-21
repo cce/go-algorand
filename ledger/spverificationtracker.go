@@ -50,14 +50,14 @@ type spVerificationTracker struct {
 	// pendingCommitContexts represents the part of the tracked verification context currently in memory. Each element in this
 	// array contains both the context required to verify a single state proof and context to decide whether it's possible to
 	// commit the verification context to the database.
-	pendingCommitContexts []verificationCommitContext
+	pendingCommitContexts []verificationCommitContext // protected by mu
 
 	// pendingDeleteContexts represents the context required to delete committed state proof verification context from the
 	// database.
-	pendingDeleteContexts []verificationDeleteContext
+	pendingDeleteContexts []verificationDeleteContext // protected by mu
 
-	// mu protects pendingCommitContexts, pendingDeleteContexts, and
-	// lastLookedUpVerificationContext. newBlock/postCommit acquire Lock;
+	// mu protects mutable state proof verification state. See "protected by mu"
+	// annotations on individual fields. newBlock/postCommit acquire Lock;
 	// LookupVerificationContext acquires RLock.
 	mu deadlock.RWMutex
 
@@ -67,7 +67,7 @@ type spVerificationTracker struct {
 	l ledgerForTracker
 
 	// lastLookedUpVerificationContext should store the last verification context that was looked up.
-	lastLookedUpVerificationContext ledgercore.StateProofVerificationContext
+	lastLookedUpVerificationContext ledgercore.StateProofVerificationContext // protected by mu
 }
 
 func (spt *spVerificationTracker) loadFromDisk(l ledgerForTracker, _ basics.Round) error {

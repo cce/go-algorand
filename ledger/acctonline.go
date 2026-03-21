@@ -67,19 +67,19 @@ type onlineAccounts struct {
 
 	// cachedDBRoundOnline is always exactly tracker DB round (and therefore, onlineAccountsRound()),
 	// cached to use in lookup functions
-	cachedDBRoundOnline basics.Round
+	cachedDBRoundOnline basics.Round // protected by accountsMu
 
 	// deltas stores updates for every round after dbRound.
-	deltas []ledgercore.AccountDeltas
+	deltas []ledgercore.AccountDeltas // protected by accountsMu
 
 	// accounts stores the most recent account state for every
 	// address that appears in deltas.
-	accounts map[basics.Address]modifiedOnlineAccount
+	accounts map[basics.Address]modifiedOnlineAccount // protected by accountsMu
 
 	// onlineRoundParamsData stores onlineMoney, rewards from rounds
 	// dbRound + 1 - maxLookback to current round, where maxLookback is max(proto.MaxBalLookback, votersLookback)
 	// It behaves as delta storage and a cache.
-	onlineRoundParamsData []ledgercore.OnlineRoundParamsData
+	onlineRoundParamsData []ledgercore.OnlineRoundParamsData // protected by accountsMu
 
 	// log copied from ledger
 	log logging.Logger
@@ -90,12 +90,11 @@ type onlineAccounts struct {
 	ledger ledgerForTracker
 
 	// deltasAccum stores the accumulated deltas for every round starting dbRound-1.
-	deltasAccum []int
+	deltasAccum []int // protected by accountsMu
 
 	// accountsMu protects in-memory online-account state that sits on top of the
-	// committed database round. Protected fields: cachedDBRoundOnline, deltas, accounts,
-	// onlineRoundParamsData, deltasAccum, baseOnlineAccounts, and onlineAccountsCache.
-	// Lookup methods acquire RLock; postCommit/newBlock acquire Lock.
+	// committed database round. See "protected by accountsMu" annotations on
+	// individual fields. Lookup methods acquire RLock; postCommit/newBlock acquire Lock.
 	accountsMu deadlock.RWMutex
 
 	// accountsReadCond is signaled after commitRound advances cachedDBRoundOnline, waking
@@ -106,8 +105,8 @@ type onlineAccounts struct {
 	// voters keeps track of Merkle trees of online accounts, used for compact certificates.
 	voters votersTracker
 
-	// baseAccounts stores the most recently used accounts, at exactly dbRound
-	baseOnlineAccounts lruOnlineAccounts
+	// baseOnlineAccounts stores the most recently used accounts, at exactly dbRound
+	baseOnlineAccounts lruOnlineAccounts // protected by accountsMu
 
 	// onlineAccountsCache contains up to onlineAccountsCacheMaxSize accounts with their complete history
 	// for the range [Lastest - MaxBalLookback - X, Latest - lookback], where X = [0, commit range]
@@ -116,7 +115,7 @@ type onlineAccounts struct {
 	// 1) loading a full history when new accounts get added
 	// 2) adding online accounts state changes when flushing to disk
 	// 3) pruning the history by removing older than Lastest - MaxBalLookback non-online entries
-	onlineAccountsCache onlineAccountsCache
+	onlineAccountsCache onlineAccountsCache // protected by accountsMu
 
 	// maxAcctLookback sets the minimim deltas size to keep in memory
 	acctLookback uint64

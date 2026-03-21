@@ -119,7 +119,7 @@ type catchpointTracker struct {
 
 	// The last catchpoint label that was written to the database. Should always align with what's in the database.
 	// note that this is the last catchpoint *label* and not the catchpoint file.
-	lastCatchpointLabel string
+	lastCatchpointLabel string // protected by catchpointsMu
 
 	// catchpointDataSlowWriting suggests to the accounts writer that it should finish
 	// writing up the (first stage) catchpoint data file ASAP. When this channel is
@@ -135,13 +135,13 @@ type catchpointTracker struct {
 
 	// The Trie tracking the current account balances. Always matches the balances that were
 	// written to the database.
-	balancesTrie *merkletrie.Trie
+	balancesTrie *merkletrie.Trie // protected by catchpointsMu
 
 	// roundDigest stores the digest of the block for every round starting with dbRound+1 and every round after it.
-	roundDigest []crypto.Digest
+	roundDigest []crypto.Digest // protected by catchpointsMu
 
 	// consensusVersion stores the consensus versions for every round starting with dbRound+1 and every round after it.
-	consensusVersion []protocol.ConsensusVersion
+	consensusVersion []protocol.ConsensusVersion // protected by catchpointsMu
 
 	// reenableCatchpointsRound is a round where the EnableCatchpointsWithSPContexts feature was enabled via the consensus.
 	// we avoid generating catchpoints before that round in order to ensure the network remain consistent in the catchpoint
@@ -149,22 +149,21 @@ type catchpointTracker struct {
 	// 1. It's zero, meaning that the EnableCatchpointsWithSPContexts has yet to be seen.
 	// 2. It's non-zero meaning that it the given round is after the EnableCatchpointsWithSPContexts was enabled ( it might be exact round
 	//    but that's only if newBlock was called with that round ), plus the lookback.
-	reenableCatchpointsRound basics.Round
+	reenableCatchpointsRound basics.Round // protected by catchpointsMu
 
 	// forceCatchpointFileWriting used for debugging purpose by bypassing the test against
 	// reenableCatchpointsRound in isCatchpointRound(), so that we could generate
 	// catchpoint files even before the protocol upgrade took place.
 	forceCatchpointFileWriting bool
 
-	// catchpointsMu protects mutable catchpoint state: roundDigest, consensusVersion,
-	// reenableCatchpointsRound, cachedDBRound, lastCatchpointLabel, and balancesTrie.
-	// commitRound/postCommit acquire Lock; produceCommittingTask and other readers
-	// acquire RLock.
+	// catchpointsMu protects mutable catchpoint state. See "protected by catchpointsMu"
+	// annotations on individual fields. commitRound/postCommit acquire Lock;
+	// produceCommittingTask and other readers acquire RLock.
 	catchpointsMu deadlock.RWMutex
 
 	// cachedDBRound is always exactly tracker DB round (and therefore, accountsRound()),
 	// cached to use in lookup functions
-	cachedDBRound basics.Round
+	cachedDBRound basics.Round // protected by catchpointsMu
 }
 
 // initialize initializes the catchpointTracker structure

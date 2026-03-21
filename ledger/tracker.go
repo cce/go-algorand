@@ -195,7 +195,7 @@ type trackerRegistry struct {
 
 	// dbRound is always exactly accountsRound(),
 	// cached to avoid SQL queries.
-	dbRound basics.Round
+	dbRound basics.Round // protected by mu
 
 	dbs trackerdb.Store
 	log logging.Logger
@@ -214,7 +214,7 @@ type trackerRegistry struct {
 
 	// lastFlushTime is the time we last flushed updates to
 	// the accounts DB (bumping dbRound).
-	lastFlushTime time.Time
+	lastFlushTime time.Time // protected by mu
 
 	cfg config.Local
 
