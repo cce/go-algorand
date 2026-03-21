@@ -90,7 +90,13 @@ type Ledger struct {
 	metrics        metricsTracker
 	spVerification spVerificationTracker
 
-	trackers  trackerRegistry
+	trackers trackerRegistry
+	// trackerMu guards access to the tracker objects (accts, acctsOnline,
+	// catchpoint, txTail, etc.) from the Ledger's public API methods.
+	// Every Ledger method that reads tracker state (e.g. LookupAccount,
+	// LookupAssets, LatestTotals) must hold RLock. reloadLedger holds Lock
+	// to reinitialize trackers. This is distinct from trackerRegistry.mu,
+	// which protects the registry's own dbRound field.
 	trackerMu deadlock.RWMutex
 
 	// verifiedTxnCache holds all the verified transactions state

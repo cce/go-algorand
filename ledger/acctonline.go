@@ -92,10 +92,15 @@ type onlineAccounts struct {
 	// deltasAccum stores the accumulated deltas for every round starting dbRound-1.
 	deltasAccum []int
 
-	// accountsMu is the synchronization mutex for accessing the various non-static variables.
+	// accountsMu protects in-memory online-account state that sits on top of the
+	// committed database round. Protected fields: cachedDBRoundOnline, deltas, accounts,
+	// onlineRoundParamsData, deltasAccum, baseOnlineAccounts, and onlineAccountsCache.
+	// Lookup methods acquire RLock; postCommit/newBlock acquire Lock.
 	accountsMu deadlock.RWMutex
 
-	// accountsReadCond used to synchronize read access to the internal data structures.
+	// accountsReadCond is signaled after commitRound advances cachedDBRoundOnline, waking
+	// lookup goroutines that are waiting for the database round to catch up to a
+	// requested round. Bound to accountsMu.RLocker().
 	accountsReadCond *sync.Cond
 
 	// voters keeps track of Merkle trees of online accounts, used for compact certificates.

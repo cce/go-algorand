@@ -156,8 +156,10 @@ type catchpointTracker struct {
 	// catchpoint files even before the protocol upgrade took place.
 	forceCatchpointFileWriting bool
 
-	// catchpointsMu protects roundDigest, reenableCatchpointsRound, cachedDBRound,
-	// lastCatchpointLabel and balancesTrie.
+	// catchpointsMu protects mutable catchpoint state: roundDigest, consensusVersion,
+	// reenableCatchpointsRound, cachedDBRound, lastCatchpointLabel, and balancesTrie.
+	// commitRound/postCommit acquire Lock; produceCommittingTask and other readers
+	// acquire RLock.
 	catchpointsMu deadlock.RWMutex
 
 	// cachedDBRound is always exactly tracker DB round (and therefore, accountsRound()),

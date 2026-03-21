@@ -34,8 +34,12 @@ type blockDeltaPair struct {
 }
 
 type blockNotifier struct {
-	mu            deadlock.Mutex
-	cond          *sync.Cond
+	// mu protects listeners, pendingBlocks, and running. The worker
+	// goroutine holds mu while waiting on cond for new blocks; newBlock
+	// acquires mu to append to pendingBlocks and signal the worker.
+	mu   deadlock.Mutex
+	cond *sync.Cond
+	// listeners is the set of BlockListener callbacks notified on each block.
 	listeners     []ledgercore.BlockListener
 	pendingBlocks []blockDeltaPair
 	running       bool

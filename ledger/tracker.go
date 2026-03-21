@@ -206,6 +206,10 @@ type trackerRegistry struct {
 	// the synchronous mode that would be used while the accounts database is being rebuilt.
 	accountsRebuildSynchronousMode db.SynchronousMode
 
+	// mu protects dbRound and lastFlushTime. It is held (Lock) during
+	// commitRound when advancing dbRound, and held (RLock) by loadFromDisk
+	// and any code that reads dbRound. The Ledger-level trackerMu is a
+	// separate, higher-level lock (see Ledger.trackerMu).
 	mu deadlock.RWMutex
 
 	// lastFlushTime is the time we last flushed updates to

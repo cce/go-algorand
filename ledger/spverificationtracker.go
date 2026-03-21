@@ -56,7 +56,9 @@ type spVerificationTracker struct {
 	// database.
 	pendingDeleteContexts []verificationDeleteContext
 
-	// mu protects pendingCommitContexts and pendingDeleteContexts.
+	// mu protects pendingCommitContexts, pendingDeleteContexts, and
+	// lastLookedUpVerificationContext. newBlock/postCommit acquire Lock;
+	// LookupVerificationContext acquires RLock.
 	mu deadlock.RWMutex
 
 	// log copied from ledger

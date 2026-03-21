@@ -198,10 +198,16 @@ type accountUpdates struct {
 	// deltasAccum stores the accumulated deltas for every round starting dbRound-1.
 	deltasAccum []int
 
-	// accountsMu is the synchronization mutex for accessing the various non-static variables.
+	// accountsMu protects in-memory account/resource/kv state that sits on top of the
+	// committed database round. Protected fields: cachedDBRound, deltas, accounts,
+	// resources, kvStore, creatables, versions, roundTotals, deltasAccum,
+	// baseAccounts, baseResources, and baseKVs.
+	// Lookup methods acquire RLock; postCommit/newBlock acquire Lock.
 	accountsMu deadlock.RWMutex
 
-	// accountsReadCond used to synchronize read access to the internal data structures.
+	// accountsReadCond is signaled after commitRound advances cachedDBRound, waking
+	// lookup goroutines that are waiting for the database round to catch up to a
+	// requested round. Bound to accountsMu.RLocker().
 	accountsReadCond *sync.Cond
 
 	// baseAccounts stores the most recently used accounts, at exactly dbRound

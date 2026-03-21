@@ -27,7 +27,9 @@ type expiredCirculationCache struct {
 	prev map[expiredCirculationKey]basics.MicroAlgos
 
 	maxSize int
-	mu      deadlock.RWMutex
+	// mu protects cur and prev. get acquires RLock; put acquires Lock
+	// and may rotate cur→prev when the cache reaches maxSize.
+	mu deadlock.RWMutex
 }
 
 type expiredCirculationKey struct {

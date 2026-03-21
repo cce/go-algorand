@@ -76,8 +76,9 @@ type txTail struct {
 	// lowestBlockHeaderRound is the lowest round in blockHeaderData, used as a starting point for old entries removal
 	lowestBlockHeaderRound basics.Round
 
-	// tailMu is the synchronization mutex for accessing internal data including
-	// lastValid, recent, lowWaterMark, roundTailHashes, roundTailSerializedDeltas and blockHeaderData.
+	// tailMu protects all mutable txTail state: recent, roundTailSerializedDeltas,
+	// roundTailHashes, blockHeaderData, lowestBlockHeaderRound, lastValid, and
+	// lowWaterMark. newBlock/postCommit acquire Lock; lookup/checkDup acquire RLock.
 	tailMu deadlock.RWMutex
 
 	// lastValid allows looking up all of the transactions that expire in a given round.

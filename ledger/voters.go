@@ -88,7 +88,11 @@ type votersTracker struct {
 	// Additionally, the tracker would contain an entry for every state proof interval between the latest round in the
 	// ledger and the db round.
 	votersForRoundCache map[basics.Round]*ledgercore.VotersForRound
-	votersMu            deadlock.RWMutex
+	// votersMu protects votersForRoundCache. Methods that read the cache
+	// (e.g. getVoters, latestCompletedVotersUpTo) acquire RLock; methods
+	// that add or remove entries (newBlock, commitRound, loadFromDisk)
+	// acquire Lock.
+	votersMu deadlock.RWMutex
 
 	l                     ledgerForTracker
 	onlineAccountsFetcher ledgercore.OnlineAccountsFetcher
@@ -99,7 +103,9 @@ type votersTracker struct {
 
 	// commitListener provides a callback to call on each prepare commit. This callback receives access to the voters
 	// cache.
-	commitListener   ledgercore.VotersCommitListener
+	commitListener ledgercore.VotersCommitListener
+	// commitListenerMu protects commitListener. RegisterVotersCommitListener
+	// acquires Lock; produceCommittingTask acquires RLock.
 	commitListenerMu deadlock.RWMutex
 }
 
