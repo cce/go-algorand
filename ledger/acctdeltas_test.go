@@ -4055,9 +4055,14 @@ func TestLookupAssetResourcesWithDeltas(t *testing.T) {
 		updates.Upsert(optinAddr, ledgercore.AccountData{
 			AccountBaseData: ledgercore.AccountBaseData{
 				MicroAlgos:  basics.MicroAlgos{Raw: 1_000_000},
-				TotalAssets: 1,
+				TotalAssets: 2,
 			},
 		})
+		// optinAddr opts into 1002 (will close out in delta to test that
+		// non-creator close-outs are excluded from results).
+		updates.UpsertAssetResource(optinAddr, basics.AssetIndex(1002),
+			ledgercore.AssetParamsDelta{},
+			ledgercore.AssetHoldingDelta{Holding: &basics.AssetHolding{Amount: 50}})
 		updates.UpsertAssetResource(optinAddr, basics.AssetIndex(1007),
 			ledgercore.AssetParamsDelta{},
 			ledgercore.AssetHoldingDelta{Holding: &basics.AssetHolding{Amount: 0}})
@@ -4137,6 +4142,10 @@ func TestLookupAssetResourcesWithDeltas(t *testing.T) {
 		updates.UpsertAssetResource(creatorAddr, basics.AssetIndex(1004),
 			ledgercore.AssetParamsDelta{Deleted: true},
 			ledgercore.AssetHoldingDelta{})
+		// optinAddr closes out of 1002
+		updates.UpsertAssetResource(optinAddr, basics.AssetIndex(1002),
+			ledgercore.AssetParamsDelta{},
+			ledgercore.AssetHoldingDelta{Deleted: true})
 
 		base := accts[deltaRound1-1]
 		opts := auNewBlockOpts{updates, testProtocolVersion, protoParams, knownCreatables}
@@ -4211,14 +4220,13 @@ func TestLookupAssetResourcesWithDeltas(t *testing.T) {
 	require.Equal(t, uint64(6000), assetMap[basics.AssetIndex(1006)].AssetParams.Total)
 	require.Equal(t, creatorAddr, assetMap[basics.AssetIndex(1006)].Creator)
 
-	// optinAddr opted in to asset 1007 with a zero balance before it was destroyed. The protocol
-	// does not track all opt-outs when an asset is deleted (only the creator's holding is
-	// enforced), so optinAddr's holding persists in the DB even after the asset params are gone.
-	// The lookup must return a non-nil holding with zero amount and no params or creator.
+	// optinAddr: 1002 was closed out in deltas (non-creator), 1007 had its
+	// asset destroyed in a committed round. Only 1007 should remain -- the
+	// close-out of 1002 must exclude it despite the DB join providing params.
 	optinAddrResources, optinAddrRnd, err := au.LookupAssetResources(optinAddr, 0, 100)
 	require.NoError(t, err)
 	require.Equal(t, deltaRound2, optinAddrRnd)
-	require.Len(t, optinAddrResources, 1)
+	require.Len(t, optinAddrResources, 1, "non-creator close-out should be excluded")
 	require.Equal(t, basics.AssetIndex(1007), optinAddrResources[0].AssetID)
 	require.NotNil(t, optinAddrResources[0].AssetHolding)
 	require.Equal(t, basics.AssetHolding{}, *optinAddrResources[0].AssetHolding)
@@ -4240,11 +4248,15 @@ func TestLookupApplicationResourcesWithDeltas(t *testing.T) {
 
 	accts := setupAccts(5)
 
-	var testAddr basics.Address
+	var testAddr, optinAddr basics.Address
 	for addr := range accts[0] {
 		if addr != testSinkAddr && addr != testPoolAddr {
-			testAddr = addr
-			break
+			if testAddr.IsZero() {
+				testAddr = addr
+			} else {
+				optinAddr = addr
+				break
+			}
 		}
 	}
 
@@ -4267,6 +4279,8 @@ func TestLookupApplicationResourcesWithDeltas(t *testing.T) {
 	//   2003: will have params-only modification in delta
 	//   2004: will have params deleted in delta (local state remains)
 	//   2005: will have both local state and params deleted in delta
+	// optinAddr opts into 2002 (will close out in delta to test that non-creator
+	// close-outs are excluded from results).
 	{
 		var updates ledgercore.AccountDeltas
 		updates.Upsert(testAddr, ledgercore.AccountData{
@@ -4290,6 +4304,19 @@ func TestLookupApplicationResourcesWithDeltas(t *testing.T) {
 					},
 				})
 		}
+		updates.Upsert(optinAddr, ledgercore.AccountData{
+			AccountBaseData: ledgercore.AccountBaseData{
+				MicroAlgos:          basics.MicroAlgos{Raw: 1_000_000},
+				TotalAppLocalStates: 1,
+			},
+		})
+		updates.UpsertAppResource(optinAddr, basics.AppIndex(2002),
+			ledgercore.AppParamsDelta{},
+			ledgercore.AppLocalStateDelta{
+				LocalState: &basics.AppLocalState{
+					Schema: basics.StateSchema{NumUint: 99},
+				},
+			})
 
 		base := accts[0]
 		newAccts := applyPartialDeltas(base, updates)
@@ -4359,6 +4386,10 @@ func TestLookupApplicationResourcesWithDeltas(t *testing.T) {
 		updates.UpsertAppResource(testAddr, basics.AppIndex(2004),
 			ledgercore.AppParamsDelta{Deleted: true},
 			ledgercore.AppLocalStateDelta{})
+		// optinAddr closes out of 2002
+		updates.UpsertAppResource(optinAddr, basics.AppIndex(2002),
+			ledgercore.AppParamsDelta{},
+			ledgercore.AppLocalStateDelta{Deleted: true})
 
 		base := accts[deltaRound1-1]
 		opts := auNewBlockOpts{updates, testProtocolVersion, protoParams, knownCreatables}
@@ -4459,6 +4490,10 @@ func TestLookupApplicationResourcesWithDeltas(t *testing.T) {
 	require.Equal(t, uint64(4), noParamsMap[basics.AppIndex(2004)].AppLocalState.Schema.NumUint)
 	require.Equal(t, uint64(60), noParamsMap[basics.AppIndex(2006)].AppLocalState.Schema.NumUint)
 
+	// 2001: local state deleted but still created by testAddr, so it appears
+	require.Nil(t, noParamsMap[basics.AppIndex(2001)].AppLocalState)
+	require.Equal(t, testAddr, noParamsMap[basics.AppIndex(2001)].Creator)
+
 	// Creator must be populated for non-deleted apps, even without includeParams.
 	require.Equal(t, testAddr, noParamsMap[basics.AppIndex(2000)].Creator)
 	require.Equal(t, testAddr, noParamsMap[basics.AppIndex(2002)].Creator)
@@ -4467,6 +4502,12 @@ func TestLookupApplicationResourcesWithDeltas(t *testing.T) {
 		"delta-only app should have non-zero Creator even when includeParams=false")
 	// 2004 had its params deleted -- Creator should be zero.
 	require.True(t, noParamsMap[basics.AppIndex(2004)].Creator.IsZero())
+
+	// optinAddr closed out of 2002 in deltas. A non-creator who closed out
+	// should not see the app in their results.
+	optinResources, _, err := au.LookupApplicationResources(optinAddr, 0, 100, true)
+	require.NoError(t, err)
+	require.Len(t, optinResources, 0, "non-creator who closed out should have no app results")
 }
 
 // TestLookupAppResourcesParamsOnlyDeletion exercises the scenario where an app
