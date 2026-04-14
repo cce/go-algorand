@@ -1674,9 +1674,9 @@ func (au *accountUpdates) lookupApplicationResources(addr basics.Address, appIDG
 					}
 				}
 
-				// unlike assets, we might have !includeParams, which means we
-				// must also check for addr == creator (if addr != creator, we don't care about it)
-				if arwi.AppLocalState != nil || arwi.AppParams != nil || arwi.Creator == addr {
+				// AppParams are metadata, not evidence that addr still has a relationship
+				// to this app. Keep rows only when addr still has local state or is creator.
+				if arwi.AppLocalState != nil || arwi.Creator == addr {
 					result = append(result, arwi)
 				}
 			}
@@ -1749,8 +1749,8 @@ func (au *accountUpdates) lookupApplicationResources(addr basics.Address, appIDG
 						}
 					}
 				}
-				// again, we must check for the creator, since that might be the only info here
-				if arwi.AppLocalState != nil || arwi.AppParams != nil || arwi.Creator == addr {
+				// As above, params alone must not resurrect a row after a non-creator closes out.
+				if arwi.AppLocalState != nil || arwi.Creator == addr {
 					result = append(result, arwi)
 					if appID > resultMaxID {
 						resultMaxID = appID
