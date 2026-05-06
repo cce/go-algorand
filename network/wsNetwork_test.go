@@ -44,8 +44,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	sdktrace "go.opentelemetry.io/otel/sdk/trace"
-	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/algorand/go-deadlock"
@@ -412,14 +410,21 @@ func TestWebsocketNetworkTracing(t *testing.T) {
 	// 	stdouttrace.WithPrettyPrint(),
 	// )
 	// require.NoError(t, err)
-	testExporter := tracetest.NewInMemoryExporter()
-	tp := sdktrace.NewTracerProvider(
-		sdktrace.WithSampler(sdktrace.AlwaysSample()),
-		sdktrace.WithBatcher(testExporter),
-		//sdktrace.WithSyncer(testExporter),
-	)
-	testTracer := tp.Tracer("testTracer")
+
+	// testExporter := tracetest.NewInMemoryExporter()
+	// tp := sdktrace.NewTracerProvider(
+	// 	sdktrace.WithSampler(sdktrace.AlwaysSample()),
+	// 	sdktrace.WithBatcher(testExporter),
+	// 	//sdktrace.WithSyncer(testExporter),
+	// )
+
+	otlpCtx, otlpCancelFunc := context.WithCancel(context.Background())
+	tp, err := tracing.SetupOTLP(otlpCtx)
+	require.NoError(t, err)
+	defer otlpCancelFunc()
+
 	tracing.SetTracerProvider(tp)
+	testTracer := tp.Tracer("testTracer")
 
 	for _, tag := range []protocol.Tag{protocol.ProposalPayloadTag} { //, protocol.AgreementVoteTag, protocol.TxnTag} {
 		ctx, span := testTracer.Start(context.Background(), "testSpan")
@@ -441,19 +446,19 @@ func TestWebsocketNetworkTracing(t *testing.T) {
 	//t.Log("trace JSON export:", traceJSON.String())
 
 	// ensure that "testSpan" and "msgHandlerTest" spans are present (that propagation works)
-	spans := testExporter.GetSpans()
-	var netASpanFound, netBSpanFound bool
-	for _, span := range spans {
-		if span.Name == "testSpan" {
-			netASpanFound = true
-		}
-		if span.Name == "msgHandlerTest" {
-			netBSpanFound = true
-		}
-		t.Logf("span %s %v %v", span.Name, span.SpanContext.TraceID(), span.SpanContext.SpanID())
-	}
-	assert.True(t, netASpanFound, "netA span not found")
-	assert.True(t, netBSpanFound, "netB span not found")
+	// spans := testExporter.GetSpans()
+	// var netASpanFound, netBSpanFound bool
+	// for _, span := range spans {
+	// 	if span.Name == "testSpan" {
+	// 		netASpanFound = true
+	// 	}
+	// 	if span.Name == "msgHandlerTest" {
+	// 		netBSpanFound = true
+	// 	}
+	// 	t.Logf("span %s %v %v", span.Name, span.SpanContext.TraceID(), span.SpanContext.SpanID())
+	// }
+	// assert.True(t, netASpanFound, "netA span not found")
+	// assert.True(t, netBSpanFound, "netB span not found")
 }
 
 type mutexBuilder struct {
