@@ -20,10 +20,12 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 	"time"
 
+	"github.com/DataDog/zstd"
 	"github.com/algorand/go-deadlock"
 
 	"github.com/algorand/go-algorand/agreement"
@@ -200,7 +202,10 @@ func (w *wsFetcherClient) requestBlock(ctx context.Context, round basics.Round) 
 }
 
 // set max fetcher size to 10MB, this is enough to fit the block and certificate
-const fetcherMaxBlockBytes = 10 << 20
+const (
+	fetcherMaxBlockBytes = 10 << 20
+	baseResponseReadingBufferSize = uint64(1024)
+)
 
 type noBlockForRoundError struct {
 	latest, round basics.Round
@@ -230,6 +235,8 @@ func (hf *HTTPFetcher) getBlockBytes(ctx context.Context, r basics.Round) (data 
 	if err != nil {
 		return nil, err
 	}
+	// Add gzip compression support
+	request.Header.Set("Accept-Encoding", "zstd")
 	requestCtx, requestCancel := context.WithTimeout(ctx, time.Duration(hf.config.CatchupHTTPBlockFetchTimeoutSec)*time.Second)
 	defer requestCancel()
 	request = request.WithContext(requestCtx)
@@ -282,7 +289,36 @@ func (hf *HTTPFetcher) getBlockBytes(ctx context.Context, r basics.Round) (data 
 		return nil, errHTTPResponseContentType{contentTypeCount: 1, contentType: contentTypes[0]}
 	}
 
-	return rpcs.ResponseBytes(response, hf.log, fetcherMaxBlockBytes)
+	// Handle gzip compression if enabled
+	var reader io.ReadCloser = response.Body
+	defer response.Body.Close()
+
+	if response.Header.Get("Content-Encoding") == "zstd" {
+		reader = zstd.NewReader(response.Body)
+		defer reader.(io.Closer).Close()
+	}
+
+	// Check content length limits
+	if response.ContentLength >= 0 {
+		if uint64(response.ContentLength) > fetcherMaxBlockBytes {
+			hf.log.Errorf("response too large: %d > %d", response.ContentLength, fetcherMaxBlockBytes)
+			return nil, network.ErrIncomingMsgTooLarge
+		}
+		data = make([]byte, response.ContentLength)
+		_, err = io.ReadFull(reader, data)
+		return data, err
+	}
+
+	// If content length is unknown, use a limited reader
+	slurper := network.MakeLimitedReaderSlurper(baseResponseReadingBufferSize, fetcherMaxBlockBytes)
+	err = slurper.Read(reader)
+	if err == network.ErrIncomingMsgTooLarge {
+		hf.log.Errorf("response too large: %d > %d", slurper.Size(), fetcherMaxBlockBytes)
+	}
+	if err != nil {
+		return nil, err
+	}
+	return slurper.Bytes(), nil
 }
 
 // Address is part of FetcherClient interface.

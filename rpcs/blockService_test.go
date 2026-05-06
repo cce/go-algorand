@@ -18,6 +18,7 @@ package rpcs
 
 import (
 	"bytes"
+	"compress/gzip"
 	"context"
 	"encoding/binary"
 	"fmt"
@@ -569,6 +570,81 @@ func TestErrMemoryAtCapacity(t *testing.T) {
 	macError := errMemoryAtCapacity{capacity: uint64(100), used: uint64(110)}
 	errStr := macError.Error()
 	require.Equal(t, "block service memory over capacity: 110 / 100", errStr)
+}
+
+func TestBlockServiceGzipCompression(t *testing.T) {
+	partitiontest.PartitionTest(t)
+
+	log := logging.TestingLog(t)
+	ledger := makeLedger(t, "gzip-test")
+	defer ledger.Close()
+	// Add a block to have some data to serve
+	addBlock(t, ledger)
+
+	net := &httpTestPeerSource{}
+	net.GenesisID = "test-genesis-ID"
+
+	node := &basicRPCNode{}
+	node.start()
+	defer node.stop()
+
+	config := config.GetDefaultLocal()
+	bs := MakeBlockService(log, config, ledger, net, "test-genesis-ID")
+	bs.RegisterHandlers(node)
+
+	parsedURL, err := addr.ParseHostOrURL(node.rootURL())
+	require.NoError(t, err)
+
+	client := http.Client{}
+	ctx := context.Background()
+
+	// Helper function to make request with optional gzip encoding
+	makeRequest := func(acceptGzip bool) *http.Response {
+		// Construct URL path according to BlockServiceBlockPath format
+		parsedURL.Path = fmt.Sprintf("/v1/test-genesis-ID/block/%d", uint64(1))
+		blockURL := parsedURL.String()
+		request, err := http.NewRequest("GET", blockURL, nil)
+		require.NoError(t, err)
+
+		if acceptGzip {
+			request.Header.Set("Accept-Encoding", "gzip")
+		}
+
+		requestCtx, requestCancel := context.WithTimeout(ctx, time.Duration(config.CatchupHTTPBlockFetchTimeoutSec)*time.Second)
+		defer requestCancel()
+		request = request.WithContext(requestCtx)
+		network.SetUserAgentHeader(request.Header)
+		response, err := client.Do(request)
+		require.NoError(t, err)
+		return response
+	}
+
+	// Test without gzip
+	response := makeRequest(false)
+	require.Equal(t, http.StatusOK, response.StatusCode)
+	require.Empty(t, response.Header.Get("Content-Encoding"))
+	plainBody, err := io.ReadAll(response.Body)
+	require.NoError(t, err)
+	response.Body.Close()
+	require.NotEmpty(t, plainBody)
+
+	// Test with gzip
+	response = makeRequest(true)
+	require.Equal(t, http.StatusOK, response.StatusCode)
+	require.Equal(t, "gzip", response.Header.Get("Content-Encoding"))
+
+	// Read and decompress the body
+	gzipReader, err := gzip.NewReader(response.Body)
+	require.NoError(t, err)
+	gzippedBody, err := io.ReadAll(gzipReader)
+	require.NoError(t, err)
+	response.Body.Close()
+	gzipReader.Close()
+
+	// Verify the content is the same
+	require.Equal(t, plainBody, gzippedBody)
+	// Verify the compressed size is smaller
+	require.True(t, len(response.Header.Get("Content-Length")) == 0 || response.ContentLength < int64(len(plainBody)))
 }
 
 func TestBlockServiceRedirect(t *testing.T) {

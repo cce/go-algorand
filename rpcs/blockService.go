@@ -28,6 +28,7 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/DataDog/zstd"
 	"github.com/gorilla/mux"
 
 	"github.com/algorand/go-codec/codec"
@@ -277,13 +278,32 @@ func (bs *BlockService) ServeBlockPath(response http.ResponseWriter, request *ht
 		}
 	}
 
+	// Set common headers
 	response.Header().Set("Content-Type", BlockResponseContentType)
-	response.Header().Set("Content-Length", strconv.Itoa(len(encodedBlockCert)))
 	response.Header().Set("Cache-Control", blockResponseHasBlockCacheControl)
-	response.WriteHeader(http.StatusOK)
-	_, err = response.Write(encodedBlockCert)
-	if err != nil {
-		bs.log.Warn("http block write failed ", err)
+
+	// Check if client accepts gzip compression
+	if strings.Contains(request.Header.Get("Accept-Encoding"), "zstd") {
+		response.Header().Set("Content-Encoding", "zstd")
+		response.WriteHeader(http.StatusOK)
+
+		compressed, err := zstd.Compress(nil, encodedBlockCert)
+		if err != nil {
+			bs.log.Warn("http block zstd compression failed ", err)
+			return
+		}
+		_, err = response.Write(compressed)
+		if err != nil {
+			bs.log.Warn("http block zstd write failed ", err)
+			return
+		}
+	} else {
+		response.Header().Set("Content-Length", strconv.Itoa(len(encodedBlockCert)))
+		response.WriteHeader(http.StatusOK)
+		_, err = response.Write(encodedBlockCert)
+		if err != nil {
+			bs.log.Warn("http block write failed ", err)
+		}
 	}
 	bs.mu.Lock()
 	defer bs.mu.Unlock()
