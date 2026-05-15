@@ -269,32 +269,50 @@ func (w *Writer) BlockPut(tx *sql.Tx, blk *bookkeeping.Block, cert *agreement.Ce
 		}
 	}
 
-	blkChunk, certChunk, anchorRound, err := w.encodeBlockCertData(blk, cert)
+	blkChunk, certChunk, anchorRound, err := w.EncodeBlockCert(blk, cert)
 	if err != nil {
 		return err
 	}
+	return w.InsertEncodedAppend(tx, rnd, blk.CurrentProtocol, protocol.Encode(&blk.BlockHeader), blkChunk, certChunk, anchorRound)
+}
 
+// InsertEncodedAppend inserts a row using bytes already produced by EncodeBlockCert.
+// Unlike BlockPut it does not run a MAX(rnd) sanity check; that per-row
+// query adds latency a bulk-import caller (compressblockdb -p) cannot
+// hide once windows are produced out-of-order by parallel encoders and
+// then reordered for INSERT. The check is replaced by a stronger caller
+// obligation:
+//
+//   - rnd MUST equal BlockNext(tx) at the moment of the call (i.e. the
+//     INSERT must extend the dest blocks table contiguously, with no gap
+//     and no overwrite). The read-path SELECT joins on window_start and
+//     a missing intermediate row leaves a "continuation chunk" that
+//     references an anchor row that does not exist — a silent corruption.
+//   - blkBlob, certBlob, and anchorRound MUST come from a single
+//     EncodeBlockCert call on a Writer whose encoder state matches the
+//     row being inserted. Reusing bytes from a different encoder, or
+//     intermixing encoded chunks from independent Writers within a
+//     single zstd frame, produces a row whose decoder cannot find its
+//     anchor at read time.
+//   - proto and hdrBlob come from blk.CurrentProtocol and
+//     protocol.Encode(&blk.BlockHeader) respectively; both are caller-
+//     provided so InsertEncodedAppend stays a pure INSERT helper.
+//
+// In compressblockdb -p these obligations are enforced by a single
+// writer goroutine that drains worker results, reorders them by window
+// index, and flushes in strict ascending order without gaps. External
+// callers that need a safer high-level entry point should use BlockPut.
+func (w *Writer) InsertEncodedAppend(tx *sql.Tx, rnd basics.Round, proto protocol.ConsensusVersion, hdrBlob, blkBlob, certBlob []byte, anchorRound basics.Round) error {
 	// When compression is disabled the row is byte-identical to the
 	// pre-compression on-disk layout, so we use the 5-column INSERT and
 	// never touch the window_start column (which may not even exist).
 	if w.Codec().Disabled() {
-		_, err = tx.Exec("INSERT INTO blocks (rnd, proto, hdrdata, blkdata, certdata) VALUES (?, ?, ?, ?, ?)",
-			rnd,
-			blk.CurrentProtocol,
-			protocol.Encode(&blk.BlockHeader),
-			blkChunk,
-			certChunk,
-		)
+		_, err := tx.Exec("INSERT INTO blocks (rnd, proto, hdrdata, blkdata, certdata) VALUES (?, ?, ?, ?, ?)",
+			rnd, proto, hdrBlob, blkBlob, certBlob)
 		return err
 	}
-	_, err = tx.Exec("INSERT INTO blocks (rnd, proto, hdrdata, blkdata, certdata, window_start) VALUES (?, ?, ?, ?, ?, ?)",
-		rnd,
-		blk.CurrentProtocol,
-		protocol.Encode(&blk.BlockHeader),
-		blkChunk,
-		certChunk,
-		uint64(anchorRound),
-	)
+	_, err := tx.Exec("INSERT INTO blocks (rnd, proto, hdrdata, blkdata, certdata, window_start) VALUES (?, ?, ?, ?, ?, ?)",
+		rnd, proto, hdrBlob, blkBlob, certBlob, uint64(anchorRound))
 	return err
 }
 

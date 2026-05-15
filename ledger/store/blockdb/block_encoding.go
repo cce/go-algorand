@@ -52,14 +52,21 @@ func tableHasColumn(tx *sql.Tx, table, column string) (bool, error) {
 	return false, rows.Err()
 }
 
-// encodeBlockCertData runs the block and certificate payloads through the
+// EncodeBlockCert runs the block and certificate payloads through the
 // Writer's per-column encoders. The returned anchorRound is the round that
 // opens the zstd frame containing this row; callers translate it into a
 // window_start column value (NULL when compression is disabled). Both
 // columns share an EncoderPair so they always advance their anchors
 // together; only one anchorRound is returned because the two are equal by
 // construction.
-func (w *Writer) encodeBlockCertData(blk *bookkeeping.Block, cert *agreement.Certificate) (blkChunk, certChunk []byte, anchorRound basics.Round, err error) {
+//
+// EncodeBlockCert advances the Writer's per-column zstd state. A caller
+// that encodes a row but then fails to commit the corresponding INSERT
+// (via InsertEncodedAppend or BlockPut) must call Reset before encoding the next
+// row, otherwise the next continuation chunk will reference an anchor that
+// never landed on disk. Sequential callers should prefer BlockPut, which
+// folds encode + insert + ordering check into one safer call.
+func (w *Writer) EncodeBlockCert(blk *bookkeeping.Block, cert *agreement.Certificate) (blkChunk, certChunk []byte, anchorRound basics.Round, err error) {
 	r := blk.Round()
 	blkBytes := protocol.Encode(blk)
 	certBytes := protocol.Encode(cert)

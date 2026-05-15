@@ -34,14 +34,17 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"database/sql"
 	"errors"
 	"flag"
 	"fmt"
 	"os"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	_ "github.com/mattn/go-sqlite3"
@@ -54,8 +57,9 @@ import (
 )
 
 var (
-	batchSize  = flag.Int("batch", 10000, "Commit destination transaction every this many rounds")
-	resumeFlag = flag.Bool("resume", false, "Resume an existing dst from MAX(rnd)+1 instead of refusing to overwrite. The dst's blocks table must already be populated; schema setup and the stageFirst seed are skipped, and a fresh zstd frame begins at the resume round.")
+	batchSize   = flag.Int("batch", 10000, "Commit destination transaction every this many rounds")
+	parallelism = flag.Int("p", 1, "Number of parallel encoder workers (1 = single-threaded; 0 = runtime.NumCPU())")
+	resumeFlag  = flag.Bool("resume", false, "Resume an existing dst from MAX(rnd)+1 instead of refusing to overwrite. The dst's blocks table must already be populated; schema setup and the stageFirst seed are skipped, and a fresh zstd frame begins at the resume round.")
 )
 
 func usage() {
@@ -111,13 +115,22 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err := run(src, dst, n, *batchSize, *resumeFlag); err != nil {
+	p := *parallelism
+	if p < 0 {
+		fmt.Fprintf(os.Stderr, "p must be >= 0, got %d\n", p)
+		os.Exit(1)
+	}
+	if p == 0 {
+		p = runtime.NumCPU()
+	}
+
+	if err := run(src, dst, n, *batchSize, p, *resumeFlag); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
 }
 
-func run(srcPath, dstPath string, n uint64, batch int, resume bool) error {
+func run(srcPath, dstPath string, n uint64, batch, p int, resume bool) error {
 	srcDB, err := sql.Open("sqlite3", fmt.Sprintf("file:%s?mode=ro&_journal_mode=wal", srcPath))
 	if err != nil {
 		return fmt.Errorf("open source: %w", err)
@@ -198,19 +211,32 @@ func run(srcPath, dstPath string, n uint64, batch int, resume bool) error {
 		batchStart = minR + 1
 		startWritten = 1
 	}
-	c := &copier{srcReader: srcReader, dstStore: dstStore, written: startWritten}
 
 	start := time.Now()
-	for batchLo := batchStart; batchLo <= maxR; batchLo += basics.Round(batch) {
-		batchHi := min(batchLo+basics.Round(batch)-1, maxR)
-		if berr := c.copyBatch(srcDB, dstDB, batchLo, batchHi); berr != nil {
-			return fmt.Errorf("batch [%d,%d]: %w", batchLo, batchHi, berr)
+	written := startWritten
+	// Parallel mode only helps when there is per-row zstd work to spread
+	// across cores: with n=0 the rows are raw msgp passthrough and a single
+	// writer thread saturates the disk on its own.
+	if p > 1 && n > 0 {
+		w, perr := parallelCopy(srcDB, dstDB, srcReader, dstStore, batchStart, maxR, n, p, batch, start, nrounds, startWritten)
+		if perr != nil {
+			return perr
 		}
-		fmt.Printf("  %d/%d (%.1f%%) in %s\n",
-			c.written, nrounds,
-			float64(c.written)*100/float64(nrounds),
-			time.Since(start).Round(time.Second),
-		)
+		written += w
+	} else {
+		c := &copier{srcReader: srcReader, dstStore: dstStore, written: startWritten}
+		for batchLo := batchStart; batchLo <= maxR; batchLo += basics.Round(batch) {
+			batchHi := min(batchLo+basics.Round(batch)-1, maxR)
+			if berr := c.copyBatch(srcDB, dstDB, batchLo, batchHi); berr != nil {
+				return fmt.Errorf("batch [%d,%d]: %w", batchLo, batchHi, berr)
+			}
+			fmt.Printf("  %d/%d (%.1f%%) in %s\n",
+				c.written, nrounds,
+				float64(c.written)*100/float64(nrounds),
+				time.Since(start).Round(time.Second),
+			)
+		}
+		written = c.written
 	}
 
 	// Truncate the WAL and close the destination connection before
@@ -233,7 +259,7 @@ func run(srcPath, dstPath string, n uint64, batch int, resume bool) error {
 	if err != nil {
 		return err
 	}
-	fmt.Printf("done: %d rounds in %s\n", c.written, time.Since(start).Round(time.Second))
+	fmt.Printf("done: %d rounds in %s\n", written, time.Since(start).Round(time.Second))
 	fmt.Printf("  source file: %.2f MB\n", float64(srcSize)/(1<<20))
 	fmt.Printf("  dest file:   %.2f MB (%.2f%% of source)\n",
 		float64(dstSize)/(1<<20),
@@ -446,4 +472,413 @@ func (c *copier) copyBatch(srcDB, dstDB *sql.DB, lo, hi basics.Round) error {
 		return err
 	}
 	return nil
+}
+
+// windowJob is one unit of parallel work: a contiguous range of rounds that
+// fits inside a single zstd frame (so the worker's encoder produces a
+// self-contained chunk for it). idx is monotonic in dispatch order so the
+// writer goroutine can reorder out-of-order completions.
+type windowJob struct {
+	idx    int
+	lo, hi basics.Round
+}
+
+// encodedRow carries the bytes a single InsertEncodedAppend call needs. proto and
+// hdrBlob are caller-extracted from the source block so the writer
+// goroutine never has to touch a decoded Block.
+type encodedRow struct {
+	rnd      basics.Round
+	proto    protocol.ConsensusVersion
+	hdrBlob  []byte
+	blkBlob  []byte
+	certBlob []byte
+	anchor   basics.Round
+}
+
+// windowResult is one completed windowJob, ready for in-order INSERT.
+type windowResult struct {
+	idx  int
+	rows []encodedRow
+}
+
+// makeWindowJobs partitions [lo, hi] into chunks aligned to the natural
+// zstd-frame boundaries the single-threaded encoder would Reset on, so the
+// parallel output is bit-identical to the single-threaded output for the
+// same source range. The first chunk extends from lo to the next
+// N-aligned boundary (lo may not itself be N-aligned because stageFirst
+// consumed one earlier round); every subsequent chunk is exactly N rounds.
+// Returns nil when lo > hi (empty range, e.g. a one-row source).
+func makeWindowJobs(lo, hi basics.Round, n uint64) []windowJob {
+	if lo > hi {
+		return nil
+	}
+	jobs := make([]windowJob, 0, (uint64(hi-lo)/n)+2)
+	cur := lo
+	for cur <= hi {
+		nextBoundary := basics.Round((uint64(cur)/n + 1) * n)
+		end := min(nextBoundary-1, hi)
+		jobs = append(jobs, windowJob{idx: len(jobs), lo: cur, hi: end})
+		cur = end + 1
+	}
+	return jobs
+}
+
+// parallelCopy runs the encode-and-insert pipeline with p workers feeding a
+// single writer goroutine. Workers each hold their own *blockdb.Store
+// (= their own zstd encoder) and read from the source via per-job
+// transactions; a counting semaphore caps the number of jobs dispatched
+// but not yet flushed so the writer-side reorder map and the workers'
+// in-flight buffers all stay bounded under disk backpressure. The writer
+// goroutine drains results, reorders by job index, and inserts rounds in
+// ascending order to keep the dest b-tree append-only. parallelCopy
+// joins every goroutine (workers, dispatcher, resCh closer) before
+// returning, so the caller can immediately close DBs without races.
+// Returns the count of rounds inserted in [lo, hi] (stageFirst owns lo-1).
+//
+// staged is the number of rounds the caller has already written to dest
+// before parallelCopy started (typically the count returned by
+// stageFirst); it is used only to offset the periodic progress print so
+// the percentage matches the single-threaded code path.
+func parallelCopy(
+	srcDB, dstDB *sql.DB,
+	srcReader *blockdb.Reader,
+	dstStore *blockdb.Store,
+	lo, hi basics.Round,
+	n uint64,
+	p, batch int,
+	start time.Time,
+	nrounds, staged uint64,
+) (uint64, error) {
+	jobs := makeWindowJobs(lo, hi, n)
+	if len(jobs) == 0 {
+		return 0, nil
+	}
+
+	// slots is the dispatched-but-not-yet-flushed counting semaphore.
+	// The dispatcher MUST acquire one slot before sending a job; the
+	// writer releases one slot after InsertEncodedAppend has inserted every row
+	// of the corresponding window. This caps the total memory held in
+	// (workers' in-progress encode) + (resCh) + (writer's pending map)
+	// at roughly maxInFlight * N * (avg compressed row size) bytes.
+	// resCh by itself is not sufficient: the writer drains resCh into an
+	// unbounded pending map while it waits for the next in-order window,
+	// so a slow early job would otherwise let later windows pile up in
+	// memory.
+	//
+	// The hard cap at 64 keeps the worst-case in-flight memory bounded
+	// even when p scales to many cores: at N=32 and ~1 MiB/row that is
+	// on the order of 2 GiB, comfortably below any practical RAM limit
+	// while still leaving each worker enough slack (~p*4) to absorb
+	// per-job latency variance before throttling the dispatcher.
+	maxInFlight := min(max(p*4, 4), 64)
+	slots := make(chan struct{}, maxInFlight)
+
+	jobCh := make(chan windowJob, p)
+	resCh := make(chan windowResult, p)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// firstErr captures the earliest error from any goroutine. sync.Once
+	// avoids the type-uniformity trap of atomic.Value, where storing two
+	// different concrete error types (e.g. a worker's wrapped error and
+	// the writer's ctx.Err()) would panic on the second CompareAndSwap.
+	var (
+		firstErrOnce sync.Once
+		firstErr     error
+	)
+	reportErr := func(err error) {
+		if err == nil {
+			return
+		}
+		firstErrOnce.Do(func() {
+			firstErr = err
+			cancel()
+		})
+	}
+
+	var workerWg sync.WaitGroup
+	for range p {
+		workerWg.Add(1)
+		go func() {
+			defer workerWg.Done()
+			reportErr(encoderWorker(ctx, srcDB, srcReader, dstDB, n, jobCh, resCh, slots))
+		}()
+	}
+
+	var dispatcherWg sync.WaitGroup
+	dispatcherWg.Add(1)
+	go func() {
+		defer dispatcherWg.Done()
+		defer close(jobCh)
+		for _, j := range jobs {
+			// Acquire a slot first so the in-flight count is bounded
+			// before any worker can pick the job up.
+			select {
+			case <-ctx.Done():
+				return
+			case slots <- struct{}{}:
+			}
+			select {
+			case <-ctx.Done():
+				// Return the slot we just took; nobody else will.
+				<-slots
+				return
+			case jobCh <- j:
+			}
+		}
+	}()
+
+	// resCh closer: blocks until every worker has returned (either via
+	// jobCh close on success, or via ctx cancellation on error), then
+	// closes resCh so writerLoop can recognize end-of-stream.
+	closerDone := make(chan struct{})
+	go func() {
+		defer close(closerDone)
+		workerWg.Wait()
+		close(resCh)
+	}()
+
+	written, werr := writerLoop(ctx, dstDB, dstStore, resCh, slots, len(jobs), batch, start, nrounds, staged)
+	reportErr(werr) // cancels ctx via firstErrOnce iff err != nil
+
+	// Join every background goroutine before returning. We must NOT call
+	// cancel() here on the success path: at this point workers may still
+	// be in their select between <-ctx.Done() and <-jobCh (with jobCh
+	// already closed by the dispatcher). A late cancellation races those
+	// workers — Go picks select cases uniformly when both are ready, so
+	// roughly half the time a worker would pick the ctx.Done case and
+	// return ctx.Err(), which firstErrOnce would then record as the run's
+	// first error on an otherwise successful copy. reportErr above is the
+	// only path that cancels; success drains naturally via the closed
+	// jobCh. The deferred cancel() at the top still fires after these
+	// Waits as a final cleanup.
+	workerWg.Wait()
+	dispatcherWg.Wait()
+	<-closerDone
+
+	return written, firstErr
+}
+
+// encoderWorker pulls windowJobs off jobCh, reads each round from the
+// source via a per-job read transaction (short-lived so a long-running
+// import does not pin a single source-WAL snapshot for hours), encodes
+// blk+cert with its own per-worker zstd encoder, and ships the completed
+// window to resCh. The encoder is Reset between jobs so each job stands
+// alone (a fresh worker, or one that just finished an unrelated window,
+// treats the job's first round as its frame anchor). srcDB connections
+// come from sql.DB's pool and are not shared across workers.
+//
+// The slots semaphore is passed in so encoderWorker can release a slot
+// for any job that has been dequeued but cannot complete (encode error,
+// ctx cancellation between dequeue and successful send). Because every
+// dispatched job is acquired with exactly one slot send, and every
+// dequeued job is owned by exactly one worker, this release is a
+// blocking <-slots: if it ever blocks, it points to an accounting bug
+// upstream. Jobs that the dispatcher cancels before sending, or jobs
+// still sitting in jobCh when cancellation begins, never reach a worker
+// and naturally retain their slot until the slots channel is GC'd; the
+// dispatcher's <-ctx.Done() path keeps it from ever blocking on
+// slots <- struct{}{} for those.
+func encoderWorker(
+	ctx context.Context,
+	srcDB *sql.DB,
+	srcReader *blockdb.Reader,
+	dstDB *sql.DB,
+	n uint64,
+	jobCh <-chan windowJob,
+	resCh chan<- windowResult,
+	slots <-chan struct{},
+) error {
+	// openStore against dstDB just to allocate a Writer at the right
+	// codec; the schema-detection tx is short and rolled back.
+	store, err := openStore(dstDB, n)
+	if err != nil {
+		return fmt.Errorf("open worker store: %w", err)
+	}
+	defer store.Close()
+
+	for {
+		var job windowJob
+		var ok bool
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case job, ok = <-jobCh:
+			if !ok {
+				return nil
+			}
+		}
+
+		res, perr := processJob(ctx, srcDB, srcReader, store, job)
+		if perr != nil {
+			// We dequeued this job, so a slot was acquired for it.
+			// Block on release: if this ever blocks it means the
+			// dispatcher's acquire and our release are out of sync.
+			<-slots
+			return perr
+		}
+		select {
+		case <-ctx.Done():
+			<-slots
+			return ctx.Err()
+		case resCh <- res:
+		}
+	}
+}
+
+// processJob does the per-job source read + encode work. It opens a
+// short-lived source transaction, resets the encoder so the job's first
+// round becomes a fresh frame anchor, encodes every round in the window,
+// and returns the result.
+func processJob(
+	ctx context.Context,
+	srcDB *sql.DB,
+	srcReader *blockdb.Reader,
+	store *blockdb.Store,
+	job windowJob,
+) (windowResult, error) {
+	srcTx, err := srcDB.Begin()
+	if err != nil {
+		return windowResult{}, fmt.Errorf("begin src tx for window [%d,%d]: %w", job.lo, job.hi, err)
+	}
+	defer func() { _ = srcTx.Rollback() }()
+
+	// Drop any in-flight frame state from the previous job so the next
+	// job's first round becomes its own frame anchor.
+	store.Reset()
+
+	rows := make([]encodedRow, 0, job.hi-job.lo+1)
+	for r := job.lo; r <= job.hi; r++ {
+		// Honor cancellation between rows so a long window does not
+		// keep a doomed worker alive past the first error.
+		if cerr := ctx.Err(); cerr != nil {
+			return windowResult{}, cerr
+		}
+		blk, cert, gerr := srcReader.BlockGetCert(srcTx, r)
+		if gerr != nil {
+			return windowResult{}, fmt.Errorf("read round %d: %w", r, gerr)
+		}
+		blkBlob, certBlob, anchor, eerr := store.EncodeBlockCert(&blk, &cert)
+		if eerr != nil {
+			return windowResult{}, fmt.Errorf("encode round %d: %w", r, eerr)
+		}
+		rows = append(rows, encodedRow{
+			rnd:      r,
+			proto:    blk.CurrentProtocol,
+			hdrBlob:  protocol.Encode(&blk.BlockHeader),
+			blkBlob:  blkBlob,
+			certBlob: certBlob,
+			anchor:   anchor,
+		})
+	}
+	return windowResult{idx: job.idx, rows: rows}, nil
+}
+
+// writerLoop drains resCh, buffers out-of-order completions in a pending
+// map, and INSERTs windows in strict idx order so dest stays append-only.
+// It commits dstTx whenever an in-tx batch crosses the batch threshold,
+// matching the single-threaded copier's commit cadence. Each flushed
+// window releases one slot on the dispatcher semaphore as soon as its
+// rows have been INSERTed into the current dstTx (the slot is not held
+// until COMMIT — the slots channel bounds memory in flight, not durable
+// progress). Returns the count of rounds inserted.
+//
+// When resCh closes before totalJobs windows have been flushed it means
+// workers exited early; in that case ctx.Err() (if any) is the original
+// cause and is preferred over the symptomatic "workers exited" message.
+func writerLoop(
+	ctx context.Context,
+	dstDB *sql.DB,
+	dstStore *blockdb.Store,
+	resCh <-chan windowResult,
+	slots <-chan struct{},
+	totalJobs, batch int,
+	start time.Time,
+	nrounds, staged uint64,
+) (uint64, error) {
+	pending := make(map[int]windowResult)
+	next := 0
+	var written uint64
+	insertedInTx := 0
+
+	dstTx, err := dstDB.Begin()
+	if err != nil {
+		return 0, err
+	}
+	rollback := func() {
+		if dstTx != nil {
+			_ = dstTx.Rollback()
+			dstTx = nil
+		}
+	}
+	defer rollback()
+
+	flush := func(r windowResult) error {
+		for _, row := range r.rows {
+			if perr := dstStore.InsertEncodedAppend(dstTx, row.rnd, row.proto, row.hdrBlob, row.blkBlob, row.certBlob, row.anchor); perr != nil {
+				return fmt.Errorf("InsertEncodedAppend round %d: %w", row.rnd, perr)
+			}
+			insertedInTx++
+			written++
+		}
+		// Release the dispatcher's slot for this window now that every
+		// row has been INSERTed. The receive is guaranteed not to block:
+		// every job in resCh was dispatched with exactly one acquire, so
+		// there is always a slot to release when we flush it.
+		<-slots
+		return nil
+	}
+
+	for next < totalJobs {
+		select {
+		case <-ctx.Done():
+			return written, ctx.Err()
+		case r, ok := <-resCh:
+			if !ok {
+				if cerr := ctx.Err(); cerr != nil {
+					return written, cerr
+				}
+				return written, fmt.Errorf("workers exited before completing all jobs (next=%d/%d)", next, totalJobs)
+			}
+			pending[r.idx] = r
+		}
+		// Drain consecutive in-order completions.
+		for {
+			r, ok := pending[next]
+			if !ok {
+				break
+			}
+			delete(pending, next)
+			if ferr := flush(r); ferr != nil {
+				return written, ferr
+			}
+			next++
+			if insertedInTx >= batch {
+				if cerr := dstTx.Commit(); cerr != nil {
+					dstTx = nil
+					return written, fmt.Errorf("commit: %w", cerr)
+				}
+				dstTx, err = dstDB.Begin()
+				if err != nil {
+					return written, fmt.Errorf("begin: %w", err)
+				}
+				insertedInTx = 0
+				fmt.Printf("  %d/%d (%.1f%%) in %s\n",
+					written+staged, nrounds,
+					float64(written+staged)*100/float64(nrounds),
+					time.Since(start).Round(time.Second),
+				)
+			}
+		}
+	}
+	// Final partial-batch commit.
+	if insertedInTx > 0 {
+		if cerr := dstTx.Commit(); cerr != nil {
+			dstTx = nil
+			return written, fmt.Errorf("final commit: %w", cerr)
+		}
+		dstTx = nil
+	}
+	return written, nil
 }
