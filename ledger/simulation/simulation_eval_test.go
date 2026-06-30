@@ -6779,6 +6779,76 @@ func TestPlaceholderPQSignatures(t *testing.T) {
 	})
 }
 
+// TestPlaceholderPQSignerFixAfterAppCall is a regression test for a FixSigners
+// bug. The synthetic-signer correction loop in simulateWithTracer stops at the
+// first ApplicationCallTx (deferring later txns to AfterProgram), but check()
+// runs *before* evaluation. So a placeholder PQ txn positioned after an app
+// call never has its AuthAddr corrected before check(); the placeholder is not
+// proxy-substituted, and verification fails with "pq signature authorizer
+// mismatch" -- even though the identical placeholder PQ txn simulates cleanly
+// when it is NOT preceded by an app call (see
+// TestPlaceholderPQSignatures/"FixSigners fixes placeholder AuthAddr").
+//
+// Correct behavior: FixSigners should fix the placeholder PQ txn's signer to
+// the sender's on-chain auth address regardless of an earlier app call, so the
+// group simulates without a verification failure and reports FixedSigner equal
+// to the PQ authorizer.
+func TestPlaceholderPQSignerFixAfterAppCall(t *testing.T) {
+	partitiontest.PartitionTest(t)
+	t.Parallel()
+
+	env := simulationtesting.PrepareSimulatorTest(t)
+	defer env.Close()
+
+	minFee := env.TxnInfo.CurrentProtocolParams().MinTxnFee
+	sender := env.Accounts[0]
+	appCreator := env.Accounts[1]
+
+	// The sender is rekeyed on-chain to a post-quantum authorizer.
+	pqAuthorizer, pqSig := makePlaceholderPQSigForSimulation(t, 0)
+	env.Rekey(sender.Addr, pqAuthorizer)
+
+	// A trivial app for the group's app call to reference.
+	appID := env.CreateApp(appCreator.Addr, simulationtesting.AppParams{
+		ApprovalProgram: `#pragma version 6
+int 1`,
+		ClearStateProgram: `#pragma version 6
+int 1`,
+	})
+
+	// Group: [app call, placeholder-PQ payment]. The leading app call is what
+	// makes simulateWithTracer's signer-fix loop stop before reaching the
+	// placeholder PQ payment.
+	appCall := env.TxnInfo.NewTxn(txntest.Txn{
+		Type:          protocol.ApplicationCallTx,
+		Sender:        appCreator.Addr,
+		ApplicationID: appID,
+		Fee:           minFee,
+	})
+	pqPay := env.TxnInfo.NewTxn(txntest.Txn{
+		Type:     protocol.PaymentTx,
+		Sender:   sender.Addr,
+		Receiver: sender.Addr,
+		Fee:      minFee * 3, // base fee + Falcon-1024 surcharge (2x)
+	})
+	txgroup := txntest.Group(&appCall, &pqPay)
+	// Both txns are submitted without a real signature: the app call is a plain
+	// empty-signature txn, the payment carries a placeholder PQ envelope. Neither
+	// sets AuthAddr, so FixSigners must derive it.
+	txgroup[1].PQSig = pqSig
+
+	result, err := simulation.MakeSimulator(env.Ledger, false).Simulate(simulation.Request{
+		TxnGroups:            [][]transactions.SignedTxn{txgroup},
+		AllowEmptySignatures: true,
+		FixSigners:           true,
+	})
+	require.NoError(t, err)
+
+	require.Empty(t, result.TxnGroups[0].FailureMessage,
+		"placeholder PQ txn after an app call should still have its signer fixed by FixSigners")
+	require.Equal(t, pqAuthorizer, result.TxnGroups[0].Txns[1].FixedSigner)
+}
+
 // TestOptionalSignaturesIncorrect tests that an incorrect signature still fails when
 // AllowEmptySignatures is enabled.
 func TestOptionalSignaturesIncorrect(t *testing.T) {
