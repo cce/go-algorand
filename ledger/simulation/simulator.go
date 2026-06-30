@@ -186,8 +186,16 @@ func (s Simulator) check(hdr bookkeeping.BlockHeader, txgroup []transactions.Sig
 			txnsToVerify[i] = stxn.Txn.Sign(proxySignerSecrets)
 		} else if overrides.AllowEmptySignatures && IsPlaceholderPQSig(stxn) && protoKnown {
 			placeholderErr := stxn.PQSig.ValidateScheme(proto)
-			if len(stxn.PQSig.PublicKey) != 0 {
-				// Full placeholders carry a public key, so keep the authorizer match.
+			if len(stxn.PQSig.PublicKey) != 0 && !overrides.FixSigners {
+				// A full placeholder carries a public key, so confirm it derives
+				// the declared authorizer -- but only when the caller fixed the
+				// signer themselves. Under FixSigners the simulator rewrites
+				// AuthAddr (in the prepass above for transactions up to the first
+				// app call, otherwise in AfterProgram), so stxn.Authorizer() may
+				// still be the stale sender here; enforcing the match now would
+				// wrongly reject a valid placeholder positioned after an app call.
+				// The authorizer is instead validated during evaluation once the
+				// rewrite has happened, matching the no-signature branch above.
 				placeholderErr = stxn.PQSig.ValidateEnvelope(proto, stxn.Authorizer())
 			}
 			if placeholderErr == nil {
