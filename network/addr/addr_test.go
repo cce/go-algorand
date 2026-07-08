@@ -91,12 +91,12 @@ func TestParseHostOrURL(t *testing.T) {
 	for _, addr := range badUrls {
 		t.Run(addr, func(t *testing.T) {
 			_, err := ParseHostOrURL(addr)
-			require.Error(t, err, "url should fail", addr)
+			require.Error(t, err, "url should fail", addr) //nolint:forbidigo // bad inputs fail with varying errors
 			require.False(t, IsMultiaddr(addr))
 		})
 		t.Run(addr+"-multiaddr", func(t *testing.T) {
 			_, err := ParseHostOrURLOrMultiaddr(addr)
-			require.Error(t, err, "url should fail", addr)
+			require.Error(t, err, "url should fail", addr) //nolint:forbidigo // bad inputs fail with varying errors
 			require.False(t, IsMultiaddr(addr))
 		})
 	}

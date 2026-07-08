@@ -4756,7 +4756,7 @@ func TestHTTPPAddressBoundTransport(t *testing.T) {
 		require.NoError(t, err)
 		resp, err := tr.RoundTrip(req)
 		if test.expected == expErr {
-			require.Error(t, err)
+			require.Error(t, err) //nolint:forbidigo // bad addrs fail with varying errors
 		} else {
 			require.NoError(t, err)
 			require.Equal(t, 200, resp.StatusCode)
