@@ -21,6 +21,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
+
+	"github.com/algorand/go-algorand/protocol"
 	"github.com/algorand/go-algorand/test/partitiontest"
 )
 
@@ -191,5 +194,37 @@ func TestTimeoutTypes(t *testing.T) {
 	ch2 = c.TimeoutAt(d/2, 0)
 	if !polled(ch2) {
 		t.Errorf("channel failed to fire at 50ms")
+	}
+}
+
+// TestClockZeroTimeEncodingCompat pins encodeTime/decodeTime to the go-codec
+// reflection encoding that earlier releases wrote to the agreement crash
+// database, exercising the msgpack nil, fixext4, fixext8, and ext8 forms.
+func TestClockZeroTimeEncodingCompat(t *testing.T) {
+	partitiontest.PartitionTest(t)
+
+	cases := []time.Time{
+		{},                               // zero -> msgpack nil
+		time.Unix(0, 0),                  // epoch
+		time.Unix(1751990400, 0),         // whole seconds -> fixext4
+		time.Unix(1751990400, 123456789), // seconds + nanoseconds -> fixext8
+		time.Date(2015, 1, 2, 5, 6, 7, 8, time.UTC),
+		time.Unix(-5, 500), // negative seconds -> ext8 (12 bytes)
+		// non-UTC zones must encode identically to their UTC instant, since
+		// both encoders normalize to UTC before serializing.
+		time.Date(2020, 6, 15, 12, 30, 45, 500, time.FixedZone("UTC-5", -5*3600)),
+		time.Unix(1751990400, 123456789).In(time.FixedZone("UTC+9", 9*3600)),
+		time.Now(),
+	}
+	for _, tc := range cases {
+		// encodeTime must match go-codec byte-for-byte...
+		want := protocol.EncodeReflect(tc)
+		got := encodeTime(tc)
+		require.Equalf(t, want, got, "encodeTime differs from go-codec for %v", tc)
+
+		// ...and decodeTime must recover the same instant.
+		back, err := decodeTime(got)
+		require.NoErrorf(t, err, "decodeTime(%v)", tc)
+		require.Truef(t, tc.UTC().Equal(back), "round-trip mismatch: %v != %v", tc.UTC(), back)
 	}
 }
