@@ -103,14 +103,17 @@ linters:
         - error-is-as
       disable-all: true
     forbidigo:
-      analyze_types: true
+      analyze-types: true
       forbid:
-        - p: ^(require|assert)\.Error$
+        - pattern: ^(require|assert)\.Error$
           pkg: ^github\.com/stretchr/testify/(require|assert)$
           msg: use ErrorContains, ErrorIs, or ErrorAs instead
-        - p: ^(require|assert)\.Assertions\.Error$
+        - pattern: ^(require|assert)\.Assertions\.Error$
           pkg: ^github\.com/stretchr/testify/(require|assert)$
           msg: use ErrorContains, ErrorIs, or ErrorAs instead
+        - pattern: ^protocol\.(Encode|Decode)Reflect$
+          pkg: ^github\.com/algorand/go-algorand/protocol$
+          msg: reflection-based msgpack is reserved for JSON/REST API model types; use protocol.Encode/protocol.Decode (generated msgp) for consensus, network, and persisted data
 
   exclusions:
     generated: lax
@@ -159,6 +162,10 @@ linters:
         text: '^superfluous-else: if block ends with .* so drop this else and outdent its block'
       - linters: forbidigo
         path-except: ^(crypto|network)/
+        text: 'ErrorContains, ErrorIs, or ErrorAs' # the testify Error ban is scoped to crypto/ and network/; other forbidigo rules apply repo-wide
+      - linters: forbidigo
+        path: _test\.go
+        text: 'protocol\.(Encode|Decode)Reflect' # test code (e.g. differential-encoding oracles) may use the reflection codec freely
 
 issues:
   # Work our way back over time to be clean against all these
