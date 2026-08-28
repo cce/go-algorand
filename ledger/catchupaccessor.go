@@ -969,7 +969,7 @@ func (c *catchpointCatchupAccessorImpl) BuildMerkleTrie(ctx context.Context, pro
 					var added bool
 					added, err = trie.Add(hash)
 					if err != nil {
-						return
+						return fmt.Errorf("CatchpointCatchupAccessorImpl::BuildMerkleTrie: unable to add hash '%s' of kind %s to merkle trie: %w", hex.EncodeToString(hash), trackerdb.HashKind(hash[trackerdb.HashKindEncodingIndex]), err)
 					}
 					if !added {
 						return fmt.Errorf("CatchpointCatchupAccessorImpl::BuildMerkleTrie: %w. hash = '%s' hash kind = %s", errBuildMerkleTrieDuplicateHash, hex.EncodeToString(hash), trackerdb.HashKind(hash[trackerdb.HashKindEncodingIndex]))
