@@ -315,6 +315,13 @@ func TestBuildMerkleTrie(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, progressCallCount > 0)
 
+	// a canceled build must report the cancellation, not nil: a nil return makes the
+	// caller treat an incomplete trie as a successful build
+	canceledCtx, cancel := context.WithCancel(ctx)
+	cancel()
+	err = catchpointAccessor.BuildMerkleTrie(canceledCtx, progressNop)
+	require.ErrorIs(t, err, context.Canceled)
+
 	// process some data...
 	err = catchpointAccessor.ResetStagingBalances(ctx, true)
 	require.NoError(t, err, "ResetStagingBalances")
@@ -425,7 +432,7 @@ func TestBuildMerkleTrieDuplicateHash(t *testing.T) {
 
 	select {
 	case err := <-done:
-		require.ErrorContains(t, err, "contained the same account more than once")
+		require.ErrorIs(t, err, errBuildMerkleTrieDuplicateHash)
 	case <-time.After(30 * time.Second):
 		// Unrecoverable: the parked reader and the database snapshot it holds leak for the
 		// rest of the test binary's run.

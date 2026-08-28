@@ -38,7 +38,6 @@ import (
 	"github.com/algorand/go-algorand/ledger/store/trackerdb"
 	"github.com/algorand/go-algorand/logging"
 	"github.com/algorand/go-algorand/protocol"
-	"github.com/algorand/go-algorand/util/db"
 	"github.com/algorand/go-algorand/util/metrics"
 )
 
@@ -326,7 +325,9 @@ func (c *catchpointCatchupAccessorImpl) SetLabel(ctx context.Context, label stri
 // ResetStagingBalances resets the current staging balances, preparing for a new set of balances to be added
 func (c *catchpointCatchupAccessorImpl) ResetStagingBalances(ctx context.Context, newCatchup bool) (err error) {
 	if !newCatchup {
-		c.ledger.setSynchronousMode(ctx, c.ledger.synchronousMode)
+		// Restore on a context detached from cancellation: the abort path arrives here
+		// with an already-canceled ctx, and the restore must still run.
+		c.ledger.setSynchronousMode(context.WithoutCancel(ctx), c.ledger.synchronousMode)
 	}
 	start := time.Now()
 	ledgerResetstagingbalancesCount.Inc(nil)
@@ -764,8 +765,8 @@ func (c *catchpointCatchupAccessorImpl) processStagingBalances(ctx context.Conte
 	// not strictly required, but clean up the pointer when we're done.
 	if progress.ProcessedAccounts == progress.TotalAccounts {
 		progress.cachedTrie = nil
-		// restore "normal" synchronous mode
-		c.ledger.setSynchronousMode(ctx, c.ledger.synchronousMode)
+		// restore "normal" synchronous mode, even if ctx has been canceled
+		c.ledger.setSynchronousMode(context.WithoutCancel(ctx), c.ledger.synchronousMode)
 	}
 
 	c.expectingSpecificAccount = expectingSpecificAccount
@@ -788,6 +789,10 @@ func countHashes(hashes [][]byte) (accountCount, kvCount uint64) {
 	}
 	return
 }
+
+// errBuildMerkleTrieDuplicateHash is returned by BuildMerkleTrie when the staged catchpoint
+// contains the same account or kv hash more than once.
+var errBuildMerkleTrieDuplicateHash = errors.New("the provided catchpoint file contained the same account more than once")
 
 // BuildMerkleTrie would process the catchpointpendinghashes and insert all the items in it into the merkle trie
 func (c *catchpointCatchupAccessorImpl) BuildMerkleTrie(ctx context.Context, progressUpdates func(uint64, uint64)) (err error) {
@@ -822,16 +827,26 @@ func (c *catchpointCatchupAccessorImpl) BuildMerkleTrie(ctx context.Context, pro
 
 	writerQueue := make(chan [][]byte, trieRebuildQueueDepth)
 	c.ledger.setSynchronousMode(ctx, c.ledger.accountsRebuildSynchronousMode)
-	defer c.ledger.setSynchronousMode(ctx, c.ledger.synchronousMode)
+	// The restore must run even when ctx is canceled (catchup abort, node shutdown):
+	// on a canceled context the PRAGMA fails before executing and only logs a warning,
+	// which would leave both DBs at the reduced rebuild durability level until restart.
+	defer c.ledger.setSynchronousMode(context.WithoutCancel(ctx), c.ledger.synchronousMode)
 
 	// starts the hashes reader
 	go func() {
 		defer wg.Done()
 		defer close(writerQueue)
 
+		// Snapshot rolls back and re-invokes its closure on retryable sqlite errors, but the
+		// sends into writerQueue are side effects the rollback cannot undo: the writer would
+		// reject re-sent hashes as catchpoint duplicates. The iterator orders by hash, so the
+		// chunk sequence is deterministic and a re-invocation can skip the delivered prefix.
+		chunksSent := 0
 		// Note: this needs to be accessed on a snapshot to guarantee a concurrent read-only access to the sqlite db
 		dbErr := dbs.Snapshot(func(transactionCtx context.Context, tx trackerdb.SnapshotScope) (err error) {
 			it := tx.MakeCatchpointPendingHashesIterator(trieRebuildAccountChunkSize)
+			defer it.Close()
+			skipChunks := chunksSent
 			var hashes [][]byte
 		scan:
 			for {
@@ -840,26 +855,31 @@ func (c *catchpointCatchupAccessorImpl) BuildMerkleTrie(ctx context.Context, pro
 					break
 				}
 				if len(hashes) > 0 {
-					select {
-					case writerQueue <- hashes:
-					case <-workCtx.Done():
-						// Nobody is draining the queue. Report no error of our own, so
-						// the writer's reason for stopping reaches the caller.
-						it.Close()
-						break scan
+					if skipChunks > 0 {
+						skipChunks--
+					} else {
+						select {
+						case writerQueue <- hashes:
+							chunksSent++
+						case <-workCtx.Done():
+							// Nobody is draining the queue. Report no error of our own, so
+							// the writer's reason for stopping reaches the caller.
+							break scan
+						}
 					}
 				}
 				if len(hashes) != trieRebuildAccountChunkSize {
 					break
 				}
 				if workCtx.Err() != nil {
-					it.Close()
 					break
 				}
 			}
 			// disable the warning for over-long atomic operation execution. It's meaningless here since it's
 			// co-dependent on the other go-routine.
-			db.ResetTransactionWarnDeadline(transactionCtx, tx, time.Now().Add(5*time.Second))
+			if _, ddlErr := tx.ResetTransactionWarnDeadline(transactionCtx, time.Now().Add(5*time.Second)); ddlErr != nil {
+				c.log.Warnf("BuildMerkleTrie: unable to reset transaction warn deadline : %v", ddlErr)
+			}
 			return err
 		})
 		if dbErr != nil {
@@ -894,84 +914,13 @@ func (c *catchpointCatchupAccessorImpl) BuildMerkleTrie(ctx context.Context, pro
 			return
 		}
 
-		for keepWriting {
-			var hashesToWrite [][]byte
-			select {
-			case hashesToWrite = <-writerQueue:
-				if hashesToWrite == nil {
-					// i.e. the writerQueue is closed.
-					keepWriting = false
-					continue
-				}
-			case <-ctx.Done():
-				keepWriting = false
-				continue
-			}
-
-			txErr = dbs.Transaction(func(transactionCtx context.Context, tx trackerdb.TransactionScope) (err error) {
-				mc, err = tx.MakeMerkleCommitter(true)
-				if err != nil {
-					return
-				}
-				trie.SetCommitter(mc)
-				for _, hash := range hashesToWrite {
-					var added bool
-					added, err = trie.Add(hash)
-					if !added {
-						return fmt.Errorf("CatchpointCatchupAccessorImpl::BuildMerkleTrie: The provided catchpoint file contained the same account more than once. hash = '%s' hash kind = %s", hex.EncodeToString(hash), trackerdb.HashKind(hash[trackerdb.HashKindEncodingIndex]))
-					}
-					if err != nil {
-						return
-					}
-
-				}
-				uncommitedHashesCount += len(hashesToWrite)
-
-				accounts, kvs := countHashes(hashesToWrite)
-				kvHashesWritten += kvs
-				accountHashesWritten += accounts
-
-				return nil
-			})
-			if txErr != nil {
-				break
-			}
-
-			if uncommitedHashesCount >= trieRebuildCommitFrequency {
-				txErr = dbs.Transaction(func(transactionCtx context.Context, tx trackerdb.TransactionScope) (err error) {
-					// set a long 30-second window for the evict before warning is generated.
-					_, err = tx.ResetTransactionWarnDeadline(transactionCtx, time.Now().Add(30*time.Second))
-					if err != nil {
-						return
-					}
-					mc, err = tx.MakeMerkleCommitter(true)
-					if err != nil {
-						return
-					}
-					trie.SetCommitter(mc)
-					_, err = trie.Evict(true)
-					if err != nil {
-						return
-					}
-					uncommitedHashesCount = 0
-					return nil
-				})
-				if txErr != nil {
-					keepWriting = false
-					continue
-				}
-			}
-
-			if progressUpdates != nil {
-				progressUpdates(accountHashesWritten, kvHashesWritten)
-			}
-		}
-		if txErr != nil {
-			errChan <- txErr
-			return
-		}
-		if uncommitedHashesCount > 0 {
-			txErr = dbs.Transaction(func(transactionCtx context.Context, tx trackerdb.TransactionScope) (err error) {
+		// evictTrie commits the accumulated in-memory trie pages to disk. It assumes its
+		// transaction closure runs exactly once: on a commit-time retry Evict would find
+		// the flushed pages already marked clean, persist nothing, and lose them. In
+		// practice the write lock held from BEGIN (_txlock=immediate) keeps the commit
+		// from failing with a retryable error.
+		evictTrie := func() error {
+			return dbs.Transaction(func(transactionCtx context.Context, tx trackerdb.TransactionScope) (err error) {
 				// set a long 30-second window for the evict before warning is generated.
 				_, err = tx.ResetTransactionWarnDeadline(transactionCtx, time.Now().Add(30*time.Second))
 				if err != nil {
@@ -987,6 +936,78 @@ func (c *catchpointCatchupAccessorImpl) BuildMerkleTrie(ctx context.Context, pro
 			})
 		}
 
+		for keepWriting {
+			var hashesToWrite [][]byte
+			select {
+			case hashesToWrite = <-writerQueue:
+				if hashesToWrite == nil {
+					// i.e. the writerQueue is closed.
+					keepWriting = false
+					continue
+				}
+			case <-ctx.Done():
+				// Record the cancellation: without it an incomplete build returns nil,
+				// and the final flush below would spend shutdown time committing a trie
+				// that the next ResetStagingBalances discards anyway.
+				txErr = ctx.Err()
+				keepWriting = false
+				continue
+			}
+
+			// hashesAdded tracks progress across retries of the closure below: Transaction
+			// rolls back and re-invokes it on retryable sqlite errors, but the trie
+			// mutations live in memory and survive the rollback, and re-adding a hash
+			// would misreport it as a catchpoint duplicate.
+			hashesAdded := 0
+			txErr = dbs.Transaction(func(transactionCtx context.Context, tx trackerdb.TransactionScope) (err error) {
+				mc, err = tx.MakeMerkleCommitter(true)
+				if err != nil {
+					return
+				}
+				trie.SetCommitter(mc)
+				for _, hash := range hashesToWrite[hashesAdded:] {
+					var added bool
+					added, err = trie.Add(hash)
+					if err != nil {
+						return
+					}
+					if !added {
+						return fmt.Errorf("CatchpointCatchupAccessorImpl::BuildMerkleTrie: %w. hash = '%s' hash kind = %s", errBuildMerkleTrieDuplicateHash, hex.EncodeToString(hash), trackerdb.HashKind(hash[trackerdb.HashKindEncodingIndex]))
+					}
+					hashesAdded++
+				}
+				return nil
+			})
+			if txErr != nil {
+				break
+			}
+			uncommitedHashesCount += len(hashesToWrite)
+
+			accounts, kvs := countHashes(hashesToWrite)
+			kvHashesWritten += kvs
+			accountHashesWritten += accounts
+
+			if uncommitedHashesCount >= trieRebuildCommitFrequency {
+				txErr = evictTrie()
+				if txErr != nil {
+					keepWriting = false
+					continue
+				}
+				uncommitedHashesCount = 0
+			}
+
+			if progressUpdates != nil {
+				progressUpdates(accountHashesWritten, kvHashesWritten)
+			}
+		}
+		if txErr != nil {
+			errChan <- txErr
+			return
+		}
+		if uncommitedHashesCount > 0 {
+			txErr = evictTrie()
+		}
+
 		if txErr != nil {
 			errChan <- txErr
 		}
@@ -994,13 +1015,25 @@ func (c *catchpointCatchupAccessorImpl) BuildMerkleTrie(ctx context.Context, pro
 
 	wg.Wait()
 
-	select {
-	case err1 := <-errChan:
-		return err1
-	default:
+	// Both goroutines can fail at once (e.g. a reader disk error while the writer
+	// rejects a duplicate hash); return the first error, but log the other rather
+	// than dropping the diagnostic.
+	close(errChan)
+	var trieErr error
+	for chanErr := range errChan {
+		if trieErr == nil {
+			trieErr = chanErr
+		} else {
+			c.log.Warnf("BuildMerkleTrie: additional error suppressed: %v", chanErr)
+		}
 	}
-
-	return err
+	if trieErr == nil {
+		// The reader unwinds silently when workCtx fires and the writer can drain the
+		// closed queue without ever selecting ctx.Done, so a canceled build can arrive
+		// here errorless yet incomplete.
+		trieErr = ctx.Err()
+	}
+	return trieErr
 }
 
 // GetCatchupBlockRound returns the latest block round matching the current catchpoint

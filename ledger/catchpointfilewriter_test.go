@@ -316,6 +316,115 @@ func TestBasicCatchpointWriter(t *testing.T) {
 	require.Equal(t, uint64(len(accts)), uint64(len(chunk.Balances)))
 }
 
+type failingWriter struct{}
+
+func (failingWriter) Write([]byte) (int, error) { return 0, io.ErrClosedPipe }
+
+// TestCatchpointAsyncWriterDrainsAfterError feeds asyncWriter a tar stream whose writes
+// fail immediately. asyncWriter must keep receiving until the request channel closes:
+// FileWriteStep's sends are unconditional, so a consumer that stops after reporting an
+// error parks the sender forever inside the tracker commit holding the database snapshot.
+func TestCatchpointAsyncWriterDrainsAfterError(t *testing.T) {
+	partitiontest.PartitionTest(t)
+	t.Parallel()
+
+	cw := &catchpointFileWriter{tar: tar.NewWriter(failingWriter{})}
+	writerRequest := make(chan CatchpointSnapshotChunkV6, 1)
+	writerResponse := make(chan error, 2)
+	go cw.asyncWriter(writerRequest, writerResponse, 0)
+
+	chunk := CatchpointSnapshotChunkV6{Balances: []encoded.BalanceRecordV6{{Address: ledgertesting.RandomAddress()}}}
+	// One chunk to trigger the failure, one to sit in the channel buffer, and one more
+	// that a consumer that stopped on the error would never accept.
+	for i := 0; i < 3; i++ {
+		select {
+		case writerRequest <- chunk:
+		case <-time.After(30 * time.Second):
+			t.Fatal("send blocked: asyncWriter stopped receiving after a write error")
+		}
+	}
+	close(writerRequest)
+
+	select {
+	case err := <-writerResponse:
+		require.ErrorIs(t, err, io.ErrClosedPipe)
+	case <-time.After(30 * time.Second):
+		t.Fatal("asyncWriter did not report the write error")
+	}
+	// asyncWriter closes the response channel when it exits
+	_, open := <-writerResponse
+	require.False(t, open)
+}
+
+// TestCatchpointWriterFileError closes the catchpoint data file out from under the writer,
+// so the tar stream fails once the compressor first flushes. FileWriteStep must surface
+// the error rather than park on a send to an asyncWriter that stopped consuming.
+func TestCatchpointWriterFileError(t *testing.T) {
+	partitiontest.PartitionTest(t)
+	// t.Parallel() NO! config.Consensus is modified
+
+	testProtocolVersion := protocol.ConsensusVersion("test-protocol-TestCatchpointWriterFileError")
+	protoParams := config.Consensus[protocol.ConsensusCurrentVersion]
+	protoParams.CatchpointLookback = 32
+	config.Consensus[testProtocolVersion] = protoParams
+	defer func() {
+		delete(config.Consensus, testProtocolVersion)
+	}()
+
+	// enough accounts for several catchpoint chunks, so the compressor flushes to the
+	// closed file while chunks are still flowing to asyncWriter
+	accts := ledgertesting.RandomAccounts(BalancesPerCatchpointFileChunk*6, false)
+	ml := makeMockLedgerForTracker(t, true, 10, testProtocolVersion, []map[basics.Address]basics.AccountData{accts})
+	defer ml.Close()
+
+	conf := config.GetDefaultLocal()
+	conf.CatchpointInterval = 1
+	conf.Archival = true
+	au, _ := newAcctUpdates(t, ml, conf)
+	err := au.loadFromDisk(ml, 0)
+	require.NoError(t, err)
+	au.close() // it is OK to close it here - no data race since commitSyncer is not active
+	fileName := filepath.Join(t.TempDir(), "15.data")
+
+	err = ml.trackerDB().Transaction(func(ctx context.Context, tx trackerdb.TransactionScope) error {
+		ar, err := tx.MakeAccountsReader()
+		if err != nil {
+			return err
+		}
+		accountsRnd, err := ar.AccountsRound()
+		if err != nil {
+			return err
+		}
+		writer, err := makeCatchpointFileWriter(context.Background(), protoParams, fileName, tx, ResourcesPerCatchpointFileChunk, accountsRnd, 0)
+		if err != nil {
+			return err
+		}
+		// close the file behind the writer's back: every flush from here on fails
+		require.NoError(t, writer.file.Close())
+
+		done := make(chan error, 1)
+		go func() {
+			for {
+				more, stepErr := writer.FileWriteStep(context.Background())
+				if stepErr != nil || !more {
+					done <- stepErr
+					return
+				}
+			}
+		}()
+		select {
+		case stepErr := <-done:
+			require.ErrorIs(t, stepErr, os.ErrClosed)
+		case <-time.After(30 * time.Second):
+			// Unrecoverable: the parked FileWriteStep goroutine leaks for the rest of
+			// the test binary's run.
+			t.Fatal("FileWriteStep did not return after the file writes started failing")
+		}
+		return nil
+	})
+	require.NoError(t, err)
+}
+
 func testWriteCatchpoint(t *testing.T, params config.ConsensusParams, rdb trackerdb.Store, datapath string, filepath string, maxResourcesPerChunk int, onlineExcludeBefore basics.Round) CatchpointFileHeader {
 	var totalAccounts, totalKVs, totalOnlineAccounts, totalOnlineRoundParams, totalChunks uint64
 	var biggestChunkLen uint64

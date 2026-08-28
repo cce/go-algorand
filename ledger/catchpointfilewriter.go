@@ -247,9 +247,12 @@ func (cw *catchpointFileWriter) FileWriteStep(stepCtx context.Context) (more boo
 			cw.file.Close()
 			fileInfo, statErr := os.Stat(cw.filePath)
 			if statErr != nil {
-				err = statErr
+				if err == nil {
+					err = statErr
+				}
+			} else {
+				cw.writtenBytes = fileInfo.Size()
 			}
-			cw.writtenBytes = fileInfo.Size()
 
 			// These don't HAVE to be closed, since the "owning" tx will be committed/rolledback
 			cw.accountsIterator.Close()
@@ -332,6 +335,11 @@ func (cw *catchpointFileWriter) asyncWriter(chunks chan CatchpointSnapshotChunkV
 		if chunkLen := uint64(len(encodedChunk)); cw.biggestChunkLen < chunkLen {
 			cw.biggestChunkLen = chunkLen
 		}
+	}
+	// Keep receiving until FileWriteStep closes the channel. Its sends are unconditional,
+	// so a writer that stopped consuming after an error would leave it parked forever on a
+	// full channel, wedging the tracker commit that holds the database snapshot open.
+	for range chunks {
 	}
 }
 
