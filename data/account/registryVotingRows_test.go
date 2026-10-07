@@ -388,4 +388,23 @@ func TestDeleteExpiredMergesOnlyVoting(t *testing.T) {
 	registry.mergeAdvancedVoting([]ParticipationRecord{stale})
 	registry.mutex.Unlock()
 	a.True(registry.Get(id).IsZero())
+
+	// a key deleted and re-inserted in between from a copy ahead of the
+	// snapshot (moved from a node further along) keeps the copy's state: the
+	// insert persisted that cursor, and a cache rewound behind it would make
+	// every flush refuse to resurrect retired keys
+	ahead := p
+	aheadVoting := p.Voting.Snapshot()
+	ahead.Voting = &aheadVoting
+	ahead.Voting.DeleteBeforeFineGrained(basics.OneTimeIDForRound(50, dilution), dilution)
+	_, err = registry.Insert(ahead)
+	a.NoError(err)
+	registry.mutex.Lock()
+	registry.mergeAdvancedVoting([]ParticipationRecord{stale})
+	registry.mutex.Unlock()
+	a.Equal(encodedVotingSnapshot(ahead.Voting), encodedVotingSnapshot(registry.Get(id).Voting), "re-inserted copy rewound by a stale snapshot")
+	a.NoError(registry.DeleteExpired(50, config.Consensus[protocol.ConsensusCurrentVersion]))
+	a.NoError(registry.Flush(defaultTimeout), "flush refused after merging a stale snapshot over a newer copy")
+	a.NoError(registry.initializeCache())
+	a.Equal(votingSnapshot(registry.Get(id).Voting).Header(), registryReadVotingHeader(a, registry, id))
 }
