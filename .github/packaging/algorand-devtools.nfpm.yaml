@@ -73,6 +73,8 @@ contents:
 
 # RPM-specific configuration
 rpm:
+  # Defaults to the runner's hostname, which differs on every CI run.
+  buildhost: localhost
   group: Development/Tools
   compression: gzip
   summary: Algorand development tools

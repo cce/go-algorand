@@ -41,6 +41,7 @@ jobs:
       version: ${{ steps.parse.outputs.version }}
       channel: ${{ steps.parse.outputs.channel }}
       network: ${{ steps.parse.outputs.network }}
+      source_date_epoch: ${{ steps.parse.outputs.source_date_epoch }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -101,6 +102,9 @@ jobs:
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "channel=${CHANNEL}" >> "$GITHUB_OUTPUT"
           echo "network=${NETWORK}" >> "$GITHUB_OUTPUT"
+          # Commit time, used as the fixed timestamp in every release artifact so
+          # that rebuilding the same commit reproduces the same bytes.
+          echo "source_date_epoch=$(git log -1 --format=%ct)" >> "$GITHUB_OUTPUT"
 
           echo "Release Configuration:"
           echo "  Version: ${VERSION}"
@@ -132,6 +136,7 @@ jobs:
       NETWORK: ${{ needs.prepare.outputs.network }}
       VERSION: ${{ needs.prepare.outputs.version }}
       FULLVERSION: ${{ needs.prepare.outputs.version }}
+      SOURCE_DATE_EPOCH: ${{ needs.prepare.outputs.source_date_epoch }}
       # These are used by compute_branch_channel.sh and other scripts
       TRAVIS_BRANCH: ''
       BRANCH: ''
@@ -188,15 +193,14 @@ jobs:
       CHANNEL: ${{ needs.prepare.outputs.channel }}
       DEFAULTNETWORK: ${{ needs.prepare.outputs.network }}
       GOARCH: ${{ matrix.goarch }}
+      # nFPM uses this for every file and header timestamp in the .deb/.rpm.
+      SOURCE_DATE_EPOCH: ${{ needs.prepare.outputs.source_date_epoch }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
       - name: Setup Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: 'stable'
-          cache: false
+        uses: ./.github/actions/setup-go
 
       - name: Download build artifacts
         uses: actions/download-artifact@v4

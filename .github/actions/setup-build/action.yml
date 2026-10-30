@@ -13,11 +13,9 @@ runs:
       with:
         cache-prefix: ${{ inputs.cache-prefix }}
 
-    - name: Cache libsodium
-      uses: actions/cache@v4
-      with:
-        path: crypto/libs
-        key: libsodium-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('crypto/libsodium-fork/**') }}
+    # libsodium is deliberately not cached: it is linked into the release
+    # binaries, so it is rebuilt from source rather than restored from an
+    # artifact written by some earlier run.
 
     - name: Install build dependencies (Linux)
       if: runner.os == 'Linux'
@@ -30,8 +28,9 @@ runs:
       if: runner.os == 'macOS'
       shell: bash
       run: |
-        # Homebrew packages needed for libsodium build
-        brew install autoconf automake libtool
+        # Homebrew packages needed for libsodium build; gnu-tar provides the
+        # gtar that build_packages.sh needs to write reproducible tarballs
+        brew install autoconf automake libtool gnu-tar
 
     - name: Build libsodium
       shell: bash

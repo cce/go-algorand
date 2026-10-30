@@ -97,6 +97,10 @@ jobs:
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "channel=${CHANNEL}" >> "$GITHUB_OUTPUT"
 
+          # Commit time as the fixed timestamp for reproducible output; also
+          # switches the Makefile to its reproducible link flags.
+          echo "SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)" >> "$GITHUB_ENV"
+
           echo "Windows Release Configuration:"
           echo "  Version: ${VERSION}"
           echo "  Channel: ${CHANNEL}"

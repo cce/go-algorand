@@ -100,7 +100,16 @@ else
   VERSION_LDFLAGS :=
 endif
 
-GOLDFLAGS_BASE  := $(VERSION_LDFLAGS) \
+# For reproducible release builds (signalled by SOURCE_DATE_EPOCH), clear the Go
+# build ID: it hashes the absolute cgo -I/-L paths and so differs per checkout
+# location. Left alone otherwise, since go install uses it to skip relinking.
+ifdef SOURCE_DATE_EPOCH
+  BUILDID_LDFLAGS := -buildid=
+else
+  BUILDID_LDFLAGS :=
+endif
+
+GOLDFLAGS_BASE  := $(VERSION_LDFLAGS) $(BUILDID_LDFLAGS) \
 		 -X github.com/algorand/go-algorand/config.BuildNumber=$(BUILDNUMBER) \
 		 -X github.com/algorand/go-algorand/config.CommitHash=$(COMMITHASH) \
 		 -X github.com/algorand/go-algorand/config.Branch=$(BUILDBRANCH) \
@@ -218,9 +227,13 @@ crypto/libs/$(OS_TYPE)/$(ARCH)/lib/libsodium.a:
 	mkdir -p crypto/copies/$(OS_TYPE)/$(ARCH)
 	rm -rf crypto/copies/$(OS_TYPE)/$(ARCH)/libsodium-fork
 	cp -R crypto/libsodium-fork/. crypto/copies/$(OS_TYPE)/$(ARCH)/libsodium-fork
+	# The prefix map keeps the checkout path out of libsodium's DWARF, which is
+	# linked into every cgo binary and would otherwise make builds path-dependent.
+	# It goes in CPPFLAGS rather than CFLAGS so that callers overriding CFLAGS via
+	# EXTRA_CONFIGURE_FLAGS (see the universal target) do not drop it.
 	cd crypto/copies/$(OS_TYPE)/$(ARCH)/libsodium-fork && \
 		./autogen.sh --prefix $(SRCPATH)/crypto/libs/$(OS_TYPE)/$(ARCH) && \
-		./configure --disable-shared --prefix="$(SRCPATH)/crypto/libs/$(OS_TYPE)/$(ARCH)" $(EXTRA_CONFIGURE_FLAGS) && \
+		./configure --disable-shared --prefix="$(SRCPATH)/crypto/libs/$(OS_TYPE)/$(ARCH)" CPPFLAGS="-ffile-prefix-map=$(SRCPATH)=." $(EXTRA_CONFIGURE_FLAGS) && \
 		$(MAKE) && \
 		$(MAKE) install
 
