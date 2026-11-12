@@ -145,6 +145,11 @@ jobs:
         - /etc/ssl/certs:/etc/ssl/certs:ro
     env:
       BUILD_CONTAINER_IMAGE: ${{ matrix.container }}
+      # -trimpath does not rewrite assembly files a package #includes from
+      # another directory (gnark-crypto's field/asm), so the module cache path
+      # ends up in the binaries' debug info. A fixed path, recorded in the
+      # build environment attestation, keeps rebuilds byte-identical.
+      GOMODCACHE: /tmp/go-algorand-release/pkg/mod
       CHANNEL: ${{ needs.prepare.outputs.channel }}
       NETWORK: ${{ needs.prepare.outputs.network }}
       VERSION: ${{ needs.prepare.outputs.version }}

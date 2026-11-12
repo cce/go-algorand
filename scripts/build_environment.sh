@@ -186,7 +186,7 @@ platform_json() {
 }
 
 jq -n --argjson runner "$(runner_json)" \
-    --argjson go "$(go env -json GOVERSION GOOS GOARCH GOAMD64 GOARM64 CC CXX CGO_ENABLED CGO_CFLAGS CGO_LDFLAGS GOFLAGS GOTOOLCHAIN)" \
+    --argjson go "$(go env -json GOVERSION GOOS GOARCH GOAMD64 GOARM64 CC CXX CGO_ENABLED CGO_CFLAGS CGO_LDFLAGS GOFLAGS GOTOOLCHAIN GOMODCACHE)" \
     --argjson platform "$(platform_json)" \
     --argjson tools "$(tool_entries | jq -s .)" \
     --argjson link_inputs "$(link_entries | jq -s 'unique_by(.path)')" \
