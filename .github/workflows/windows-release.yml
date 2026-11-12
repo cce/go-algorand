@@ -5,28 +5,20 @@ name: Windows Release Build
 # for the per-PR compile check). The artifact still receives the same SBOM and
 # build-provenance attestation as the other platforms.
 
+# Called by release-trigger.yml. Building and attesting inside a reusable
+# workflow makes it the signer of the attestations, so verifiers can require it
+# with `gh attestation verify --signer-workflow` (SLSA v1.0 Build Level 3).
 on:
-  push:
-    tags:
-      - 'v*-beta'
-      - 'v*-stable'
-      - 'v*-nightly'
-      - 'v*-dev'
-  workflow_dispatch:
+  workflow_call:
     inputs:
       version:
-        description: 'Version (e.g., 4.5.0)'
-        required: true
+        description: 'Version (e.g., 4.5.0); manual runs only'
+        required: false
         type: string
       channel:
-        description: 'Release channel'
-        required: true
-        type: choice
-        options:
-          - beta
-          - stable
-          - nightly
-          - dev
+        description: 'Release channel; manual runs only'
+        required: false
+        type: string
 
 permissions:
   contents: read
