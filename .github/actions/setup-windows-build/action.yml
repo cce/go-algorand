@@ -8,6 +8,9 @@ runs:
       with:
         update: true
         path-type: inherit
+        # Needed by `make libsodium` below whenever the libsodium cache misses;
+        # the same autotools scripts/configure_dev.sh installs on Windows.
+        install: autoconf automake libtool m4 make
     - name: Set up Go
       uses: ./.github/actions/setup-go
     - name: Restore libsodium from cache

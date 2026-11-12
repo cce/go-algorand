@@ -27,8 +27,11 @@ env:
   # Linux release builds install their toolchain from this Ubuntu archive
   # snapshot, inside the base image pinned in the build matrix, so every run
   # links the same glibc and uses the same gcc and binutils. Change the two
-  # together and deliberately: either one changes the release bytes.
-  UBUNTU_SNAPSHOT: 20261101T000000Z
+  # together and deliberately: either one changes the release bytes. The
+  # snapshot must not predate the image's build: apt will not downgrade the
+  # packages the image already has, so an older snapshot can leave the
+  # toolchain's dependencies unsatisfiable (as perl vs perl-base did on arm64).
+  UBUNTU_SNAPSHOT: 20261111T000000Z
 
 jobs:
   prepare:
@@ -168,6 +171,10 @@ jobs:
           EOF
           apt-get update
           apt-get install -y --no-install-recommends build-essential autoconf automake libtool git jq
+          # The workspace belongs to the runner's user, not the container's
+          # root. actions/checkout only marks it safe for its own step, and the
+          # build needs git for version stamping.
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
       # Fails if the runner image no longer ships this Xcode, rather than
       # building with whichever one is the default.
