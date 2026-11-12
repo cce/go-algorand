@@ -734,18 +734,25 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Setup Go
-        uses: actions/setup-go@v5
+      # osv-scanner's Go call analysis type-checks the code, and the crypto
+      # package's cgo code needs libsodium's headers; without them the analysis
+      # fails and osv-scanner can crash. This also gives the scan the release
+      # Go version, whose standard library is what ships.
+      - name: Setup build environment
+        uses: ./.github/actions/setup-build
         with:
-          go-version: stable
-          cache: false
+          cache-prefix: release-scan
 
       - name: Install and run osv-scanner
         run: |
-          go install github.com/google/osv-scanner/v2/cmd/osv-scanner@v2.3.3
+          # osv-scanner v2.3.3 needs a newer Go to build than the release
+          # pins; only this install may fetch one.
+          GOTOOLCHAIN=auto go install github.com/google/osv-scanner/v2/cmd/osv-scanner@v2.3.3
 
           # Run scan with JSON output for deterministic parsing.
-          # osv-scanner exits non-zero when vulnerabilities are found.
+          # osv-scanner exits 1 when vulnerabilities are found; any other
+          # non-zero exit (127 error, 128 no packages, 129 API failure, or a
+          # crash) means the scan did not complete and must not pass.
           set +e
           osv-scanner scan --recursive --format json . > osv-results.json 2>osv-stderr.txt
           SCAN_EXIT=$?
@@ -754,6 +761,11 @@ jobs:
           if [ "$SCAN_EXIT" -eq 0 ]; then
             echo "No vulnerabilities found."
             exit 0
+          fi
+          if [ "$SCAN_EXIT" -ne 1 ] || ! jq -e '.results' osv-results.json > /dev/null; then
+            cat osv-stderr.txt
+            echo "::error::osv-scanner did not complete (exit ${SCAN_EXIT})."
+            exit 1
           fi
 
           # Also produce human-readable table for the job log
@@ -781,7 +793,7 @@ jobs:
                 (.database_specific?.cvss_score? // 0 | select(. >= 9.0) | "CRITICAL")
               )
             ] | unique | length
-          ' osv-results.json 2>/dev/null || echo "0")
+          ' osv-results.json)
 
           if [ "$CRITICAL" -gt 0 ]; then
             echo "::error::Found critical vulnerabilities — failing build. See JSON output for details."
