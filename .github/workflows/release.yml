@@ -159,6 +159,11 @@ jobs:
           echo "  Network: ${NETWORK}"
           make ${{ matrix.make_target }}
 
+      # Rides along in the build artifact so the packaging jobs can bind it to
+      # the final packages; it must be taken on the runner that did the build.
+      - name: Record build environment
+        run: scripts/build_environment.sh build > tmp/node_pkgs/build-environment.json
+
       - name: List build artifacts
         run: |
           echo "Build artifacts:"
@@ -359,6 +364,14 @@ jobs:
           echo "Checksums:"
           cat "hashes_${CHANNEL}_linux_${{ matrix.arch }}_${VERSION}"
 
+      - name: Record build environment
+        run: |
+          scripts/build_environment.sh package > tmp/package-environment.json
+          jq -n --slurpfile build tmp/node_pkgs/build-environment.json \
+            --slurpfile packaging tmp/package-environment.json \
+            '{build: $build[0], packaging: $packaging[0]}' \
+            > "dist/build-environment_${CHANNEL}_linux-${{ matrix.arch }}_${VERSION}.json"
+
       - name: Upload packages
         uses: actions/upload-artifact@v4
         with:
@@ -397,6 +410,11 @@ jobs:
           shasum -a 256 *.tar.gz > "hashes_${CHANNEL}_darwin_universal_${VERSION}"
           echo "Checksums:"
           cat "hashes_${CHANNEL}_darwin_universal_${VERSION}"
+
+      - name: Record build environment
+        run: |
+          jq '{build: .}' tmp/node_pkgs/build-environment.json \
+            > "dist/build-environment_${CHANNEL}_darwin-universal_${VERSION}.json"
 
       - name: Upload packages
         uses: actions/upload-artifact@v4
@@ -542,9 +560,29 @@ jobs:
             echo 'RPM devtools package test passed!'
           "
 
-  finalize:
-    name: Finalize (SBOM, Attestations)
+  # The SBOM and build-environment attestations are made per platform, so each
+  # artifact is bound to a description of the binaries it ships and of the
+  # toolchain that built them, rather than to the source tree.
+  attest-platform:
+    name: Attest ${{ matrix.platform }} (SBOM, build environment)
     needs: [prepare, package-linux, package-darwin, test-packages]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux-amd64
+            subjects: |
+              packages/*_linux-amd64_*.tar.gz
+              packages/*_linux-amd64_*.deb
+              packages/*.x86_64.rpm
+          - platform: linux-arm64
+            subjects: |
+              packages/*_linux-arm64_*.tar.gz
+              packages/*_linux-arm64_*.deb
+              packages/*.aarch64.rpm
+          - platform: darwin-universal
+            subjects: |
+              packages/*_darwin-universal_*.tar.gz
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -554,13 +592,73 @@ jobs:
       VERSION: ${{ needs.prepare.outputs.version }}
       CHANNEL: ${{ needs.prepare.outputs.channel }}
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
       - name: Download all package artifacts
         uses: actions/download-artifact@v4
         with:
           pattern: packages-*
+          path: packages/
+          merge-multiple: true
+
+      # The .deb and .rpm packages hold the same binaries as the tarballs.
+      - name: Extract shipped binaries
+        run: |
+          mkdir -p extracted
+          for f in packages/*_${{ matrix.platform }}_*.tar.gz; do
+            tar -xzf "$f" -C extracted
+          done
+
+      - name: Generate SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          path: extracted
+          format: spdx-json
+          output-file: sbom/sbom_${{ env.CHANNEL }}_${{ matrix.platform }}_${{ env.VERSION }}.spdx.json
+          upload-artifact: false
+
+      - name: Attest SBOM
+        uses: actions/attest@v4
+        with:
+          subject-path: ${{ matrix.subjects }}
+          sbom-path: sbom/sbom_${{ env.CHANNEL }}_${{ matrix.platform }}_${{ env.VERSION }}.spdx.json
+
+      - name: Attest build environment
+        uses: actions/attest@v4
+        with:
+          subject-path: ${{ matrix.subjects }}
+          predicate-type: https://github.com/algorand/go-algorand/build-environment/v1
+          predicate-path: packages/build-environment_${{ env.CHANNEL }}_${{ matrix.platform }}_${{ env.VERSION }}.json
+
+      - name: Upload SBOM
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-${{ matrix.platform }}
+          path: sbom/
+          retention-days: 7
+          if-no-files-found: error
+
+  finalize:
+    name: Finalize (Provenance)
+    needs: [prepare, package-linux, package-darwin, test-packages, attest-platform]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+      CHANNEL: ${{ needs.prepare.outputs.channel }}
+    steps:
+      - name: Download all package artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: packages-*
+          path: packages/
+          merge-multiple: true
+
+      - name: Download SBOMs
+        uses: actions/download-artifact@v4
+        with:
+          pattern: sbom-*
           path: packages/
           merge-multiple: true
 
@@ -569,29 +667,13 @@ jobs:
           echo "All release artifacts:"
           find packages/ -type f | sort
 
-      - name: Generate SBOM
-        uses: anchore/sbom-action@v0
-        with:
-          path: .
-          format: spdx-json
-          output-file: packages/sbom.spdx.json
-
       - name: Attest build provenance
-        uses: actions/attest-build-provenance@v2
+        uses: actions/attest@v4
         with:
           subject-path: |
             packages/*.tar.gz
             packages/*.deb
             packages/*.rpm
-
-      - name: Attest SBOM
-        uses: actions/attest-sbom@v2
-        with:
-          subject-path: |
-            packages/*.tar.gz
-            packages/*.deb
-            packages/*.rpm
-          sbom-path: packages/sbom.spdx.json
 
       - name: Upload release artifacts
         uses: actions/upload-artifact@v4
@@ -676,7 +758,7 @@ jobs:
   # Summary job to verify all builds and packages completed
   release-summary:
     name: Release Summary
-    needs: [prepare, build, package-linux, package-darwin, test-packages, finalize, vulnerability-scan]
+    needs: [prepare, build, package-linux, package-darwin, test-packages, attest-platform, finalize, vulnerability-scan]
     runs-on: ubuntu-24.04
     if: always()
     steps:
@@ -720,11 +802,18 @@ jobs:
             echo "| Package Tests | ❌ |" >> $GITHUB_STEP_SUMMARY
           fi
 
+          # Attestation status
+          if [ "${{ needs.attest-platform.result }}" = "success" ]; then
+            echo "| Attest (SBOM, build environment) | ✅ |" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "| Attest (SBOM, build environment) | ❌ |" >> $GITHUB_STEP_SUMMARY
+          fi
+
           # Finalize status
           if [ "${{ needs.finalize.result }}" = "success" ]; then
-            echo "| Finalize (SBOM, Attestations) | ✅ |" >> $GITHUB_STEP_SUMMARY
+            echo "| Finalize (Provenance) | ✅ |" >> $GITHUB_STEP_SUMMARY
           else
-            echo "| Finalize (SBOM, Attestations) | ❌ |" >> $GITHUB_STEP_SUMMARY
+            echo "| Finalize (Provenance) | ❌ |" >> $GITHUB_STEP_SUMMARY
           fi
 
           # Vulnerability scan status (fails only on criticals)
@@ -741,6 +830,7 @@ jobs:
              [ "${{ needs.package-linux.result }}" != "success" ] || \
              [ "${{ needs.package-darwin.result }}" != "success" ] || \
              [ "${{ needs.test-packages.result }}" != "success" ] || \
+             [ "${{ needs.attest-platform.result }}" != "success" ] || \
              [ "${{ needs.finalize.result }}" != "success" ] || \
              [ "${{ needs.vulnerability-scan.result }}" != "success" ]; then
             echo "❌ **Release failed.** Check individual job logs." >> $GITHUB_STEP_SUMMARY
