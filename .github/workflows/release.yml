@@ -548,7 +548,6 @@ jobs:
 
             # Verify devtools binaries are installed
             command -v carpenter
-            command -v tealdbg
             command -v msgpacktool
 
             echo 'Debian devtools package test passed!'
@@ -590,7 +589,6 @@ jobs:
 
             # Verify devtools binaries are installed
             command -v carpenter
-            command -v tealdbg
             command -v msgpacktool
 
             echo 'RPM devtools package test passed!'

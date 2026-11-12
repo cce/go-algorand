@@ -71,7 +71,7 @@ echo "Staging Windows package ${PKG_NAME} from ${GOBIN}"
 BIN_DIR="${PKG_ROOT}/bin"
 mkdir -p "${BIN_DIR}"
 node_bins=(algod algocfg algoh algokey algotmpl diagcfg goal kmd)
-devtools_bins=(algons carpenter coroner dispenser msgpacktool netgoal nodecfg pingpong loadgenerator dsign catchpointdump block-generator tealdbg)
+devtools_bins=(algons carpenter coroner dispenser msgpacktool netgoal nodecfg pingpong loadgenerator dsign catchpointdump block-generator)
 
 for bin in "${node_bins[@]}" "${devtools_bins[@]}"; do
     src="${GOBIN}/${bin}.exe"
