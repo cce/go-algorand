@@ -45,9 +45,10 @@ fi
 export TIMESTAMP=${TIMESTAMP}
 
 # Normalize tar metadata so the archives depend only on their contents: file
-# order, mtimes, ownership and group/other write bits otherwise vary with the
-# filesystem, build time, build user and umask. These options need GNU tar,
-# which macOS provides as gtar (brew install gnu-tar).
+# order, mtimes, ownership and permission bits otherwise vary with the
+# filesystem, build time, build user and umask. --mode sets every permission
+# bit, keeping only whether an entry is a directory or executable (X). These
+# options need GNU tar, which macOS provides as gtar (brew install gnu-tar).
 if [ "${SOURCE_DATE_EPOCH}" = "" ]; then
     SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)
 fi
@@ -56,7 +57,7 @@ if command -v gtar >/dev/null 2>&1; then
     TAR=gtar
 fi
 if ${TAR} --version 2>/dev/null | grep -q "GNU tar"; then
-    TAR_OPTS=(--sort=name --mtime="@${SOURCE_DATE_EPOCH}" --owner=0 --group=0 --numeric-owner --mode=go-w)
+    TAR_OPTS=(--sort=name --mtime="@${SOURCE_DATE_EPOCH}" --owner=0 --group=0 --numeric-owner --mode=u=rwX,go=rX)
 else
     echo "Warning: GNU tar not found; package archives will not be reproducible"
     TAR_OPTS=()

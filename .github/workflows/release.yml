@@ -634,9 +634,11 @@ jobs:
           merge-multiple: true
 
       # The .deb and .rpm packages hold the same binaries as the tarballs.
+      # sbom/ is created here because anchore/sbom-action writes output-file
+      # without creating its directory.
       - name: Extract shipped binaries
         run: |
-          mkdir -p extracted
+          mkdir -p extracted sbom
           for f in packages/*_${{ matrix.platform }}_*.tar.gz; do
             tar -xzf "$f" -C extracted
           done
