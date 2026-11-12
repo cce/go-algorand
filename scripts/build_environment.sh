@@ -87,10 +87,16 @@ runner_json() {
         os=$(uname -s)
     fi
     # ImageOS and ImageVersion are set on GitHub-hosted runners and identify
-    # the runner image release, whose software list GitHub publishes.
+    # the runner image release, whose software list GitHub publishes. Linux
+    # release builds run in a container instead, named by BUILD_CONTAINER_IMAGE;
+    # its apt sources show which archive snapshot the toolchain came from.
     jq -n --arg image_os "${ImageOS:-}" --arg image_version "${ImageVersion:-}" \
+        --arg container_image "${BUILD_CONTAINER_IMAGE:-}" \
+        --arg apt_sources "$(cat /etc/apt/sources.list.d/*.sources /etc/apt/sources.list 2>/dev/null |
+            sed -n -e 's/^URIs: *//p' -e 's/^deb  *\(\[[^]]*\]  *\)\{0,1\}\([^ ]*\).*/\2/p' | sort -u)" \
         --arg os "${os}" --arg kernel "$(uname -srm)" \
-        '{image_os: $image_os, image_version: $image_version, os: $os, kernel: $kernel}'
+        '{image_os: $image_os, image_version: $image_version, container_image: $container_image,
+          apt_sources: ($apt_sources | split("\n") | map(select(. != ""))), os: $os, kernel: $kernel}'
 }
 
 if [ "$1" = package ]; then

@@ -1,5 +1,5 @@
 name: 'Setup Build Environment'
-description: 'Set up Go, libsodium, and build dependencies for release builds'
+description: 'Set up Go, libsodium, and macOS build dependencies for release builds (Linux jobs install a pinned toolchain first)'
 inputs:
   cache-prefix:
     description: 'Cache prefix for Go caching'
@@ -16,13 +16,6 @@ runs:
     # libsodium is deliberately not cached: it is linked into the release
     # binaries, so it is rebuilt from source rather than restored from an
     # artifact written by some earlier run.
-
-    - name: Install build dependencies (Linux)
-      if: runner.os == 'Linux'
-      shell: bash
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y build-essential autoconf automake libtool
 
     - name: Install build dependencies (macOS)
       if: runner.os == 'macOS'

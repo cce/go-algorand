@@ -24,6 +24,11 @@ env:
   # Disable deadlock detection for release builds
   ALGORAND_DEADLOCK: disable
   KMD_NOUSB: True
+  # Linux release builds install their toolchain from this Ubuntu archive
+  # snapshot, inside the base image pinned in the build matrix, so every run
+  # links the same glibc and uses the same gcc and binutils. Change the two
+  # together and deliberately: either one changes the release bytes.
+  UBUNTU_SNAPSHOT: 20261101T000000Z
 
 jobs:
   prepare:
@@ -114,16 +119,29 @@ jobs:
             os: linux
             arch: amd64
             make_target: ci-build
+            container: ubuntu:24.04@sha256:2198e4c65076e9cb0b3d695219df667c0e3b0072da64ca3c2648aca17dcecaf5
           - runner: ubuntu-24.04-arm
             os: linux
             arch: arm64
             make_target: ci-build
-          - runner: macos-14
+            container: ubuntu:24.04@sha256:2198e4c65076e9cb0b3d695219df667c0e3b0072da64ca3c2648aca17dcecaf5
+          - runner: macos-15
             os: darwin
             arch: universal
             make_target: ci-build-universal
+            container: ''
+            xcode: '16.4'
     runs-on: ${{ matrix.runner }}
+    # An empty image (macOS) runs the job directly on the runner.
+    container:
+      image: ${{ matrix.container }}
+      volumes:
+        # The base image has no CA certificates; the runner's are used to reach
+        # the archive snapshot over https. apt still checks the archive's
+        # signatures.
+        - /etc/ssl/certs:/etc/ssl/certs:ro
     env:
+      BUILD_CONTAINER_IMAGE: ${{ matrix.container }}
       CHANNEL: ${{ needs.prepare.outputs.channel }}
       NETWORK: ${{ needs.prepare.outputs.network }}
       VERSION: ${{ needs.prepare.outputs.version }}
@@ -133,6 +151,32 @@ jobs:
       TRAVIS_BRANCH: ''
       BRANCH: ''
     steps:
+      # Runs before checkout because checkout needs git. Only the snapshot is
+      # configured, so nothing comes from the live archive.
+      - name: Install pinned Linux toolchain
+        if: matrix.os == 'linux'
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          rm -f /etc/apt/sources.list.d/ubuntu.sources
+          cat > /etc/apt/sources.list.d/snapshot.sources <<EOF
+          Types: deb
+          URIs: https://snapshot.ubuntu.com/ubuntu/${UBUNTU_SNAPSHOT}/
+          Suites: noble noble-updates noble-security
+          Components: main universe
+          Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
+          EOF
+          apt-get update
+          apt-get install -y --no-install-recommends build-essential autoconf automake libtool git jq
+
+      # Fails if the runner image no longer ships this Xcode, rather than
+      # building with whichever one is the default.
+      - name: Select Xcode
+        if: matrix.os == 'darwin'
+        run: |
+          sudo xcode-select -s "/Applications/Xcode_${{ matrix.xcode }}.app"
+          xcodebuild -version
+
       - name: Checkout code
         uses: actions/checkout@v4
         with:
@@ -375,7 +419,7 @@ jobs:
   package-darwin:
     name: Package Darwin
     needs: [prepare, build]
-    runs-on: macos-14
+    runs-on: macos-15
     env:
       VERSION: ${{ needs.prepare.outputs.version }}
       CHANNEL: ${{ needs.prepare.outputs.channel }}
