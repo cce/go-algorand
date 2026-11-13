@@ -35,6 +35,12 @@ jobs:
     defaults:
       run:
         shell: msys2 {0}
+    env:
+      # -trimpath does not rewrite assembly files a package #includes from
+      # another directory (gnark-crypto's field/asm), so the module cache path
+      # ends up in the binaries' debug info. A fixed path, recorded in the
+      # build environment attestation, keeps rebuilds byte-identical.
+      GOMODCACHE: C:/go-algorand-release/pkg/mod
     outputs:
       version: ${{ steps.parse.outputs.version }}
       channel: ${{ steps.parse.outputs.channel }}
