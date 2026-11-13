@@ -788,32 +788,33 @@ jobs:
           #
           # 2. database_specific.cvss_score — numeric score included by some
           #    advisory sources. Critical = >= 9.0.
-          CRITICAL=$(jq '
-            [
-              .results[]?.packages[]?.vulnerabilities[]? |
-              (
-                # Source 1: explicit severity label
-                (.database_specific?.severity? // "" | ascii_upcase | select(. == "CRITICAL")),
-                # Source 2: numeric CVSS score >= 9.0
-                (.database_specific?.cvss_score? // 0 | select(. >= 9.0) | "CRITICAL")
-              )
-            ] | unique | length
-          ' osv-results.json)
+          #
+          # A critical advisory blocks the release unless osv-scanner's call
+          # analysis (govulncheck, for Go) shows none of its vulnerable code is
+          # called. Advisories without call analysis, such as those for
+          # non-Go ecosystems, count as reachable.
+          jq '
+            def critical:
+              ((.database_specific?.severity? // "") | ascii_upcase) == "CRITICAL" or
+              ((.database_specific?.cvss_score? // 0) >= 9.0);
+            [ .results[]?.packages[]? | .package as $pkg | (.groups // []) as $groups |
+              .vulnerabilities[]? | select(critical) | .id as $id |
+              ([ $groups[] | select(.ids | index($id)) ] | first // {}) as $group |
+              [ ($group.experimental_analysis // {})[] | .called ] as $called |
+              { id: $id, package: "\($pkg.name)@\($pkg.version)",
+                reachable: (($called | length) == 0 or any($called[]; . != false)) }
+            ] | group_by(.id)
+              | map({id: .[0].id, packages: (map(.package) | unique), reachable: any(.[]; .reachable)})
+          ' osv-results.json > critical.json
 
-          if [ "$CRITICAL" -gt 0 ]; then
-            echo "::error::Found critical vulnerabilities — failing build. See JSON output for details."
-            # Output the critical findings for debugging
-            jq '.results[]?.packages[]? | select(
-              .vulnerabilities[]? | (
-                (.database_specific?.severity? // "" | ascii_upcase) == "CRITICAL" or
-                (.database_specific?.cvss_score? // 0) >= 9.0
-              )
-            ) | {package: .package.name, version: .package.version, vulns: [.vulnerabilities[].id]}' osv-results.json 2>/dev/null || true
+          jq -r '.[] | "\(if .reachable then "REACHABLE " else "not called" end)  \(.packages | join(","))  \(.id)"' critical.json
+          REACHABLE=$(jq '[.[] | select(.reachable)] | length' critical.json)
+          if [ "$REACHABLE" -gt 0 ]; then
+            echo "::error::Found ${REACHABLE} critical vulnerabilities the code may reach; failing build."
             exit 1
-          else
-            echo "::warning::Vulnerabilities found (no criticals). See job log for details."
-            exit 0
           fi
+          echo "::warning::Vulnerabilities found, but no critical ones the code reaches. See job log for details."
+          exit 0
 
   # Summary job to verify all builds and packages completed
   release-summary:
