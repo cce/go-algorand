@@ -56,11 +56,13 @@ TAR=tar
 if command -v gtar >/dev/null 2>&1; then
     TAR=gtar
 fi
+# gzip -n keeps the compression time out of the gzip header. GNU gzip already
+# omits it when compressing a pipe, but the gzip macOS ships does not.
 if ${TAR} --version 2>/dev/null | grep -q "GNU tar"; then
-    TAR_OPTS=(--sort=name --mtime="@${SOURCE_DATE_EPOCH}" --owner=0 --group=0 --numeric-owner --mode=u=rwX,go=rX)
+    TAR_OPTS=(--sort=name --mtime="@${SOURCE_DATE_EPOCH}" --owner=0 --group=0 --numeric-owner --mode=u=rwX,go=rX --use-compress-program="gzip -n")
 else
     echo "Warning: GNU tar not found; package archives will not be reproducible"
-    TAR_OPTS=()
+    TAR_OPTS=(-z)
 fi
 # The shell glob passed to tar below is expanded in locale collation order.
 export LC_ALL=C
@@ -117,20 +119,20 @@ for var in "${VARIATION_ARRAY[@]}"; do
         echo Building package for channel ${CHANNEL} to ${PLATFORM_ROOT}
 
         pushd ${PLATFORM_ROOT}
-        ${TAR} "${TAR_OPTS[@]}" --exclude=tools -zcf ${PKG_ROOT}/node_${CHANNEL}_${PKG_NAME}_${FULLVERSION}.tar.gz * >/dev/null 2>&1
+        ${TAR} "${TAR_OPTS[@]}" --exclude=tools -cf ${PKG_ROOT}/node_${CHANNEL}_${PKG_NAME}_${FULLVERSION}.tar.gz * >/dev/null 2>&1
         if [ $? -ne 0 ]; then
             echo "Error creating node tar file for package ${PLATFORM}.  Aborting..."
             exit 1
         fi
         cd bin
-        ${TAR} "${TAR_OPTS[@]}" -zcf ${PKG_ROOT}/install_${CHANNEL}_${PKG_NAME}_${FULLVERSION}.tar.gz updater update.sh >/dev/null 2>&1
+        ${TAR} "${TAR_OPTS[@]}" -cf ${PKG_ROOT}/install_${CHANNEL}_${PKG_NAME}_${FULLVERSION}.tar.gz updater update.sh >/dev/null 2>&1
         if [ $? -ne 0 ]; then
             echo "Error creating install tar file for package ${PLATFORM}.  Aborting..."
             exit 1
         fi
 
         cd ${PLATFORM_ROOT}/tools
-        ${TAR} "${TAR_OPTS[@]}" -zcf ${PKG_ROOT}/tools_${CHANNEL}_${PKG_NAME}_${FULLVERSION}.tar.gz * >/dev/null 2>&1
+        ${TAR} "${TAR_OPTS[@]}" -cf ${PKG_ROOT}/tools_${CHANNEL}_${PKG_NAME}_${FULLVERSION}.tar.gz * >/dev/null 2>&1
         popd
     done
 done

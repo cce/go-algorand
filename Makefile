@@ -103,13 +103,22 @@ endif
 # For reproducible release builds (signalled by SOURCE_DATE_EPOCH), clear the Go
 # build ID: it hashes the absolute cgo -I/-L paths and so differs per checkout
 # location. Left alone otherwise, since go install uses it to skip relinking.
+#
+# On darwin, without a build ID the Mach-O UUID is ld's, which hashes the debug
+# map's paths into Go's randomly named temp dir. -w and -Wl,-S drop the debug
+# map so the UUID depends only on content. External linking gives pure-Go
+# binaries a UUID too, which macOS expects (Apple TN3178).
 ifdef SOURCE_DATE_EPOCH
-  BUILDID_LDFLAGS := -buildid=
+  REPRO_LDFLAGS := -buildid=
+  ifeq ($(OS_TYPE),darwin)
+    REPRO_LDFLAGS += -w -linkmode=external
+    EXTLDFLAGS    += -Wl,-S
+  endif
 else
-  BUILDID_LDFLAGS :=
+  REPRO_LDFLAGS :=
 endif
 
-GOLDFLAGS_BASE  := $(VERSION_LDFLAGS) $(BUILDID_LDFLAGS) \
+GOLDFLAGS_BASE  := $(VERSION_LDFLAGS) $(REPRO_LDFLAGS) \
 		 -X github.com/algorand/go-algorand/config.BuildNumber=$(BUILDNUMBER) \
 		 -X github.com/algorand/go-algorand/config.CommitHash=$(COMMITHASH) \
 		 -X github.com/algorand/go-algorand/config.Branch=$(BUILDBRANCH) \
