@@ -111,11 +111,17 @@ find tmp/node_pkgs -name "*.tar.gz" -exec cp {} dist/ \\;
 cp dist/* /w/out/
 EOF
 
-# 4. Build in the recorded image, for the target architecture.
-echo "Building in ${IMAGE} (linux/${ARCH}); logs in ${W}/out"
+# 4. Build in the recorded image, for the target architecture. The record
+# pins a multi-arch index; Docker Engine's image store holds only one platform
+# per digest, so run the architecture's own manifest, which the index lists.
+ARCH_DIGEST=$(docker manifest inspect "${IMAGE}" |
+    jq -r --arg a "${ARCH}" '.manifests[] | select(.platform.os == "linux" and .platform.architecture == $a) | .digest' | head -1)
+[ -n "${ARCH_DIGEST}" ] || { echo "no linux/${ARCH} manifest in ${IMAGE}" >&2; exit 1; }
+RUN_IMAGE=${IMAGE%@*}@${ARCH_DIGEST}
+echo "Building in ${RUN_IMAGE} (linux/${ARCH}, from ${IMAGE}); logs in ${W}/out"
 docker run --rm --platform "linux/${ARCH}" \
     -v "${W}:/w" -v "${W}/ca.crt:/etc/ssl/certs/ca-certificates.crt:ro" \
-    "${IMAGE}" bash /w/inside.sh
+    "${RUN_IMAGE}" bash /w/inside.sh
 
 # 5. Compare with the released files for this platform, then check the local
 # files against the release's signed provenance.
