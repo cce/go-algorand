@@ -12,6 +12,11 @@ runs:
         # records. This is the toolchain scripts/configure_dev.sh installs and
         # the community Windows builds use.
         msystem: UCRT64
+        # Use the runner's preinstalled C:\msys64 rather than extracting a
+        # copy under the runner's temp directory: the C code's debug info
+        # records header paths under the MSYS2 root, and C:\msys64 is where a
+        # default MSYS2 install puts it, so a rebuild elsewhere can match.
+        release: false
         update: true
         path-type: inherit
         # The autotools are needed by `make libsodium` below whenever the
